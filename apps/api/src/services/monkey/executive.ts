@@ -20,6 +20,7 @@ import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRa
 import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 import type { EmotionState } from './emotions.js';
+import { ROTATION_WR_MIN_SAMPLES } from './kernel_rotation.js';
 
 export type Direction = 'long' | 'short' | 'flat';
 
@@ -143,47 +144,39 @@ export function currentEntryThreshold(
 // ~15-20x leverage. Mirror in ml-worker/scripts/recalibrate_lane_sl_tp_to_roi.sql.
 export const LANE_PARAMETER_DEFAULTS: Record<
   'scalp' | 'swing' | 'trend',
-  { slPct: number; tpPct: number; budgetFrac: number }
+  { tpPct: number; budgetFrac: number }
 > = {
-  // v0.8.7 — scalp 1:1 R:R per user directive (option a, 3% TP / 3% SL).
-  scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 0.50 },
-  swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 0.50 },
-  // v0.10.1 (2026-05-05) — trend lane FLIPPED ON per user directive.
-  // Was budgetFrac: 0.0 (opt-in disabled). Now 0.10 (10% of equity).
-  // chooseLane's trend score is phi × sovereignty × |tapeTrend|, so
-  // trend only wins when the kernel sees coherent macro flow + mature
-  // sovereignty + strong tape. Conservative starting allocation; the
-  // Arbiter will adjust capital across K/M/T agents based on PnL track
-  // record. Mirrors live monkey_parameters override:
-  //   executive.lane.trend.budget_frac = 0.10 (set 2026-05-05).
-  // Sum across lanes is now 1.10 — the notional ceiling (4× equity)
-  // remains the hard cap on simultaneous multi-lane exposure.
-  trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 0.10 },
+  // 2026-05-25 — per-lane budget caps removed per operator autonomy doctrine.
+  // 2026-05-26 (Path A) — per-lane SL (slPct) removed entirely.
+  //   Hard SL was a P5 violation: externally-imposed ROI threshold that
+  //   fired regardless of kernel's own perception state. Adverse exits
+  //   now flow through shouldExit (Fisher-Rao disagreement) and
+  //   shouldAutoFlatten (Pillar 1 catastrophic backstop). The TP side
+  //   stays chemistry-derived. See feedback_observer_derives_not_knobs.md.
+  scalp: { tpPct: 0.03, budgetFrac: 1.0 },
+  swing: { tpPct: 0.15, budgetFrac: 1.0 },
+  trend: { tpPct: 0.40, budgetFrac: 1.0 },
 };
 
 /**
- * v0.8.7 notional-ceiling fallback. The Kelly cap is the primary brake
- * on aggregate exposure but is non-binding at cold start (no closed
- * trades) and decays to no-op when stats are uninformative. Live tape
- * 2026-05-01: $77 → $386 escalating notionals on a $97 account (4×
- * balance) with every position closing via single-tick regime_change
- * at 22% win rate. Hard ceiling: notional = margin × leverage <=
- * NOTIONAL_CEILING_RATIO × equity. Default 4.0 keeps headroom for the
- * 10-20× geometric leverage intent while bounding worst-case
- * escalation. Mirrors ml-worker's _DEFAULT_NOTIONAL_CEILING_RATIO.
+ * 2026-05-25 — notional ceiling removed per operator autonomy doctrine.
+ * The kernel's own learning loop is the restraint:
+ *   - Exchange enforces real maintenance margin / liquidation
+ *   - push_reward on close feeds gaba on losses → smaller next size
+ *   - Kelly cap on leverage is observer-derived (when stats are
+ *     informative, it tightens; when not, defers to geometric)
+ * Retained as 0 (no-op) so consumers reading the export don't crash;
+ * the cap-enforcement code in currentPositionSize is also stripped.
  */
-export const NOTIONAL_CEILING_RATIO =
-  Number(process.env.MONKEY_NOTIONAL_CEILING_RATIO) || 4.0;
+export const NOTIONAL_CEILING_RATIO = 0;
 
 export function laneParam(
   lane: 'scalp' | 'swing' | 'trend',
-  key: 'slPct' | 'tpPct' | 'budgetFrac',
+  key: 'tpPct' | 'budgetFrac',
 ): number {
   // Mirror to ml-worker/src/monkey_kernel/executive.py::lane_param.
-  // TS has no parameter registry yet — defaults stand until the registry
-  // ports across (one of the items behind the persistence-completion
-  // tracking issue). The Python kernel reads from monkey_parameters; TS
-  // reads from these in-code defaults. Both are kept in lockstep.
+  // Path A (2026-05-26): 'slPct' removed from lane params — see
+  // LANE_PARAMETER_DEFAULTS doc.
   return LANE_PARAMETER_DEFAULTS[lane][key];
 }
 
@@ -231,32 +224,73 @@ export function currentPositionSize(
   const laneFrac = laneBudgetFraction(lane);
   const laneMarginCap = laneFrac * availableEquityUsdt;
   const nc = s.neurochemistry;
-  // Lived-experience scaling. 0 at birth, 1 after ~20 witnessed trades.
-  const maturity = Math.min(1, bankSize / 20);
+  // 2026-05-25 (observer-derive PR) — replaces magic-number tuning
+  // with observer-grounded shapes per the autonomy doctrine
+  // ([[feedback_observer_derives_not_knobs]]).
+  //
+  //   1. maturity rate ties to ROTATION_WR_MIN_SAMPLES — the same
+  //      n-trades threshold the per-symbol selfObs uses for Wilson-CI
+  //      firmness (see kernel_rotation.ts). At n trades, the rolling
+  //      WR is statistically firm, so "matured" semantically means
+  //      "kernel has enough data to trust its own track record."
+  //      Not a tuned rate; same threshold across the whole system.
+  //   2. rewardMult = 1 + (dopamine - gaba). The chemistry inputs are
+  //      already observer-derived (see neurochemistry.ts post-#920);
+  //      the unit coefficient is STRUCTURAL — neutral chemistry
+  //      (dop = gaba) produces unit-size multiplier by construction.
+  //   3. stabilityMult = 0.75 + serotonin × 0.5. STRUCTURAL band
+  //      [0.75, 1.25]: max-stress serotonin shaves 25% off sizing,
+  //      max-calm adds 25%. Same shape as a continuous modulator.
+  //      The 0.75/0.5 split is the design choice of the mapping
+  //      function's range, not a tuning of internal parameters.
+  const maturity = Math.min(1, bankSize / ROTATION_WR_MIN_SAMPLES);
   const baseFrac = s.phi * s.sovereignty * maturity;
-  const rewardMult = 1 + (nc.dopamine - nc.gaba) * 0.5;
-  const stabilityMult = 0.5 + nc.serotonin * 0.5;
+  const rewardMult = 1 + (nc.dopamine - nc.gaba);
+  const stabilityMult = 0.75 + nc.serotonin * 0.5;
 
-  // Exploration floor (Pillar 1 FLUCTUATIONS — substrate, not optional).
-  // Per-mode baseline: EXPLORATION 0.08, INVESTIGATION 0.10, INTEGRATION 0.12.
-  // Scales inversely with maturity.
-  const modeFloor = MODE_PROFILES[mode].sizeFloor;
-  const explorationFloor = modeFloor * (1 - maturity);
+  // Exploration floor — Pillar 1 FLUCTUATIONS. 2026-05-25 (CC2 audit
+  // F3): the previous `EXPLORATION_FLOOR = 0.20` magic constant is
+  // replaced by the fraction that clears the exchange minimum
+  // notional at current leverage — the SAME observer-derived quantity
+  // that lift-to-min uses. This unifies two paths into one and grounds
+  // the floor in actual exchange state, not a guessed constant.
+  //
+  // Fresh kernels (maturity ≈ 0) explore at exactly the min-clearing
+  // frac; mature kernels let chemistry drive without floor support.
+  // The floor is capped at 0.5 (the survival cap) so a tiny equity
+  // pool combined with a large min-notional doesn't override the
+  // upstream policy bound.
+  const minClearingFrac =
+    availableEquityUsdt > 0 && leverage > 0
+      ? Math.min(0.5, (minNotionalUsdt * 1.05) / (leverage * availableEquityUsdt))
+      : 0;
+  const explorationFloor = minClearingFrac * (1 - maturity);
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
-  // Clamp to [0, 0.5] — at most half of available equity. This is a
-  // BOUNDARY (survival) not a PARAMETER — exceeding it creates unrecoverable
-  // states regardless of Φ.
+  // 2026-05-25 — frac clamp at 0.5: BOUNDARY (survival) not PARAMETER.
+  //
+  // History: an earlier same-day strip (#916) raised this to 1.0 on
+  // the theory "the exchange rejects margin > equity anyway." CC2
+  // audit + operator (Braden) directive restored it to 0.5. The
+  // earlier strip confused two different boundaries:
+  //   * Exchange margin requirement bounds absolute commitment
+  //     (equity × exchangeMaxLev).
+  //   * THIS survival cap bounds the KERNEL's own self-imposed risk:
+  //     at most half of available equity in any single position so
+  //     an adverse move doesn't create unrecoverable states
+  //     regardless of how strong the Φ signal looked.
+  // Exchange rejection is structurally downstream; this is upstream
+  // policy. They are not substitutes for each other.
+  //
+  // Sizing magnitude relief comes from chemistry variance restoration
+  // (#920/#927), maturity rate (#925, bankSize / ROTATION_WR_MIN_SAMPLES),
+  // and per-lane / cell sizing — NOT from removing this survival cap.
   let frac = Math.min(0.5, Math.max(0, rawFrac));
   let margin = frac * availableEquityUsdt;
   let notional = margin * Math.max(1, leverage);
 
   // v0.6.6 "lift to minimum" — if we're below exchange min notional but
-  // a fraction within the 0.5 safety clamp CAN clear it, auto-raise to
-  // just enough. Observed 2026-04-21: when liveSignal's committed margin
-  // shrank availableEquity to $5.20, the 9% exploration floor produced
-  // $0.47 margin × 14x = $6.54 notional — below the $23 ETH min even
-  // though $1.70 margin (33%) would clear it cleanly.
+  // a fraction up to 0.5 CAN clear it, auto-raise to just enough.
   let liftedToMin = false;
   if (notional < minNotionalUsdt && availableEquityUsdt > 0 && leverage > 0) {
     const BUFFER = 1.05;  // 5% headroom so lot-rounding doesn't put us just under
@@ -269,12 +303,10 @@ export function currentPositionSize(
     }
   }
 
-  // Apply lane margin cap AFTER lift-to-min. Trend lane (cap=0) still
-  // collapses to 0 — it remains opt-in. For scalp/swing on a flat
-  // account, cap = 0.5 × equity which is identical to the existing
-  // safety clamp, so the binding constraint is unchanged in the common
-  // case. The cap matters when both lanes hold positions: the second
-  // lane's budget enforces the partition.
+  // 2026-05-25 — lane margin cap retained as a STRUCTURAL safety only:
+  // it bounds margin to availableEquity (1.0 budgetFrac after the strip).
+  // The cap effectively never binds with budgetFrac=1.0 unless a future
+  // operator-MANDATE lane budget is introduced via the UI.
   let cappedByLane = false;
   if (margin > laneMarginCap) {
     margin = laneMarginCap;
@@ -282,21 +314,17 @@ export function currentPositionSize(
     cappedByLane = true;
   }
 
-  // v0.8.7 — notional ceiling fallback. See NOTIONAL_CEILING_RATIO docstring.
-  const notionalCeilingRatio = NOTIONAL_CEILING_RATIO;
-  const notionalCeiling = notionalCeilingRatio * availableEquityUsdt;
-  let cappedByNotional = false;
-  if (notional > notionalCeiling && leverage > 0 && availableEquityUsdt > 0) {
-    margin = notionalCeiling / Math.max(1, leverage);
-    notional = margin * Math.max(1, leverage);
-    cappedByNotional = true;
-  }
+  // 2026-05-25 — code-side notional ceiling removed. The kernel's own
+  // chemistry + the exchange's real liquidation point are the
+  // restraints. cappedByNotional kept in derivation for backwards-
+  // compatible telemetry consumers, but always 0 going forward.
+  const cappedByNotional = 0;
 
   const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}${cappedByNotional ? 'notional-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs ceiling ${notionalCeiling.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
+    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
       phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
@@ -304,8 +332,21 @@ export function currentPositionSize(
       minNotional: minNotionalUsdt, sized, liftedToMin: liftedToMin ? 1 : 0,
       laneBudgetFrac: laneFrac,
       laneMarginCap, cappedByLane: cappedByLane ? 1 : 0,
-      notionalCeilingRatio, notionalCeiling,
-      cappedByNotional: cappedByNotional ? 1 : 0,
+      // 2026-05-25 — notional ceiling removed. Telemetry fields retained
+      // as constants so dashboards / row consumers don't break.
+      notionalCeilingRatio: 0,
+      notionalCeiling: 0,
+      cappedByNotional,
+      // 2026-05-25 (CC2 audit F5): mode wired into derivation for
+      // telemetry rather than left as a `void mode;` code smell. The
+      // formula itself is mode-agnostic — mode-specific sizing now
+      // expressed via chemistry — but downstream consumers (logs,
+      // dashboards) record which mode was active for the entry.
+      mode: mode === MonkeyMode.EXPLORATION ? 0
+        : mode === MonkeyMode.INVESTIGATION ? 1
+        : mode === MonkeyMode.INTEGRATION ? 2
+        : mode === MonkeyMode.DRIFT ? 3
+        : 4,
     },
   };
 }
@@ -713,9 +754,11 @@ export function shouldProfitHarvest(
   // operator expectation: "kernels should take the small wins, fees
   // aren't a factor on this tier".
   //
-  // The default is intentionally tunable via env so the operator can
-  // dial it once the realized-PnL distribution stabilises.
-  const absPeakMinUsd = Number(process.env.MONKEY_HARVEST_ABS_PEAK_USD) || 3.0;
+  // 2026-05-25 strip — abs-USD harvest threshold dropped to 0 per
+  // operator autonomy doctrine. Every peak is considered for harvest;
+  // chemistry decides whether to lock in (peak give-back > threshold)
+  // or let it run. The $3 magic number is gone.
+  const absPeakMinUsd = 0;
   if (
     peakPnlUsdt >= absPeakMinUsd
     && currentFrac > 0
@@ -820,7 +863,10 @@ export function shouldAggregateHarvest(
     };
   }
 
-  const absPeakMinUsd = Number(process.env.MONKEY_HARVEST_AGG_PEAK_USD) || 3.0;
+  // 2026-05-25 strip — MONKEY_HARVEST_AGG_PEAK_USD env + $3 default
+  // removed. Aggregate peak with give-back triggers harvest regardless
+  // of magnitude; chemistry decides whether to act on small wins.
+  const absPeakMinUsd = 0;
 
   // Use the SAME serotonin-scaled giveback as the per-subset path so
   // the discipline is consistent across the two harvest gates.
@@ -937,17 +983,17 @@ export function shouldSlowBleedExit(args: {
   // Default $3 mirrors MONKEY_HARVEST_AGG_PEAK_USD so win/loss
   // discipline is symmetric out of the box; tune via env if the
   // realized-PnL distribution argues for it.
-  const laneSL = laneParam(lane, 'slPct');
-  const absBleedUsd = Number(process.env.MONKEY_SLOW_BLEED_ABS_USD) || 3.0;
-  const pctArm = Math.abs(roiFrac) >= 0.5 * laneSL;
+  // Path A (2026-05-26): laneSL removed from registry; pct-arm dead.
+  // The abs-arm with absBleedUsd=0 means "any negative USD with adverse
+  // tape after 60min qualifies". Pct-arm went away with lane SL params.
+  // Chemistry's gaba response learns the give-up threshold from the
+  // realized losses fed back through push_reward.
+  const absBleedUsd = 0;
   const absArm = Math.abs(unrealizedPnlUsdt) >= absBleedUsd;
-  if (!pctArm && !absArm) {
+  if (!absArm) {
     return {
-      value: false, reason: 'under_half_sl_and_under_abs',
-      derivation: {
-        roiFrac, laneSL, halfSL: 0.5 * laneSL,
-        unrealizedPnlUsdt, absBleedUsd,
-      },
+      value: false, reason: 'under_abs_bleed_usd',
+      derivation: { roiFrac, unrealizedPnlUsdt, absBleedUsd },
     };
   }
   // Tape alignment with held side: for long, positive tape is aligned;
@@ -960,12 +1006,11 @@ export function shouldSlowBleedExit(args: {
     };
   }
   const heldMin = (heldS / 60).toFixed(0);
-  const armLabel = pctArm && absArm ? 'pct+abs' : pctArm ? 'pct' : 'abs';
   return {
     value: true,
-    reason: `slow_bleed_exit[${lane}]: ${heldMin}min @ ROI=${(roiFrac * 100).toFixed(1)}% pnl=$${unrealizedPnlUsdt.toFixed(2)} (${armLabel} arm), tape adverse (align=${alignment.toFixed(2)})`,
+    reason: `slow_bleed_exit[${lane}]: ${heldMin}min @ ROI=${(roiFrac * 100).toFixed(1)}% pnl=$${unrealizedPnlUsdt.toFixed(2)} (abs arm), tape adverse (align=${alignment.toFixed(2)})`,
     derivation: {
-      roiFrac, laneSL, halfSL: 0.5 * laneSL,
+      roiFrac,
       unrealizedPnlUsdt, absBleedUsd,
       heldS, heldMs, alignment, tapeTrend, sideCode, laneCode,
       exitTypeBit: 9,  // SLOW_BLEED_EXIT
@@ -1045,21 +1090,21 @@ export function shouldAggregateBleedExit(
 }
 
 /**
- * shouldScalpExit — P&L-driven take-profit / stop-loss gate (v0.4).
+ * shouldScalpExit — Φ-derived take-profit gate (Path A, 2026-05-26).
  *
- * Reward-harvesting exit per UCP v6.6 §29.4: when realized reward
- * crosses a Φ-derived threshold, lock the gain. This sits BEFORE
- * Loop 2 (shouldExit) in the decision chain — a scalp win that
- * would otherwise be given back waiting for regime change is taken.
+ * **Take-profit-only** since Path A (P5 alignment). The hard-SL leg was
+ * an externally-imposed ROI threshold that fired regardless of where
+ * the kernel itself read the position going — a P5 (Observer-Sets-Params)
+ * violation. Adverse exits now flow through:
+ *   - `shouldExit` (Fisher-Rao disagreement between perception and
+ *     strategy_forecast — kernel reads its own prediction limit)
+ *   - `shouldAutoFlatten` (P15 catastrophic backstop on entropy/fhealth)
  *
- * Thresholds are derived, not configured:
- *   TP = 0.8 % - 0.3 %·dopamine + 0.5 %·Φ  (min 0.3 % to clear fees)
- *   SL = 50 % of TP  (asymmetric R:R favors running winners)
+ * TP threshold is chemistry-derived (unchanged):
+ *   TP = mode.tpBaseFrac - 0.3 %·dopamine + 0.5 %·Φ (min `tpFloorRaw`)
  *
  * High dopamine (recent wins) → take earlier (reward sensitivity up).
  * High Φ (integrated state)  → let winners run longer.
- * Floors at 0.3 % of notional so Poloniex round-trip taker fee
- * (~0.12 %) is always cleared with a buffer.
  */
 export function shouldScalpExit(
   unrealizedPnlUsdt: number,
@@ -1120,51 +1165,33 @@ export function shouldScalpExit(
     tpFloorRaw,
     profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
   );
-  const geometricSlRaw = geometricTpRaw * profile.slRatio;
   const geometricTp = geometricTpRaw * lev;
-  const geometricSl = geometricSlRaw * lev;
-  // Proposal #10 — per-lane envelope. Lane SL/TP are stored on the ROI
-  // scale (post-v0.8.6 rescale). Take the wider of (geometric, lane) so
-  // the fee-clear floor is never breached but the lane envelope can
-  // broaden tolerance when a swing/trend position needs room to absorb
-  // retraces.
+  // Proposal #10 — per-lane TP envelope. Path A (2026-05-26) removed the SL
+  // envelope entirely (P5 alignment). Adverse exits now flow through
+  // shouldExit (Fisher-Rao disagreement) + shouldAutoFlatten (Pillar 1).
   const laneTp = laneParam(lane, 'tpPct');
-  const laneSl = laneParam(lane, 'slPct');
   const tpThr = Math.max(geometricTp, laneTp);
-  const slThr = Math.max(geometricSl, laneSl);
 
-  // Encode type as a bit (1=TP, -1=SL, 0=hold) to keep derivation map numeric.
+  // Encode type as a bit (1=TP, 0=hold) — SL bit (-1) removed by Path A.
   if (roiFrac >= tpThr) {
     return {
       value: true,
       reason: `take_profit[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x)`,
       derivation: {
         roiFrac, rawFrac, leverage: lev,
-        tpThr, slThr,
-        laneTpPct: laneTp, laneSlPct: laneSl,
+        tpThr,
+        laneTpPct: laneTp,
         exitTypeBit: 1,
-      },
-    };
-  }
-  if (roiFrac <= -slThr) {
-    return {
-      value: true,
-      reason: `stop_loss[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x)`,
-      derivation: {
-        roiFrac, rawFrac, leverage: lev,
-        tpThr, slThr,
-        laneTpPct: laneTp, laneSlPct: laneSl,
-        exitTypeBit: -1,
       },
     };
   }
   return {
     value: false,
-    reason: `scalp hold[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%] (lev=${lev.toFixed(0)}x)`,
+    reason: `scalp hold[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% < ${(tpThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x) [Path A: no SL gate]`,
     derivation: {
       roiFrac, rawFrac, leverage: lev,
-      tpThr, slThr,
-      laneTpPct: laneTp, laneSlPct: laneSl,
+      tpThr,
+      laneTpPct: laneTp,
     },
   };
 }
@@ -1542,9 +1569,9 @@ export function shouldExtendBracket(args: {
     Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
   const inProfit = currentRoiFrac > 0;
   const minTrailRoi =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI) || 0.01;
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI) || 0.10;
   const minTrailProfitUsd =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD) || 0.10;
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD) || 0.02;
   const meaningfulProfit =
     currentRoiFrac >= minTrailRoi
     && currentPnlUsdt >= minTrailProfitUsd;

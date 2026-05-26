@@ -58,23 +58,17 @@ describe('checkPerSymbolExposure', () => {
     expect(checkPerSymbolExposure({ ...btcOrder, notional: 10 }, state).allowed).toBe(true);
   });
 
-  it('blocks an order that would push same-symbol notional over the cap', () => {
-    // equity 100 × 5 = 500 cap; 495 + 10 = 505 > 500 → blocked
+  it('2026-05-25 strip — no longer blocks over the prior 5× cap; exchange enforces structural cap', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
       openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 495 }],
     };
     const decision = checkPerSymbolExposure({ ...btcOrder, notional: 10 }, state);
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('per_symbol_exposure_cap');
+    expect(decision.allowed).toBe(true);
   });
 
-  it('sums long and short exposure on the same symbol — both add to the cap', () => {
-    // A short position still counts toward gross exposure; the kernel
-    // doesn't net longs against shorts because a -2% candle moves both
-    // against margin (via maintenance-margin stack).
-    // equity 100 × 5 = 500 cap; 300 + 200 + 20 = 520 > 500 → blocked
+  it('2026-05-25 strip — same-symbol long+short exposure no longer summed and capped', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
@@ -83,7 +77,7 @@ describe('checkPerSymbolExposure', () => {
         { symbol: 'BTC_USDT_PERP', side: 'short', notional: 200 },
       ],
     };
-    expect(checkPerSymbolExposure({ ...btcOrder, notional: 20 }, state).allowed).toBe(false);
+    expect(checkPerSymbolExposure({ ...btcOrder, notional: 20 }, state).allowed).toBe(true);
   });
 
   it('ignores positions on a different symbol', () => {
@@ -143,23 +137,22 @@ describe('checkUnrealizedDrawdown', () => {
     expect(checkUnrealizedDrawdown(state).allowed).toBe(true);
   });
 
-  it('blocks when unrealized drawdown breaches -15%', () => {
+  it('2026-05-25 strip — no longer blocks at -15% drawdown; chemistry learns from losses', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       unrealizedPnlUsdt: -16,
     };
     const decision = checkUnrealizedDrawdown(state);
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('unrealized_drawdown_kill_switch');
+    expect(decision.allowed).toBe(true);
   });
 
-  it('handles zero equity gracefully (delegates to realised-loss cap)', () => {
+  it('handles zero equity gracefully', () => {
     const state: KernelAccountState = { ...emptyAccount, equityUsdt: 0 };
     expect(checkUnrealizedDrawdown(state).allowed).toBe(true);
   });
 
-  it('threshold constant stays at -15% or tighter', () => {
-    expect(UNREALIZED_DRAWDOWN_KILL_THRESHOLD).toBeLessThanOrEqual(-0.15);
+  it('threshold constant is -Infinity sentinel (auto-kill stripped)', () => {
+    expect(UNREALIZED_DRAWDOWN_KILL_THRESHOLD).toBe(Number.NEGATIVE_INFINITY);
   });
 });
 
@@ -224,7 +217,7 @@ describe('evaluatePreTradeVetoes composition', () => {
     ).toBe(true);
   });
 
-  it('surfaces the unrealised-drawdown veto before any other', () => {
+  it('2026-05-25 strip — unrealised-drawdown veto removed; -20% PnL no longer halts entries', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       unrealizedPnlUsdt: -20,
@@ -232,8 +225,9 @@ describe('evaluatePreTradeVetoes composition', () => {
       restingOrders: [{ symbol: 'BTC_USDT_PERP', side: 'sell', price: 69_000 }],
     };
     const decision = evaluatePreTradeVetoes({ ...btcOrder, side: 'buy' }, state, autoContext);
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('unrealized_drawdown_kill_switch');
+    // Drawdown auto-kill stripped; only manual execution-mode pause halts.
+    // Self-match check still applies here — sell at 69k vs buy → veto.
+    expect(decision.code).not.toBe('unrealized_drawdown_kill_switch');
   });
 
   it('execution-mode pause blocks even a clean order', () => {
@@ -325,101 +319,33 @@ describe('checkMarginHeadroom (v0.8.8)', () => {
   });
 });
 
-describe('evaluatePreTradeVetoes — margin_headroom priority', () => {
-  it('exposure cap fires before headroom when both would block', () => {
-    // notional 600 breaches 5× cap (=500); also breaches headroom.
-    // Composer order: exposure (priority 4) before headroom (priority 5).
+describe('2026-05-25 strip — margin_headroom veto neutralised', () => {
+  // Pre-strip: env var + mode-conditional table enforced a margin reserve
+  // (15-50% depending on mode). Post-strip: both the env var and the
+  // mode table return null/0. Only the per-symbol exposure cap remains;
+  // chemistry feedback handles margin discipline.
+  it('2026-05-25 strip — per-symbol exposure cap no longer fires (also stripped)', () => {
     const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 50 };
     const order: KernelOrder = { ...btcOrder, notional: 600, leverage: 10 };
-    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.25';
-    try {
-      const r = evaluatePreTradeVetoes(order, state, autoContext);
-      expect(r.allowed).toBe(false);
-      expect(r.code).toBe('per_symbol_exposure_cap');
-    } finally {
-      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-    }
+    const r = evaluatePreTradeVetoes(order, state, autoContext);
+    expect(r.allowed).toBe(true);
   });
 
-  it('headroom blocks when exposure passes', () => {
-    // notional 200 within cap. used=70, new_margin=20 → projected=90 → 10% free < 25%
+  it('headroom no longer blocks even when reserve would have been < 25% pre-strip', () => {
+    // used=70, new_margin=20 → projected=90 → 10% free. Pre-strip with
+    // 25% reserve this blocked; post-strip the headroom veto is gone.
     const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 70 };
     const order: KernelOrder = { ...btcOrder, notional: 200, leverage: 10 };
-    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.25';
-    try {
-      const r = evaluatePreTradeVetoes(order, state, autoContext);
-      expect(r.allowed).toBe(false);
-      expect(r.code).toBe('margin_headroom');
-    } finally {
-      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-    }
-  });
-});
-
-describe('explicitMinMarginHeadroomPct', () => {
-  it('returns null when the env var is unset', () => {
-    delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-    expect(explicitMinMarginHeadroomPct()).toBeNull();
+    const r = evaluatePreTradeVetoes(order, state, autoContext);
+    expect(r.allowed).toBe(true);
   });
 
-  it('returns the parsed reserve when set to a valid value', () => {
+  it('explicitMinMarginHeadroomPct always returns null (env read stripped)', () => {
     process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.15';
-    try {
-      expect(explicitMinMarginHeadroomPct()).toBe(0.15);
-    } finally {
-      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-    }
-  });
-
-  it('returns null for an out-of-range value (≥ 1)', () => {
-    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '1.5';
     try {
       expect(explicitMinMarginHeadroomPct()).toBeNull();
     } finally {
       delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
     }
-  });
-
-  it('returns 0 (explicit disable) when set to "0"', () => {
-    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0';
-    try {
-      expect(explicitMinMarginHeadroomPct()).toBe(0);
-    } finally {
-      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-    }
-  });
-});
-
-describe('evaluatePreTradeVetoes — operator headroom overrides the mode table', () => {
-  // Regression fix (2026-05-20): before this, the mode-conditional table
-  // (investigation = 25%) ALWAYS overrode the operator's env var because
-  // monkeyMode is set on every live tick — a dead knob. The operator's
-  // explicit value must now win.
-  const investigationCtx: KernelContext = {
-    isLive: true, mode: 'auto', symbolMaxLeverage: BTC_MAX_LEV,
-    monkeyMode: 'investigation',
-  };
-
-  it('operator 15% reserve wins over investigation-mode 25%', () => {
-    // used=60, new_margin=20 → projected=80 → 20% free.
-    // 20% ≥ 15% (operator) → ALLOW. 20% < 25% (mode) would BLOCK.
-    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 60 };
-    const order: KernelOrder = { ...btcOrder, notional: 200, leverage: 10 };
-    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.15';
-    try {
-      expect(evaluatePreTradeVetoes(order, state, investigationCtx).allowed).toBe(true);
-    } finally {
-      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-    }
-  });
-
-  it('falls back to the mode table when the operator var is unset', () => {
-    // Same 20%-free case; no env var → investigation 25% applies → block.
-    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 60 };
-    const order: KernelOrder = { ...btcOrder, notional: 200, leverage: 10 };
-    delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-    const r = evaluatePreTradeVetoes(order, state, investigationCtx);
-    expect(r.allowed).toBe(false);
-    expect(r.code).toBe('margin_headroom');
   });
 });

@@ -66,18 +66,20 @@ describe('shouldProfitHarvest — absolute-USD trailing gate', () => {
     expect(result.reason).toContain('abs_usd_harvest');
   });
 
-  it('does NOT fire when peak is below $3 default threshold', () => {
-    // Same large-notional shape so % path stays quiet, then verify
-    // the abs-USD gate also stays quiet when peak < $3 threshold.
+  it('2026-05-25 strip — abs-USD threshold removed; fires on any positive give-back', () => {
+    // Pre-strip: $3 default gated below-threshold peaks from arming.
+    // Post-strip: threshold is 0, so ANY peak with give-back > floor
+    // arms abs-USD harvest. Previously-quiet $2.50 peak now fires.
     const result = shouldProfitHarvest(
       /* unrealizedPnlUsdt */ 0.5,
-      /* peakPnlUsdt */       2.5,  // below $3 default
+      /* peakPnlUsdt */       2.5,
       /* notionalUsdt */      5000,
       /* tapeTrend */         0.0,
       /* heldSide */          'short',
       baselineBasin,
     );
-    expect(result.value).toBe(false);
+    expect(result.value).toBe(true);
+    expect(result.reason).toContain('abs_usd_harvest');
   });
 
   it('does NOT fire when still at peak (no giveback yet)', () => {
@@ -106,18 +108,20 @@ describe('shouldProfitHarvest — absolute-USD trailing gate', () => {
     expect(result.value).toBe(false);
   });
 
-  it('honours MONKEY_HARVEST_ABS_PEAK_USD override (raises threshold)', () => {
+  it('2026-05-25 strip — env override no longer honoured (var stripped)', () => {
     process.env.MONKEY_HARVEST_ABS_PEAK_USD = '10';
     const result = shouldProfitHarvest(
       /* unrealizedPnlUsdt */ 2.0,
       /* peakPnlUsdt */       5.0,
-      /* notionalUsdt */      5000,  // large → keep % path quiet
+      /* notionalUsdt */      5000,
       /* tapeTrend */         0.0,
       /* heldSide */          'short',
       baselineBasin,
     );
-    // $5 peak < $10 override threshold → abs-USD gate doesn't arm.
-    expect(result.reason).not.toContain('abs_usd_harvest');
+    // Env var read removed: $5 peak with give-back fires regardless of
+    // any stale env value.
+    expect(result.value).toBe(true);
+    expect(result.reason).toContain('abs_usd_harvest');
   });
 
   it('fires at lower threshold when env tightens it', () => {

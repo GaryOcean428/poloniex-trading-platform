@@ -36,6 +36,17 @@ export interface ModeStats {
   totalPnl: number;
 }
 
+export interface SymbolSideStats {
+  symbol: string;
+  side: Side;
+  trades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalPnl: number;
+  avgPnl: number;
+}
+
 export interface SelfObservation {
   lookbackHours: number;
   /** Per-(mode, side) stats. */
@@ -44,6 +55,17 @@ export interface SelfObservation {
    *  < 1.0 = easier entry (good track record here).
    *  > 1.0 = harder entry (losing track record here). */
   entryBias: Record<MonkeyMode, Record<Side, number>>;
+  /** Per-(symbol, side) stats — orthogonal to mode. Lets ETH long
+   *  accumulate its own bias separately from BTC long, which the
+   *  mode-pooled selfObs cannot do. 2026-05-25 audit found ETH long
+   *  losses pool with BTC long wins in the (CREATOR_TREND_UP, long)
+   *  bucket, so the symbol-specific bias never accumulates. */
+  bySymbolSide: Record<string, Record<Side, SymbolSideStats>>;
+  /** Per-(symbol, side) entry-threshold multiplier. Wilson-CI gated
+   *  exactly like entryBias; multiplies with entryBias at the call
+   *  site so a symbol that's losing on a given side gets a harder
+   *  entry even when the mode-pooled bias is neutral. */
+  symbolSideBias: Record<string, Record<Side, number>>;
 }
 
 /**
@@ -105,6 +127,34 @@ function hasBiasEvidence(wins: number, trades: number): boolean {
 
 function emptyStats(mode: MonkeyMode, side: Side): ModeStats {
   return { mode, side, trades: 0, wins: 0, losses: 0, winRate: 0, avgPnl: 0, totalPnl: 0 };
+}
+
+function emptySymbolStats(symbol: string, side: Side): SymbolSideStats {
+  return { symbol, side, trades: 0, wins: 0, losses: 0, winRate: 0, avgPnl: 0, totalPnl: 0 };
+}
+
+/**
+ * Pure-function bias derivation per (symbol, side). Same Wilson-95% CI
+ * evidence gate as computeEntryBias — neutral 1.0 until the CI clearly
+ * excludes 0.5. Exported so the unit tests can pin the behaviour
+ * without a database round-trip.
+ *
+ * Empty input → empty output (caller falls back to 1.0 via ?.).
+ */
+export function computeSymbolSideBias(
+  bySymbolSide: Record<string, Record<Side, SymbolSideStats>>,
+): Record<string, Record<Side, number>> {
+  const out: Record<string, Record<Side, number>> = {};
+  for (const [symbol, sides] of Object.entries(bySymbolSide)) {
+    out[symbol] = { long: 1.0, short: 1.0 };
+    for (const side of SIDES) {
+      const s = sides[side];
+      if (hasBiasEvidence(s.wins, s.trades)) {
+        out[symbol][side] = winRateToBias(s.winRate);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -234,6 +284,7 @@ export async function computeSelfObservation(
   instanceId?: string,
 ): Promise<SelfObservation> {
   const byModeSide = buildEmptyByModeSide();
+  const bySymbolSide: Record<string, Record<Side, SymbolSideStats>> = {};
 
   try {
     // Scope to a specific kernel instance when provided (v0.6b multi-
@@ -246,6 +297,7 @@ export async function computeSelfObservation(
     const result = await pool.query(
       `SELECT at.pnl::float AS pnl,
               at.side        AS side,
+              at.symbol      AS symbol,
               at.exit_reason,
               md.derivation->'mode'->>'value' AS mode
          FROM autonomous_trades at
@@ -266,15 +318,36 @@ export async function computeSelfObservation(
       const sideRaw = String(row.side ?? '').toLowerCase();
       const side: Side = sideRaw === 'sell' || sideRaw === 'short' ? 'short' : 'long';
       const pnl = Number(row.pnl ?? 0);
+      const symbol = String(row.symbol ?? '');
       const stats = byModeSide[mode][side];
       stats.trades += 1;
       stats.totalPnl += pnl;
       if (pnl > 0) stats.wins += 1;
       else if (pnl < 0) stats.losses += 1;
+      if (symbol.length > 0) {
+        if (!bySymbolSide[symbol]) {
+          bySymbolSide[symbol] = {
+            long: emptySymbolStats(symbol, 'long'),
+            short: emptySymbolStats(symbol, 'short'),
+          };
+        }
+        const sStats = bySymbolSide[symbol][side];
+        sStats.trades += 1;
+        sStats.totalPnl += pnl;
+        if (pnl > 0) sStats.wins += 1;
+        else if (pnl < 0) sStats.losses += 1;
+      }
     }
     for (const mode of ALL_MODES) {
       for (const side of SIDES) {
         const s = byModeSide[mode][side];
+        s.winRate = s.trades > 0 ? s.wins / s.trades : 0;
+        s.avgPnl = s.trades > 0 ? s.totalPnl / s.trades : 0;
+      }
+    }
+    for (const symbol of Object.keys(bySymbolSide)) {
+      for (const side of SIDES) {
+        const s = bySymbolSide[symbol][side];
         s.winRate = s.trades > 0 ? s.wins / s.trades : 0;
         s.avgPnl = s.trades > 0 ? s.totalPnl / s.trades : 0;
       }
@@ -313,5 +386,6 @@ export async function computeSelfObservation(
   globalAll.winRate = globalAll.trades > 0 ? globalAll.wins / globalAll.trades : 0;
 
   const entryBias = computeEntryBias(byModeSide, modePooled, globalPooled, globalAll);
-  return { lookbackHours, byModeSide, entryBias };
+  const symbolSideBias = computeSymbolSideBias(bySymbolSide);
+  return { lookbackHours, byModeSide, entryBias, bySymbolSide, symbolSideBias };
 }

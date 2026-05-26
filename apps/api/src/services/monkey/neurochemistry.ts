@@ -53,6 +53,26 @@ export interface NeurochemicalState {
  */
 const KAPPA_STAR = 64.0;
 
+/** Endorphin κ-proximity width (σ in exp(-|κ - κ*| / σ)). Frozen
+ *  canonical constant from
+ *    qig_core/consciousness/neurochemistry.py: ENDORPHIN_KAPPA_SIGMA: float = 16.0
+ *
+ *  This is the STRUCTURAL scale at which κ-distance becomes operationally
+ *  meaningful in the κ-proximity envelope — derived from the E8 generative
+ *  model, NOT from the basin's runtime kappaHistory stddev. The two are
+ *  different concepts that share units: rolling σ_κ is a tick-level
+ *  statistical property; ENDORPHIN_KAPPA_SIGMA is the structural scale
+ *  at which the envelope produces meaningful output.
+ *
+ *  Audit 2026-05-25 (#934): the prior implementation used
+ *  `sigmaKappa = stddev(kappaHistory)` for the exp envelope, which
+ *  produces σ ≈ 0.09 in production (basin's natural κ-jitter scale).
+ *  With observed |κ-κ*| ≈ 2.18, this gave exp(-24.2) ≈ 3e-11, pinning
+ *  endo at floor across 85-98% of all ticks. Switching to the canonical
+ *  16.0 gives exp(-0.136) ≈ 0.87 at the same kappa-distance — healthy
+ *  peak-generative signal across the kernel's observed κ range. */
+const ENDORPHIN_KAPPA_SIGMA = 16.0;
+
 /** Minimum samples in a history slice to compute a meaningful stddev.
  *  Below this, derivations fall back to the neutral identity value (the
  *  chemical's output-type origin), NOT to a hardcoded "default". This
@@ -87,11 +107,17 @@ function stddev(xs: ReadonlyArray<number>): number {
 }
 
 /** Z-score: (x − mean(history)) / stddev(history).
- *  Returns 0 (no signal) when stddev is 0 — the basin has not yet
- *  revealed its own scale. */
+ *  Returns 0 (no signal) when stddev is at or near 0 — the basin has not
+ *  yet revealed its own scale.
+ *
+ *  2026-05-25 — the `sd === 0` check was tightened to `sd < 1e-12` to
+ *  guard against floating-point drift in identical-history series:
+ *  e.g. `[0.1, 0.1, 0.1, ...]` produces sd ≈ 1.5e-17, which the strict
+ *  `=== 0` check missed, yielding spurious z-scores ~1.0 from
+ *  `(x - mean_with_fp_drift) / tiny`. */
 function zScore(x: number, history: ReadonlyArray<number>): number {
   const sd = stddev(history);
-  if (sd === 0) return 0;
+  if (sd < 1e-12) return 0;
   return (x - mean(history)) / sd;
 }
 
@@ -286,7 +312,22 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // this. STILL purely derived — reward is an EVENT in state, the
   // additive lift is a function of that state, not a constant.
   const dopFromReward = clip(inputs.rewardDopamineDelta ?? 0, 0, 1);
-  const dop = clip(dopFromPhi + dopFromReward, 0, 1);
+  // 2026-05-26 (#934 chemistry-pinning audit): the additive-then-clip
+  // composition `clip(dopFromPhi + dopFromReward, 0, 1)` truncates the
+  // upper half of the sum-space (sum ∈ [0,2] → clip at 1) and pins ~21%
+  // of ticks at the ceiling even in clean-reward conditions (84% under
+  // contaminated rewards before #931 fix). Soft-saturation
+  // `1 - exp(-(a+b))` asymptotes to 1.0 without ever pinning, preserving
+  // absolute semantics (dop=1 still means peak motivation, just unreachable).
+  //
+  // Behavioural change: typical-streak dop drops from ~1.00 (pinned) to
+  // ~0.63 (sum=1 soft-sat). Downstream rewardMult = 1 + (dop - gaba)
+  // becomes less aggressive in routine winning streaks. Flag-gated for
+  // monitored rollout — flip MONKEY_DOP_SOFT_SATURATION_LIVE=true once
+  // the typical rewardMult distribution is observed in production.
+  const dop = process.env.MONKEY_DOP_SOFT_SATURATION_LIVE === 'true'
+    ? 1 - Math.exp(-(dopFromPhi + dopFromReward))
+    : clip(dopFromPhi + dopFromReward, 0, 1);
 
   // ─── Serotonin ───────────────────────────────────────────────────
   // §29.1: stability / equilibrium. 2026-05-16 (#715, derivation-only):
@@ -330,37 +371,58 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
       void thrashRate;
     }
   } else if (obs?.basinVelocityHistory && obs.basinVelocityHistory.length >= HISTORY_MIN_SAMPLES) {
-    // Velocity-based fallback when mode transitions aren't supplied:
-    // ser = 1 - clip(z-score(bv), 0, ∞). Positive z (faster than
-    // basin's own typical) reduces ser; negative z (calmer than
-    // typical) saturates ser at 1.
+    // 2026-05-25 (CC2 audit F2 follow-up): the prior shape
+    // `clip(1 - max(0, z), 0, 1)` was the same one-sided-clamp
+    // meta-pattern PR #920 fixed elsewhere — when bv ≤ rolling mean
+    // (~50% of state-space by construction), z ≤ 0, max(0, z) = 0,
+    // serBase pinned at 1.0. Two-tailed sigmoid replaces it: both
+    // calm-than-typical and faster-than-typical are informative; ser
+    // settles near 0.5 at the bv-history mean, asymptotes 0/1.
+    // See [[feedback_steady_state_pinning_pattern]] for the meta-pattern.
     const z = zScore(inputs.basinVelocity, obs.basinVelocityHistory);
-    serBase = clip(1 - Math.max(0, z), 0, 1);
+    serBase = clip(1 - sigmoid(z), 0, 1);
   } else {
     // Cold-start fallback — legacy 1/max(bv,0.01). The 0.01 here is
     // a divide-by-zero guard (numeric identity for "as small as we
     // can measure"), not a tuning parameter.
     serBase = clip(1 / Math.max(inputs.basinVelocity, Number.EPSILON), 0, 1);
   }
-  const ser = clip(serBase + (inputs.rewardSerotoninDelta ?? 0), 0, 1);
+  // 2026-05-25 (steady-state-pinning fix): the previous shape
+  // `clip(serBase + rewardDelta, 0, 1)` pinned at exactly 1.0 when
+  // serBase was 1.0 (no recent mode transitions), making
+  // `rewardSerotoninDelta` (max ~0.15 per close, ~1.0 in a winning
+  // burst over the 20-min decay window) invisible. Compressing serBase
+  // by 0.85 leaves 0.15 headroom — matches the per-event max so a
+  // single win can register on top of a steady-mode baseline.
+  // Bursts above 0.15 still saturate at 1.0, but at that point the
+  // signal is "very high recent reward + structurally stable" which
+  // is the right pegged-at-max interpretation.
+  const ser = clip(0.85 * serBase + (inputs.rewardSerotoninDelta ?? 0), 0, 1);
 
   // ─── Norepinephrine ──────────────────────────────────────────────
-  // §29.1: alertness / surprise. 2026-05-16 (ne ext, derivation-only):
-  // ne = clip(z-score(surprise vs surpriseHistory), 0, ∞), squashed
-  // by tanh into [0, 1]. When the current surprise exceeds the basin's
-  // own typical surprise distribution, ne spikes; when it's within
-  // the basin's normal range, ne stays low. No hardcoded gain.
+  // §29.1: alertness / surprise.
   //
-  // Fallback (no observables): `tanh(surprise)` — no externally chosen
-  // scale, just a bounded identity on the input.
+  // 2026-05-25 (steady-state-pinning fix, see
+  // [[feedback_steady_state_pinning_pattern]]): the previous shape
+  // `clip(tanh(max(0, z)), 0, 1)` pinned at exactly 0 whenever current
+  // surprise was at or below the rolling mean — ~50% of state-space
+  // by construction, which is most of the time in stable regimes.
+  // Replaced with `sigmoid(z)`: both tails informative, ~0.5 at mean.
+  //
+  // Consumer audit 2026-05-25: 6 readers, all continuous-magnitude
+  // (no gate-threshold semantics). Behaviour shift: typical ne moves
+  // from 0.0 → 0.5, so `surpriseDiscount = 1 - 0.5*ne` (executive.ts:405)
+  // shifts from 1.0 typical to ~0.75 typical — restores the intended
+  // 25% leverage haircut that was dormant under the old pinning.
+  //
+  // Fallback (no observables): `sigmoid(surprise)` — same shape, no
+  // scale-setting constants.
   let ne: number;
   if (obs?.surpriseHistory && obs.surpriseHistory.length >= HISTORY_MIN_SAMPLES) {
     const z = zScore(inputs.surprise, obs.surpriseHistory);
-    // Positive z only (we don't care about "less surprised than usual" —
-    // that's just calm). tanh squashes z ∈ [0, ∞) into [0, 1).
-    ne = clip(Math.tanh(Math.max(0, z)), 0, 1);
+    ne = clip(sigmoid(z), 0, 1);
   } else {
-    ne = clip(Math.tanh(inputs.surprise), 0, 1);
+    ne = clip(sigmoid(inputs.surprise), 0, 1);
   }
 
   // ─── GABA ─────────────────────────────────────────────────────────
@@ -395,26 +457,31 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // ramp over the basin's coupling σ, no hardcoded cutoff or sigmoid.
   let endoBase: number;
   if (
-    obs?.kappaHistory && obs.kappaHistory.length >= HISTORY_MIN_SAMPLES
-    && obs?.externalCouplingHistory && obs.externalCouplingHistory.length >= HISTORY_MIN_SAMPLES
+    obs?.externalCouplingHistory && obs.externalCouplingHistory.length >= HISTORY_MIN_SAMPLES
   ) {
-    const sigmaKappa = stddev(obs.kappaHistory);
     const couplingMean = mean(obs.externalCouplingHistory);
     const couplingStddev = stddev(obs.externalCouplingHistory);
-    const sophiaThreshold = couplingMean;
-    // Smooth Sophia gate: 0 at/below the basin's mean coupling, ramps
-    // linearly to 1 at mean + 1σ. couplingStddev IS the natural ramp
-    // scale (the basin's own observed spread of coupling).
+    // 2026-05-25 (steady-state-pinning fix): the previous Sophia gate
+    // `clip((coupling - mean) / σ, 0, 1)` zeroed endo whenever
+    // coupling ≤ mean — ~50% of state-space by construction. Since
+    // externalCoupling = phi × (1 - bv) is a continuous magnitude in
+    // [0, 1] (not a binary engaged/disengaged qualifier — audit
+    // 2026-05-25), the right shape is sigmoid around the mean: 0.5
+    // at mean, asymptotes 0 (well below mean) and 1 (well above).
+    // Always non-zero so the κ-proximity envelope always contributes
+    // proportionally to recent coherence.
     const sophiaGate = couplingStddev > 0
-      ? clip((inputs.externalCoupling - sophiaThreshold) / couplingStddev, 0, 1)
-      : (inputs.externalCoupling >= sophiaThreshold ? 1 : 0);  // degenerate: σ=0
-    if (sigmaKappa === 0) {
-      // Basin's κ has been perfectly flat → no scale to smooth over.
-      // Fall back to the indicator (still binary in this degenerate case).
-      endoBase = (inputs.kappa === KAPPA_STAR ? 1 : 0) * sophiaGate;
-    } else {
-      endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / sigmaKappa) * sophiaGate;
-    }
+      ? sigmoid((inputs.externalCoupling - couplingMean) / couplingStddev)
+      : (inputs.externalCoupling >= couplingMean ? 1 : 0);  // degenerate: σ=0
+    // 2026-05-26 (#934 chemistry-pinning audit): apply canonical
+    // ENDORPHIN_KAPPA_SIGMA = 16.0 (frozen from qig_core canon), NOT the
+    // basin's rolling stddev(kappaHistory). The basin's rolling σ_κ
+    // (≈0.09 in production) is a tick-jitter statistical property;
+    // ENDORPHIN_KAPPA_SIGMA is the structural scale at which κ-distance
+    // becomes operationally meaningful in the κ-proximity envelope. The
+    // prior shape pinned endo at 3e-11 across 85–98% of ticks; canonical
+    // scale gives ~0.87 at observed |κ-κ*|=2.18 (healthy peak signal).
+    endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / ENDORPHIN_KAPPA_SIGMA) * sophiaGate;
   } else {
     // Cold start: no κ-scale derivation available. Use tanh on the
     // distance (arithmetic identity, no scale constant). Coupling gate

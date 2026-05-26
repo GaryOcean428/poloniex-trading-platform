@@ -47,7 +47,15 @@ export interface ModeProfile {
   slRatio: number;
   /** Multiplier on the derived currentEntryThreshold — <1 enters easier. */
   entryThresholdScale: number;
-  /** Exploration floor override for currentPositionSize (fraction of equity). */
+  /** Exploration floor override for currentPositionSize (fraction of equity).
+   *
+   *  2026-05-25 (observer-derive PR): `currentPositionSize` no longer
+   *  reads per-mode floors — collapsed to a single principled
+   *  EXPLORATION_FLOOR (0.20) inside executive.ts. The field is retained
+   *  on the interface for any telemetry consumer that still reads it,
+   *  but the field is unused by the sizing path. Removing the field
+   *  would break external consumers; ignoring it in the formula is the
+   *  cleaner step. */
   sizeFloor: number;
   /** Newborn sovereignCap floor override for currentLeverage. */
   sovereignCapFloor: number;
@@ -101,7 +109,14 @@ export const MODE_PROFILES: Record<MonkeyMode, ModeProfile> = {
     tpBaseFrac: 0.004,
     slRatio: 0.6,
     entryThresholdScale: 0.9,
-    sizeFloor: 0.08,
+    // 2026-05-25 sizing-relief PR: floors raised 2.5× per operator
+    // directive. Pre-change floors (0.08/0.10/0.12) combined with
+    // per-kernel sizeFraction 0.7 × per-lane budgetFrac 0.5 left
+    // cold-start margin at ~3% of equity — too small to clear fees
+    // and to capture real intraday swings. New floors saturate the
+    // existing 0.5 frac safety cap when chemistry is healthy and
+    // restore meaningful cold-start commitment.
+    sizeFloor: 0.20,
     sovereignCapFloor: 50,
     tickMs: 15_000,
     canEnter: true,
@@ -111,7 +126,7 @@ export const MODE_PROFILES: Record<MonkeyMode, ModeProfile> = {
     tpBaseFrac: 0.008,
     slRatio: 0.5,
     entryThresholdScale: 1.0,
-    sizeFloor: 0.10,
+    sizeFloor: 0.25,
     sovereignCapFloor: 15,
     tickMs: 30_000,
     canEnter: true,
@@ -121,7 +136,7 @@ export const MODE_PROFILES: Record<MonkeyMode, ModeProfile> = {
     tpBaseFrac: 0.020,
     slRatio: 0.3,
     entryThresholdScale: 1.1,
-    sizeFloor: 0.12,
+    sizeFloor: 0.30,
     sovereignCapFloor: 5,
     tickMs: 60_000,
     canEnter: true,

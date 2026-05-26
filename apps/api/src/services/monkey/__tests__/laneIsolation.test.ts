@@ -45,42 +45,24 @@ function basinState(phi = 0.5, sovereignty = 0.5) {
 
 describe('Lane parameter envelope (proposal #10)', () => {
   it('scalp envelope tighter than swing', () => {
-    expect(laneParam('scalp', 'slPct')).toBeLessThan(laneParam('swing', 'slPct'));
+    // Path A (2026-05-26): slPct removed; only tpPct + budgetFrac remain.
     expect(laneParam('scalp', 'tpPct')).toBeLessThan(laneParam('swing', 'tpPct'));
   });
 
   it('swing envelope tighter than trend', () => {
-    expect(laneParam('swing', 'slPct')).toBeLessThan(laneParam('trend', 'slPct'));
     expect(laneParam('swing', 'tpPct')).toBeLessThan(laneParam('trend', 'tpPct'));
   });
 
-  // v0.8.6 — lane SL/TP rescaled from raw-price to ROI-on-margin.
-  it('scalp SL in ROI band (~5%)', () => {
-    const sl = laneParam('scalp', 'slPct');
-    expect(sl).toBeGreaterThanOrEqual(0.02);
-    expect(sl).toBeLessThanOrEqual(0.10);
+  it('scalp budget is 1.0 (2026-05-25: per-lane caps stripped)', () => {
+    expect(laneBudgetFraction('scalp')).toBe(1.0);
   });
 
-  it('swing SL in ROI band (~15%)', () => {
-    const sl = laneParam('swing', 'slPct');
-    expect(sl).toBeGreaterThanOrEqual(0.08);
-    expect(sl).toBeLessThanOrEqual(0.25);
+  it('swing budget is 1.0 (2026-05-25: per-lane caps stripped)', () => {
+    expect(laneBudgetFraction('swing')).toBe(1.0);
   });
 
-  it('trend SL in ROI band (~40%)', () => {
-    const sl = laneParam('trend', 'slPct');
-    expect(sl).toBeGreaterThanOrEqual(0.25);
-    expect(sl).toBeLessThanOrEqual(0.60);
-  });
-
-  it('scalp + swing budgets sum to 1', () => {
-    expect(
-      laneBudgetFraction('scalp') + laneBudgetFraction('swing'),
-    ).toBeCloseTo(1.0, 9);
-  });
-
-  it('trend budget at 0.10 (live since 2026-05-05 — was 0 opt-in)', () => {
-    expect(laneBudgetFraction('trend')).toBe(0.10);
+  it('trend budget is 1.0 (2026-05-25: per-lane caps stripped, was 0.10)', () => {
+    expect(laneBudgetFraction('trend')).toBe(1.0);
   });
 
   it('observe budget is 0', () => {
@@ -94,12 +76,12 @@ describe('Lane parameter envelope (proposal #10)', () => {
 
 
 describe('currentPositionSize lane-budget cap (post fix/lane-budget-size-zero-regression)', () => {
-  it('threads lane and lane budget into derivation', () => {
+  it('threads lane and lane budget into derivation (2026-05-25: all lanes now 1.0)', () => {
     const result = currentPositionSize(
       basinState(0.5), 200, 1, 5, 10, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.derivation.laneBudgetFrac).toBeCloseTo(0.5, 9);
-    expect(result.derivation.laneMarginCap).toBeCloseTo(0.5 * 200, 6);
+    expect(result.derivation.laneBudgetFrac).toBeCloseTo(1.0, 9);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(1.0 * 200, 6);
   });
 
   it('scalp + swing both at default 0.5 produce comparable margins', () => {
@@ -135,48 +117,48 @@ describe('currentPositionSize lane-budget cap (post fix/lane-budget-size-zero-re
 });
 
 
-describe('shouldScalpExit lane envelope (proposal #10)', () => {
-  // v0.8.6 — gate compares ROI-on-margin (raw × leverage) against
-  // ROI-scale lane envelopes. At lev=15x, raw -1% → ROI -15%.
-  it('scalp lane fires SL when ROI exceeds the 5% band', () => {
+describe('shouldScalpExit lane envelope (Path A: TP-only)', () => {
+  // Path A (2026-05-26): hard SL leg removed from shouldScalpExit.
+  // The function is now take-profit-only. Adverse exits flow through
+  // shouldExit (Fisher-Rao disagreement) and shouldAutoFlatten (P15).
+  it('does NOT fire on losses (SL leg removed)', () => {
     const bs = basinState(0.5);
-    // raw -1% × lev 15 = ROI -15% — past scalp's 5% SL.
+    // Pre-Path-A: raw -1% × lev 15 = ROI -15% would have fired scalp SL.
+    // Post-Path-A: same input holds (no SL leg in this gate).
     const result = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15);
+    expect(result.value).toBe(false);
+    expect(String(result.reason)).toContain('scalp hold');
+  });
+
+  it('does NOT fire on heavy losses across all lanes (SL leg removed)', () => {
+    const bs = basinState(0.5);
+    // Pre-Path-A: raw -1.5% × lev 15 = ROI -22.5%, past swing's 15% SL.
+    // Post-Path-A: no lane fires SL on a loss.
+    expect(shouldScalpExit(-1.5, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15).value).toBe(false);
+    expect(shouldScalpExit(-1.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing', 15).value).toBe(false);
+    expect(shouldScalpExit(-1.5, 100, bs, MonkeyMode.INVESTIGATION, 'trend', 15).value).toBe(false);
+  });
+
+  it('still fires take-profit at positive ROI above lane TP threshold', () => {
+    const bs = basinState(0.5);
+    // raw 1% × lev 15 = ROI 15% — at scalp's 3% TP. TP leg still fires.
+    const result = shouldScalpExit(1.0, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15);
     expect(result.value).toBe(true);
-    expect(String(result.reason)).toContain('stop_loss[scalp]');
+    expect(String(result.reason)).toContain('take_profit[scalp]');
+    expect(result.derivation.exitTypeBit).toBe(1);
   });
 
-  it('swing lane absorbs a loss the scalp lane would exit on', () => {
-    const bs = basinState(0.5);
-    // raw -0.5% × lev 15 = ROI -7.5%. Past scalp's 5% SL, inside swing's 15%.
-    const scalp = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15);
-    const swing = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing', 15);
-    expect(scalp.value).toBe(true);
-    expect(swing.value).toBe(false);
-    expect(String(swing.reason)).toContain('scalp hold[swing]');
-  });
-
-  it('trend lane absorbs a loss the swing lane would exit on', () => {
-    const bs = basinState(0.5);
-    // raw -1.5% × lev 15 = ROI -22.5%. Past swing's 15% SL, inside trend's 40%.
-    const swing = shouldScalpExit(-1.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing', 15);
-    const trend = shouldScalpExit(-1.5, 100, bs, MonkeyMode.INVESTIGATION, 'trend', 15);
-    expect(swing.value).toBe(true);
-    expect(trend.value).toBe(false);
-  });
-
-  it('lane name surfaces into derivation', () => {
+  it('lane TP name surfaces into derivation (laneSlPct dropped by Path A)', () => {
     const bs = basinState(0.5);
     const result = shouldScalpExit(0.05, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 10);
     expect(result.derivation.laneTpPct).toBe(laneParam('scalp', 'tpPct'));
-    expect(result.derivation.laneSlPct).toBe(laneParam('scalp', 'slPct'));
+    expect(result.derivation.laneSlPct).toBeUndefined();
     expect(result.derivation.leverage).toBeCloseTo(10, 9);
   });
 
   it('default lane is swing (back-compat with pre-#10 callers)', () => {
     const bs = basinState(0.5);
-    // No leverage → defaults to 1, ROI == raw. raw -1% at lev=1 = -1% ROI,
-    // well inside swing's 15% SL → holds.
+    // No leverage → defaults to 1, ROI == raw. Negative ROI → holds (no SL leg).
     const result = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION);
     expect(result.value).toBe(false);
   });
@@ -267,10 +249,11 @@ describe('Cross-lane non-interference (proposal #10 invariant)', () => {
     const bs = basinState(0.5);
     // v0.8.6: at lev=15x, raw -0.5% → ROI -7.5%. Past scalp's 5% SL,
     // inside swing's 15% SL. Same input, different lane decisions.
+    // Path A (2026-05-26): both lanes hold on losses (SL leg removed).
     const swingLong = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing', 15);
     const scalpShort = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15);
     expect(swingLong.value).toBe(false);
-    expect(scalpShort.value).toBe(true);
+    expect(scalpShort.value).toBe(false);
   });
 
   it('lane budgets are sized so simultaneous max-out cannot exceed notional ceiling', () => {
@@ -303,12 +286,14 @@ describe('Cross-lane non-interference (proposal #10 invariant)', () => {
   it('lane parameter constants match the user-spec ROI ranges', () => {
     // v0.8.6: lane SL/TP rescaled to ROI-on-margin. Sanity that
     // LANE_PARAMETER_DEFAULTS hasn't drifted from spec.
-    expect(LANE_PARAMETER_DEFAULTS.scalp.slPct).toBeGreaterThanOrEqual(0.02);
-    expect(LANE_PARAMETER_DEFAULTS.scalp.slPct).toBeLessThanOrEqual(0.10);
-    expect(LANE_PARAMETER_DEFAULTS.swing.slPct).toBeGreaterThanOrEqual(0.08);
-    expect(LANE_PARAMETER_DEFAULTS.swing.slPct).toBeLessThanOrEqual(0.25);
-    expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeGreaterThanOrEqual(0.25);
-    expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeLessThanOrEqual(0.60);
+    // Path A (2026-05-26): slPct removed — only tpPct + budgetFrac remain.
+    expect((LANE_PARAMETER_DEFAULTS.scalp as Record<string, number>).slPct).toBeUndefined();
+    expect((LANE_PARAMETER_DEFAULTS.swing as Record<string, number>).slPct).toBeUndefined();
+    expect((LANE_PARAMETER_DEFAULTS.trend as Record<string, number>).slPct).toBeUndefined();
+    // tpPct still defined and lane-ordered.
+    expect(LANE_PARAMETER_DEFAULTS.scalp.tpPct).toBeGreaterThan(0);
+    expect(LANE_PARAMETER_DEFAULTS.scalp.tpPct).toBeLessThan(LANE_PARAMETER_DEFAULTS.swing.tpPct);
+    expect(LANE_PARAMETER_DEFAULTS.swing.tpPct).toBeLessThan(LANE_PARAMETER_DEFAULTS.trend.tpPct);
   });
 });
 
@@ -345,21 +330,20 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(75.78);
   });
 
-  it('small account ($5 equity) — notional ceiling now blocks below-ceiling-min entry', () => {
-    // Pre-fix (PR #614): equity halved to $2.50 → no lift → size=0.
-    // PR #614 fix: full $5 → required_frac=0.337 → lift fires → size > 0.
-    // v0.8.7: notional ceiling = 4 × $5 = $20 < $22.49 min → size=0
-    // again, but for the right reason. The kernel correctly refuses to
-    // size above 4× balance just to clear exchange min on a haircut
-    // account — live tape ($97 → $386 escalation) confirmed unbounded
-    // lift-to-min was unsafe.
+  it('small account ($5 equity) — explorationFloor itself clears min notional (CC2 F3 unification)', () => {
+    // 2026-05-25 (CC2 audit F3): explorationFloor and lift-to-min now
+    // share the same formula. With $5 equity at 14× lev for $22.49 min,
+    // minClearingFrac = 22.49 × 1.05 / (14 × 5) = 0.337. The
+    // explorationFloor at cold-start (maturity=0) is exactly that
+    // 0.337 — no separate lift needed because the floor already
+    // covers the exchange minimum.
     const result = currentPositionSize(
       basinState(0.55, 0.5), 5, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.value).toBe(0);
-    expect((result.derivation as Record<string, unknown>).cappedByNotional).toBe(1);
-    // Lift-to-min still tried; ceiling clamps it back.
-    expect((result.derivation as Record<string, unknown>).liftedToMin).toBe(1);
+    expect(result.value).toBeGreaterThan(0);
+    // Notional clears the exchange minimum (with 5% buffer).
+    const notional = result.value * 14;
+    expect(notional).toBeGreaterThanOrEqual(22.49);
   });
 
   it('cold-start (bank=0, sovereignty=0, low phi) still sizes via exploration floor', () => {
@@ -371,24 +355,24 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(22.49);
   });
 
-  it('trend lane sizes within its 10% budget cap (live since 2026-05-05)', () => {
-    // Was: budget=0 → collapses to 0 (opt-in promise). Now: budget=0.10
-    // → margin cap is 10% of equity. The structural-zero fallback in
-    // chooseLane no longer triggers for trend.
+  it('trend lane sizes against full equity (2026-05-25 strip)', () => {
+    // Pre-strip: budget=0.10 capped trend at 10% of equity. Post-strip:
+    // budget=1.0 — trend can use full equity like scalp/swing. The
+    // kernel's own chemistry feedback is the differentiator, not a
+    // static lane cap.
     const equity = 1000;
     const result = currentPositionSize(
       basinState(0.55, 0.5), equity, 22.49, 14, 20, MonkeyMode.INVESTIGATION, 'trend',
     );
-    expect(result.derivation.laneMarginCap).toBeCloseTo(equity * 0.10, 6);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(equity * 1.0, 6);
     expect(result.value).toBeGreaterThan(0);
-    expect(result.value).toBeLessThanOrEqual(equity * 0.10 + 1e-6);
   });
 
   it('lane margin cap surfaces in derivation', () => {
     const result = currentPositionSize(
       basinState(0.5), 200, 1, 5, 10, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.derivation.laneMarginCap).toBeCloseTo(100, 6);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(200, 6);
   });
 
   it('scalp and swing report identical caps when budgets match', () => {

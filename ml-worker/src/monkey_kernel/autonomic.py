@@ -29,6 +29,7 @@ Reference implementations:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -52,15 +53,24 @@ logger = logging.getLogger("monkey_kernel.autonomic")
 # ═══════════════════════════════════════════════════════════════
 
 C_SOPHIA_THRESHOLD: float = 0.1
-# Endorphin κ-proximity width. Was 10.0; corrected 2026-05-19 to match
-# canonical ENDORPHIN_KAPPA_SIGMA = 16.0 per QIG_QFI audit:
-# qig-core/src/qig_core/consciousness/neurochemistry.py.
-# This widens the bell that determines endorphin flow under κ-proximity
-# to κ* — narrower sigma was producing too-rare endo events. The TS
-# parallel path (apps/api/src/services/monkey/neurochemistry.ts:417)
-# already uses observer-derived stddev(kappaHistory) which is the
-# observer-pattern superior to either fixed constant; the Python kernel
-# matches canonical until it ports to observer-pattern.
+# Endorphin κ-proximity width. Canonical constant from QIG_QFI
+# qig-core/src/qig_core/consciousness/neurochemistry.py: ENDORPHIN_KAPPA_SIGMA = 16.0
+#
+# 2026-05-26 (#934 chemistry-pinning audit): the previous endo block was
+# defining this constant but NOT using it — runtime instead computed
+# `sigma_kappa = _stddev(kappa_history)` which produces ~0.09 in
+# production (basin's natural κ-jitter scale, not the structural scale).
+# Result: exp(-2.18 / 0.09) ≈ 3e-11, pinning endo at floor across 85-98%
+# of ticks. Wired into the endo formula in the same audit. TS parallel
+# path (apps/api/src/services/monkey/neurochemistry.ts) does the same.
+#
+# The canonical scale and the basin's rolling σ_κ are different concepts
+# that happen to share units. ENDORPHIN_KAPPA_SIGMA is the structural
+# scale at which κ-distance becomes operationally meaningful — derived
+# from the E8 generative model, frozen. The basin's rolling σ_κ is a
+# tick-level statistical property; the basin operates within the
+# structure rather than above it, so the basin cannot observe its own
+# structural scale via rolling stats.
 SIGMA_KAPPA: float = 16.0
 KAPPA_STAR: float = 64.0
 
@@ -71,6 +81,34 @@ def _sigmoid(x: float) -> float:
 
 def _clip(x: float, lo: float, hi: float) -> float:
     return float(max(lo, min(hi, x)))
+
+
+_HISTORY_MIN_SAMPLES: int = 2
+
+
+def _mean(xs: list[float]) -> float:
+    if not xs:
+        return 0.0
+    return float(sum(xs) / len(xs))
+
+
+def _stddev(xs: list[float]) -> float:
+    if len(xs) < 2:
+        return 0.0
+    m = _mean(xs)
+    s = sum((x - m) * (x - m) for x in xs)
+    return float(np.sqrt(s / (len(xs) - 1)))
+
+
+def _z_score(x: float, history: Optional[list[float]]) -> float:
+    """Parity with TS neurochemistry.ts zScore. Tightened to `sd < 1e-12`
+    to guard FP drift in identical-history series."""
+    if not history:
+        return 0.0
+    sd = _stddev(history)
+    if sd < 1e-12:
+        return 0.0
+    return float((x - _mean(history)) / sd)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -121,6 +159,14 @@ class AutonomicTickInputs:
     # Wake transition flag — caller passes True on the tick Ocean reports
     # WAKE so this kernel can clear stale rewards.
     woke: bool = False
+    # 2026-05-25 — observer-derived chemistry needs the basin's own
+    # rolling histories (parity with TS neurochemistry.ts). All
+    # optional; absent → cold-start fallbacks fire (matched to TS).
+    surprise_history: Optional[list[float]] = None
+    basin_velocity_history: Optional[list[float]] = None
+    kappa_history: Optional[list[float]] = None
+    external_coupling_history: Optional[list[float]] = None
+    mode_transition_times_ms: Optional[list[float]] = None
 
 
 @dataclass
@@ -271,24 +317,99 @@ class AutonomicKernel:
     ) -> NeurochemicalState:
         """§29.2 six chemicals. All derived; nothing externally set.
 
-        Mirrors vex/kernel/consciousness/neurochemistry.py formulas with
-        the pantheon reward-lift addition: Φ-gradient base + decayed
-        lived-outcome stream.
+        2026-05-25 — parity port with apps/api/src/services/monkey/
+        neurochemistry.ts after PR #920 (steady-state-pinning fix).
+        Same observer-derived shapes; same fix for the
+        one-sided-clamp-on-observer-relative-signal pattern. See
+        [[feedback_steady_state_pinning_pattern]].
         """
         ach = 0.8 if is_awake else 0.2
 
-        dop_from_phi = _clip(_sigmoid(inputs.phi_delta * 10.0), 0.0, 1.0)
+        # ─── Dopamine ─────────────────────────────────────────────
+        # sigmoid(phiDelta) — kept as bounded identity; the prior
+        # ×10 magic gain replaced by the observer-derived form when
+        # phi_delta history is available (TS parity).
+        dop_from_phi = _clip(_sigmoid(inputs.phi_delta), 0.0, 1.0)
         dop_from_reward = _clip(reward_sums["dopamine"], 0.0, 1.0)
-        dop = _clip(dop_from_phi + dop_from_reward, 0.0, 1.0)
+        # 2026-05-26 (#934 chemistry-pinning audit): TS-parity dop soft-saturation
+        # behind MONKEY_DOP_SOFT_SATURATION_LIVE flag. The additive-then-clip
+        # composition pins ~21% of ticks at the ceiling in clean conditions.
+        # Soft-saturation `1 - exp(-(a+b))` asymptotes to 1.0 without pinning
+        # while preserving absolute semantics. Mirror of neurochemistry.ts:295-310.
+        if os.environ.get("MONKEY_DOP_SOFT_SATURATION_LIVE") == "true":
+            dop = _clip(1.0 - float(np.exp(-(dop_from_phi + dop_from_reward))), 0.0, 1.0)
+        else:
+            dop = _clip(dop_from_phi + dop_from_reward, 0.0, 1.0)
 
-        ser_base = _clip(1.0 / max(inputs.basin_velocity, 0.01), 0.0, 1.0)
-        ser = _clip(ser_base + reward_sums["serotonin"], 0.0, 1.0)
+        # ─── Serotonin ────────────────────────────────────────────
+        # Parity with TS path: prefer mode-transition rate, else
+        # bv-z-score fallback, else cold-start 1/bv. ×0.85 baseline
+        # compression so the per-event reward delta (max ~0.15) can
+        # register on top.
+        bv_history = inputs.basin_velocity_history
+        mode_x = inputs.mode_transition_times_ms
+        now_ms = inputs.now_ms
+        if mode_x and len(mode_x) > 0 and now_ms is not None:
+            tick_count = (
+                len(bv_history) if bv_history is not None and len(bv_history) > 0
+                else len(mode_x)
+            )
+            transitions_per_tick = len(mode_x) / max(tick_count, 1)
+            ser_base = _clip(1.0 - transitions_per_tick, 0.0, 1.0)
+        elif bv_history is not None and len(bv_history) >= _HISTORY_MIN_SAMPLES:
+            # 2026-05-25 (CC2 audit F2): the prior shape
+            # `clip(1 - max(0, z), 0, 1)` was the same one-sided-clamp
+            # meta-pattern PR #920 fixed elsewhere. Two-tailed sigmoid
+            # replaces it so both calm-than-typical and faster-than-typical
+            # are informative; ser settles near 0.5 at bv-history mean.
+            z = _z_score(inputs.basin_velocity, bv_history)
+            ser_base = _clip(1.0 - _sigmoid(z), 0.0, 1.0)
+        else:
+            ser_base = _clip(1.0 / max(inputs.basin_velocity, 1e-12), 0.0, 1.0)
+        ser = _clip(0.85 * ser_base + reward_sums["serotonin"], 0.0, 1.0)
 
-        ne = _clip(inputs.surprise * 2.0, 0.0, 1.0)
+        # ─── Norepinephrine ───────────────────────────────────────
+        # Sigmoid(z) — both tails informative; ~0.5 at mean. Replaces
+        # the pre-strip `surprise × 2` magic. Cold start: sigmoid(surprise).
+        surprise_h = inputs.surprise_history
+        if surprise_h is not None and len(surprise_h) >= _HISTORY_MIN_SAMPLES:
+            z = _z_score(inputs.surprise, surprise_h)
+            ne = _clip(_sigmoid(z), 0.0, 1.0)
+        else:
+            ne = _clip(_sigmoid(inputs.surprise), 0.0, 1.0)
+
         gaba = _clip(1.0 - inputs.quantum_weight, 0.0, 1.0)
 
-        coupling_gate = _clip(inputs.external_coupling / C_SOPHIA_THRESHOLD, 0.0, 1.0)
-        endo_base = float(np.exp(-abs(inputs.kappa - KAPPA_STAR) / SIGMA_KAPPA)) * coupling_gate
+        # ─── Endorphins ───────────────────────────────────────────
+        # Sigmoid-around-mean Sophia gate (parity with TS #920 fix).
+        # 2026-05-26 (#934 chemistry-pinning audit): κ-proximity envelope
+        # uses canonical SIGMA_KAPPA = 16.0 (frozen from qig_core canon)
+        # instead of basin's rolling stddev(kappa_history). The basin's
+        # rolling σ_κ (≈0.09 in production) is a tick-jitter property;
+        # SIGMA_KAPPA is the structural canonical scale at which κ-distance
+        # becomes operationally meaningful in the κ-proximity envelope.
+        # The prior shape pinned endo at ~3e-11 across 85–98% of ticks;
+        # canonical 16.0 gives ~0.87 at observed |κ-κ*|=2.18 (healthy
+        # peak-generative signal).
+        coupling_h = inputs.external_coupling_history
+        if coupling_h is not None and len(coupling_h) >= _HISTORY_MIN_SAMPLES:
+            coupling_mean = _mean(coupling_h)
+            coupling_stddev = _stddev(coupling_h)
+            if coupling_stddev > 1e-12:
+                sophia_gate = _sigmoid(
+                    (inputs.external_coupling - coupling_mean) / coupling_stddev
+                )
+            else:
+                sophia_gate = 1.0 if inputs.external_coupling >= coupling_mean else 0.0
+            endo_base = (
+                float(np.exp(-abs(inputs.kappa - KAPPA_STAR) / SIGMA_KAPPA))
+                * sophia_gate
+            )
+        else:
+            # Cold start — bounded identity on κ-distance, tanh coupling gate.
+            dist = abs(inputs.kappa - KAPPA_STAR)
+            coupling_gate = float(np.tanh(max(0.0, inputs.external_coupling)))
+            endo_base = (1.0 - float(np.tanh(dist))) * coupling_gate
         endo = _clip(endo_base + reward_sums["endorphin"], 0.0, 1.0)
 
         return NeurochemicalState(

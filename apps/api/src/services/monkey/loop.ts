@@ -55,7 +55,7 @@ import {
   velocity,
   type Basin,
 } from './basin.js';
-import { callAutonomicTick } from './autonomic_client.js';
+import { callAutonomicTick, callAutonomicReward } from './autonomic_client.js';
 import { aggregatePeakTracker } from './aggregate_peak.js';
 import { wsPositionCache } from './ws_position_cache.js';
 import { marketIntelCache } from './market_intel.js';
@@ -67,6 +67,15 @@ import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
+import {
+  makeRotationState,
+  promoteToLive,
+  recordClose as recordRotationClose,
+  rollingWinRate,
+  shouldAutoPromote,
+  type RotationPeerSnapshot,
+  type RotationState,
+} from './kernel_rotation.js';
 import { isPhiLeakyEnabled, updateLeakyPhi } from './phi_integrator.js';
 import { structuralVetoMonitor } from './structural_veto_monitor.js';
 import { mlAgentDecide } from '../ml_agent/decide.js';
@@ -135,6 +144,8 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
+import { SAFE_PNL_FROM_ROW, verifyPnl } from './safePnlSql.js';
+import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { observeEquity, sizeDeflection } from './equity_gradient.js';
 import {
@@ -154,15 +165,8 @@ import {
 } from './compositional_executive.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { signalScorer, resolveEntryGate } from './signal_scorer.js';
-import {
-  getOperatorRiskSettings,
-  getTodayMonkeyRealizedPnl,
-  getOpenMonkeyPositionCount,
-  getEntryRiskSettingsHalt,
-  adjustTodayMonkeyRealizedPnlCache,
-  adjustOpenMonkeyPositionCountCache,
-} from './risk_settings.js';
-import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
+import { getOperatorRiskSettings } from './risk_settings.js';
+import { QIGRAMv2Partition, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
   newMTFState,
   onTickAppend as mtfOnTickAppend,
@@ -200,17 +204,6 @@ import {
 
 /** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
-
-interface TickRiskProjection {
-  openMonkeyPositions: number | null;
-}
-
-/** Φ below which the canonical sleep cycle enters DREAMING/consolidation
- *  (qig-core 2.8.0 `consciousness/sleep.py` SLEEP_PHI_THRESHOLD). The
- *  QIGRAMv2 consolidation pass is gated on this so dead-memory eviction
- *  runs during the low-Φ consolidation-appropriate phase, never as a
- *  per-tick side-effect. */
-const SLEEP_PHI_THRESHOLD = 0.45;
 
 /**
  * Env-number coercion that respects 0 as a legitimate value.
@@ -801,6 +794,8 @@ export function arbiterRoster(): Set<ArbiterAgentLabel> {
  */
 export class MonkeyKernel extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** #932 row-level pnl divergence scanner timer. Runs independent of tick(). */
+  private pnlScanTimer: ReturnType<typeof setInterval> | null = null;
   private tickMs: number;
   private readonly baseTickMs: number;
   private readonly symbols: string[];
@@ -865,6 +860,20 @@ export class MonkeyKernel extends EventEmitter {
    *  feeds the result to computeNeurochemicals. Pantheon-style — chem
    *  levels are DERIVED, never SET. */
   private pendingRewards: ActivityReward[] = [];
+  /**
+   * Per-kernel live/paper rotation state. Tracks consecutive losses
+   * and rolling PnLs for the kernel-paper-rotation feature (the
+   * pre-cutover allocation mechanism: 5 consec losses → demote;
+   * paper WR within 10% of best live → promote). Auto-promotion +
+   * virtual position tracking land in the follow-up PR; this PR is
+   * observability-only — demotion fires a log + kernel event so the
+   * operator (or a future cross-kernel arbiter) can act on it.
+   *
+   * Doctrinally NOT an auto-halt — the kernel keeps trading after
+   * demotion unless the operator pauses it. Chemistry remains the
+   * primary feedback channel; rotation is a structural signal.
+   */
+  private rotation: RotationState = makeRotationState();
   /**
    * LIMIT_MAKER #793 (Class B #5) — pending post-only scalp orders that
    * have been placed but not yet observed as filled. Key: orderId.
@@ -1053,10 +1062,13 @@ export class MonkeyKernel extends EventEmitter {
    * fresh basins are integrated. Only consumed when
    * `L_QIGRAM_V2_ENABLED === 'true'`; otherwise the legacy
    * resonance-bank sovereignty path is preserved (default behavior). */
-  private readonly qigramV2Store: QIGRAMv2State = new QIGRAMv2State();
-  /** Tick counter for QIGRAMv2 store decay scheduling. Decays all
-   *  weights every SOV_DECAY_PERIOD_TICKS calls. */
-  private qigramV2TickCount = 0;
+  private readonly qigramV2Store: QIGRAMv2Partition = new QIGRAMv2Partition();
+  /** Per-symbol tick counter for QIGRAMv2 store id generation. Each
+   *  symbol's partition has its own LRU buffer, so the counter is
+   *  partitioned too — keeps ids unique within a symbol's store and
+   *  prevents BTC ticks from displacing ETH ids in any shared key
+   *  space. */
+  private readonly qigramV2TickCount: Map<string, number> = new Map();
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -1204,6 +1216,16 @@ export class MonkeyKernel extends EventEmitter {
             agent,
           });
         } catch { /* non-fatal */ }
+        // Mirror the same reward into the Python autonomic kernel so
+        // both neurochemistries see the same outcome stream. Fire-and-
+        // forget — callAutonomicReward already swallows transport errors.
+        void callAutonomicReward({
+          instanceId: this.instanceId,
+          source: `reconciler_recovered:${String(payload.ghostReason ?? 'unknown')}`,
+          symbol: event.symbol,
+          realizedPnlUsdt: pnl,
+          marginUsdt: 5,
+        });
         const ghostReason = String(payload.ghostReason ?? 'unknown');
         logger.info(
           `[Monkey] Agent ${agent} emotion stack updated from recovered ghost close: pnl=${pnl.toFixed(4)} side=${side} reason=${ghostReason}`,
@@ -1231,12 +1253,31 @@ export class MonkeyKernel extends EventEmitter {
     void this.tick();
     this.timer = setInterval(() => void this.tick(), this.tickMs);
     this.timer.unref?.();
+
+    // #932 row-level pnl divergence scanner. Runs every 60s, scans the
+    // last 15min of closed rows for phantom-class divergence. Alerts
+    // fire as ERROR-level logs with structured row context so paging
+    // wires can match on `[pnl_periodic_scan] NEW phantom detected`.
+    // Cheap query (LIMIT 200, indexed on exit_time); ignored failures
+    // are non-fatal to the main tick loop.
+    this.pnlScanTimer = setInterval(() => {
+      void runPeriodicPnlScan().catch((err) => {
+        logger.warn('[Monkey] pnl periodic scan failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, 60_000);
+    this.pnlScanTimer.unref?.();
   }
 
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.pnlScanTimer) {
+      clearInterval(this.pnlScanTimer);
+      this.pnlScanTimer = null;
     }
     logger.info('[Monkey] kernel sleeping');
   }
@@ -1570,10 +1611,9 @@ export class MonkeyKernel extends EventEmitter {
       // LIMIT_MAKER_STALE_MS (2 min). Errors are non-fatal — the next
       // tick retries cancel.
       try { await this.cancelStaleLimitMakers(); } catch { /* non-fatal */ }
-      const tickRiskProjection: TickRiskProjection = { openMonkeyPositions: null };
       for (const sym of this.symbols) {
         try {
-          await this.processSymbol(sym, tickRiskProjection);
+          await this.processSymbol(sym);
         } catch (err) {
           logger.warn(`[Monkey] ${sym} tick failed`, {
             err: err instanceof Error ? err.message : String(err),
@@ -1715,6 +1755,7 @@ export class MonkeyKernel extends EventEmitter {
               `UPDATE autonomous_trades
                   SET status='closed', exit_time=NOW(),
                       exit_reason='maker_cancelled_unfilled',
+                      exit_gate='maker_cancelled_unfilled',
                       exit_order_id=$1, pnl=0
                 WHERE order_id=$1 AND status='open'`,
               [s.orderId],
@@ -1759,7 +1800,7 @@ export class MonkeyKernel extends EventEmitter {
    *   5. DECIDE   — propose action (observe-only in v0.1)
    *   6. PERSIST  — write trajectory + decision to DB for audit
    */
-  private async processSymbol(symbol: string, tickRiskProjection: TickRiskProjection): Promise<void> {
+  private async processSymbol(symbol: string): Promise<void> {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
 
@@ -1917,50 +1958,14 @@ export class MonkeyKernel extends EventEmitter {
       availableEquity,
     } = await this.fetchAccountContext(symbol);
 
-    // Operator risk profile (RiskSettings UI → risk_settings table,
-    // migration 055). Honest hard ceilings only — leverage clamp,
-    // max-concurrent-positions gate, daily-loss halt. Cached 60s.
-    // riskSettings is null when no operator profile is saved → the
-    // ceilings below are skipped entirely (opt-in; no behaviour change).
-    // The three reads are independent — fetch in parallel so a
-    // cache-miss tick costs one round-trip of latency, not three.
-    const [riskSettings, todayRealizedPnl, openMonkeyPositions] = await Promise.all([
-      getOperatorRiskSettings(),
-      getTodayMonkeyRealizedPnl(),
-      getOpenMonkeyPositionCount(),
-    ]);
-    if (tickRiskProjection.openMonkeyPositions === null) {
-      tickRiskProjection.openMonkeyPositions = openMonkeyPositions;
-    }
-    let projectedTodayRealizedPnl = todayRealizedPnl;
-    const noteProjectedEntry = (): void => {
-      tickRiskProjection.openMonkeyPositions = Math.max(
-        0,
-        (tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions) + 1,
-      );
-      adjustOpenMonkeyPositionCountCache(1);
-    };
-    const noteProjectedClose = (pnl: number, rowsClosed = 1): void => {
-      const closedRows = Number.isFinite(rowsClosed)
-        ? Math.max(0, Math.trunc(rowsClosed))
-        : 1;
-      if (Number.isFinite(pnl)) {
-        projectedTodayRealizedPnl += pnl;
-        adjustTodayMonkeyRealizedPnlCache(pnl);
-      }
-      tickRiskProjection.openMonkeyPositions = Math.max(
-        0,
-        (tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions) - closedRows,
-      );
-      adjustOpenMonkeyPositionCountCache(-closedRows);
-    };
-    const currentEntryRiskSettingsHalt = (): ReturnType<typeof getEntryRiskSettingsHalt> =>
-      getEntryRiskSettingsHalt({
-        riskSettings,
-        todayRealizedPnl: projectedTodayRealizedPnl,
-        equityUsdt: availableEquity,
-        openMonkeyPositions: tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions,
-      });
+    // Operator risk profile — only `max_leverage` is enforced (audited
+    // 15× safety ceiling, applied as a clamp on `maxLevBoundary` below).
+    // 2026-05-25 doctrine: the kernel trades autonomously. The
+    // daily-loss-limit and max-concurrent-positions halts that used to
+    // suppress entries have been removed — losses feed back to
+    // neurochemistry (dopamine drop, frustration); the kernel adjusts
+    // itself. Cached 60s; null when no profile saved (no ceiling).
+    const riskSettings = await getOperatorRiskSettings();
 
     // 2. PERCEIVE — raw basin then refract through identity.
     // Post #ml-separation: ml fields omitted; perception defaults dims
@@ -2160,30 +2165,32 @@ export class MonkeyKernel extends EventEmitter {
     //
     // Sov rises as fresh basins integrate; falls as weights decay past
     // MIN_ACTIVE_WEIGHT (canonical 0.01). decayAll() only DECAYS weight —
-    // it never removes entries, so without the consolidation pass below
-    // `_entries` grows unboundedly and the sovereignty denominator (and
-    // thus position size) decays toward zero with session uptime. The
-    // sleep-cycle CONSOLIDATING pass (consolidate()) prunes the dead
-    // tombstones; it is gated on the canonical sleep-cycle Φ threshold so
-    // eviction is the sleep cycle's job, not a per-tick side-effect.
+    // it never removes entries, so without consolidate() below `_entries`
+    // grows unboundedly and the sovereignty denominator (and thus
+    // position size) decays toward zero with session uptime. PR906
+    // paired consolidate() with decayAll() per-tick which made the
+    // active and storage sets bit-identical (sov pinned at 1.0). #912
+    // replaced that with an LRU bound on _entries inside the store.
+    // But a single shared store across DEFAULT_SYMBOLS (BTC + ETH) sees
+    // 2 inserts per tick, so HISTORY_MAX = 100 only covered ~49 ticks
+    // of age — still below the ~90 ticks needed for decay to cross
+    // MIN_ACTIVE_WEIGHT. Sov pinned at 1.0 again via a different
+    // mechanism. This fix partitions the store by symbol: each
+    // symbol's buffer covers ≥ 90-tick decay-to-threshold independently,
+    // and per-symbol sov is a more informative signal than the
+    // conflated aggregate.
     let sovereignty: number;
     if (isQigramV2Enabled()) {
-      this.qigramV2TickCount += 1;
-      // Per-symbol|per-tick key so different symbols' snapshots
-      // coexist; weight=1.0 at storage time (canonical initial), correct
-      // =true (basin counts toward active until decayed below threshold).
+      const nextTick = (this.qigramV2TickCount.get(symbol) ?? 0) + 1;
+      this.qigramV2TickCount.set(symbol, nextTick);
       this.qigramV2Store.integrate(
-        `${symbol}|tick=${this.qigramV2TickCount}`,
+        symbol,
+        `tick=${nextTick}`,
         basin,
         { weight: 1.0, correct: true },
       );
-      this.qigramV2Store.decayAll();
-      // Sleep-cycle CONSOLIDATING pass — prune decayed-dead entries so the
-      // sovereignty denominator tracks kernel health, not session uptime.
-      if (phi < SLEEP_PHI_THRESHOLD) {
-        this.qigramV2Store.consolidate();
-      }
-      sovereignty = this.qigramV2Store.sovereignty;
+      this.qigramV2Store.decayAll(symbol);
+      sovereignty = this.qigramV2Store.sovereignty(symbol);
     } else {
       sovereignty = await resonanceBank.sovereignty();
     }
@@ -2528,7 +2535,16 @@ export class MonkeyKernel extends EventEmitter {
     // operator directive.
     //
     // Cold start (history length < 2 → stddev undefined → identity 1).
-    const selfObsWinRateBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    // Compose per-(mode, side) bias with per-(symbol, side) bias. The
+    // symbol axis is orthogonal to mode — closes the 2026-05-25 gap
+    // where ETH long losses pooled with BTC long wins in the
+    // (CREATOR_TREND_UP, long) bucket and never accumulated symbol-
+    // specific evidence. Both biases are Wilson-CI gated and bounded
+    // to [0.7, 1.3], so the composed multiplier is bounded to
+    // [0.49, 1.69] and stays neutral when either lacks evidence.
+    const selfObsModeBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    const selfObsSymbolBias = this.selfObs?.symbolSideBias[symbol]?.[sideCandidate] ?? 1.0;
+    const selfObsWinRateBias = selfObsModeBias * selfObsSymbolBias;
     let selfObsPressure: number;
     if (state.surpriseHistory.length >= 2) {
       const n = state.surpriseHistory.length;
@@ -2603,27 +2619,21 @@ export class MonkeyKernel extends EventEmitter {
           derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
         };
     // Leverage ceiling. Exchange max-lev (typically 75× on BTC/ETH perps)
-    // is the absolute boundary, but a 2-week DB audit 2026-05-19 found
-    // higher leverage tiers are net-negative even though the bot can
-    // technically reach them:
-    //   lev=15: 306 trades, +$51.73 net  ← breadwinner
-    //   lev=14: 104 trades, -$17.64 net  (worst -$22.55)
-    //   lev=16: 170 trades, -$9.76  net
-    //   lev=18:   9 trades, -$18.02 net  (worst -$19.29)
-    //   lev=22:   9 trades, -$27.58 net  (worst -$24.49!)
-    // Above lev=15, fat-tail losses dominate the small-win edge — capital
-    // efficiency goes negative. Cap at 15 by default; operator can raise
-    // via MONKEY_MAX_LEVERAGE_CAP if intentional (e.g., scalp lane on
-    // tighter setup). Below cap, leverage choice is observer-driven per
-    // existing continuous-r regime sizing — no behavior change.
+    // 2026-05-25 — operator autonomy doctrine: code-side leverage caps
+    // removed. The kernel's own learning loop (push_reward → chemistry →
+    // size) is the restraint. A 2-week audit 2026-05-19 had found
+    // lev≥16 net-negative in the prior regime, but the kernel was
+    // running with broken sov, an empty Python reward queue, and no
+    // per-symbol bias attribution — all of which have since landed
+    // (#910/#911/#912/#913/#915). The doctrine is to let the kernel
+    // learn from fresh outcomes, not to inherit a stale ceiling. Only
+    // the exchange's per-symbol maxLev (real boundary) and the
+    // operator-set riskSettings.maxLeverage (if a profile is saved
+    // via UI — operator MANDATE) clamp now.
     const exchangeMaxLev = (await getMaxLeverage(symbol)) ?? 10;
-    const operatorMaxLev = Number(process.env.MONKEY_MAX_LEVERAGE_CAP) || 15;
-    // risk_settings.maxLeverage (RiskSettings UI) is a third ceiling when
-    // a profile is saved — it can only clamp leverage DOWN. The audited
-    // operatorMaxLev (15) still binds. No profile saved → unchanged.
     const maxLevBoundary = riskSettings
-      ? Math.min(exchangeMaxLev, operatorMaxLev, riskSettings.maxLeverage)
-      : Math.min(exchangeMaxLev, operatorMaxLev);
+      ? Math.min(exchangeMaxLev, riskSettings.maxLeverage)
+      : exchangeMaxLev;
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -2973,37 +2983,16 @@ export class MonkeyKernel extends EventEmitter {
           positionLeverage,
         );
         derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
-        const SL_DEFER_TICKS = 2;
-        const isStopLoss = Number((scalp as any).derivation?.exitTypeBit) === -1;
-        const longSlWithHammer = (
-          isStopLoss
-          && heldSide === 'long'
-          && candleHammerDefer
-        );
-        if (scalp.value && isStopLoss) {
-          // Proposal #9 path 2: SL defer. If the latest tick prints a
-          // strong hammer/inverted-hammer AGAINST a long-position SL
-          // about to fire, defer the SL by SL_DEFER_TICKS to let the
-          // wick recover. Heuristic gate; documented impurity scoped
-          // to this branch only.
-          if (longSlWithHammer && state.slDeferRemainingTicks <= 0) {
-            state.slDeferRemainingTicks = SL_DEFER_TICKS;
-            (derivation as any).slDefer = {
-              opened: true,
-              ticksRemaining: state.slDeferRemainingTicks,
-              reason: 'hammer_against_long_sl',
-            };
-          } else if (state.slDeferRemainingTicks > 0 && heldSide === 'long') {
-            (derivation as any).slDefer = {
-              active: true,
-              ticksRemaining: state.slDeferRemainingTicks,
-            };
-          } else {
-            action = 'scalp_exit';
-            reason = scalp.reason;
-            exitFired = true;
-          }
-        }
+        // Path A (2026-05-26): hard-SL pre-check block REMOVED.
+        // shouldScalpExit is now TP-only — there is no SL exitTypeBit=-1 to
+        // intercept here. Adverse exits flow through:
+        //   - shouldExit (Fisher-Rao disagreement; kernel reads its own
+        //     perception drift) — see "Loop 2 debate" block below
+        //   - shouldAutoFlatten (Pillar 1 catastrophic backstop on entropy
+        //     collapse / fhealth degradation) — kernel-internal SAFETY_BOUND
+        // The SL_DEFER hammer-recovery heuristic was bundled with the hard
+        // SL and went with it. shouldExit's Fisher-Rao threshold is wider
+        // than a tick, so single-bar hammer recoveries don't need a deferer.
 
         // 2. Held-position re-justification — four internal exit
         // checks. Regime carries hysteresis (streak ≥ 3 + basin FR
@@ -3197,17 +3186,16 @@ export class MonkeyKernel extends EventEmitter {
         const feeFloorLive = process.env.MONKEY_FEE_FLOOR_LIVE !== 'false';
         const effectiveCostFrac = !feeFloorLive ? 0 : (() => {
           const n = this.rollingEffectiveCostFrac.length;
-          const coldDefault = envNumber(
-            'MONKEY_FEE_FLOOR_COLD_FRAC',
-            MonkeyKernel.EFFECTIVE_COST_COLD_DEFAULT,
-          );
-          if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return coldDefault;
+          // 2026-05-25 strip — fee-floor cold default is purely
+          // observer-derived. Cold start (n < min samples) → 0,
+          // letting chemistry learn from any fee losses naturally.
+          if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return 0;
           // Upper tercile of observed costs — conservatively assumes
           // worst-case slip from the rolling distribution rather than
           // the median (which would underestimate on noisy days).
           const sorted = [...this.rollingEffectiveCostFrac].sort((a, b) => a - b);
           const terciIdx = Math.min(n - 1, Math.floor(n * 0.67));
-          return sorted[terciIdx] ?? coldDefault;
+          return sorted[terciIdx] ?? 0;
         })();
         const baseMinProfitablePnl =
           positionNotional > 0
@@ -3533,7 +3521,9 @@ export class MonkeyKernel extends EventEmitter {
         // Phase B2: skipped when bracketActive — the synthetic bracket
         // owns profit-taking. The scalp-SL branch (gate 1 above) is
         // unaffected — a price stop is always a safety bound.
-        if (!exitFired && !bracketActive && scalp.value && !isStopLoss) {
+        if (!exitFired && !bracketActive && scalp.value) {
+          // Path A: scalp.value is now TP-only (SL leg removed from
+          // shouldScalpExit). Simplified from `scalp.value && !isStopLoss`.
           action = 'scalp_exit';
           reason = scalp.reason;
           exitFired = true;
@@ -4090,24 +4080,6 @@ export class MonkeyKernel extends EventEmitter {
             lSource: 'agentLDecide(state.basinHistory)',
           });
         } else {
-          const riskHalt = currentEntryRiskSettingsHalt();
-          if (riskHalt?.kind === 'daily_loss_limit') {
-            // risk_settings daily-loss halt — today's realised Monkey PnL
-            // is at/below -dailyLossLimit% of equity. New entries are
-            // suppressed; exits are unaffected so losers can still close.
-            reason += ` | risk_settings: daily loss limit — today ${riskHalt.todayRealizedPnl.toFixed(2)} USDT ≤ -${riskHalt.limitPct}% of ${riskHalt.equityUsdt.toFixed(2)} (entry suppressed; exits unaffected)`;
-            (derivation as Record<string, unknown>).riskSettingsHalt = riskHalt;
-            logger.warn(`[Monkey] ${symbol} entry suppressed — risk_settings daily loss limit`, {
-              todayRealizedPnl: riskHalt.todayRealizedPnl,
-              limitPct: riskHalt.limitPct,
-              equityUsdt: riskHalt.equityUsdt,
-            });
-          } else if (riskHalt?.kind === 'max_concurrent_positions') {
-            // risk_settings max-concurrent-positions ceiling — counts
-            // Monkey-owned open rows only (never the account-wide total).
-            reason += ` | risk_settings: max concurrent positions (${riskHalt.openMonkeyPositions}/${riskHalt.cap})`;
-            (derivation as Record<string, unknown>).riskSettingsHalt = riskHalt;
-          } else {
           const isDCA = Boolean(derivation.isDCAAdd);
         // Cap K's margin to its arbiter share. Without this, the existing
         // size formula could exceed K's allocation when M has been
@@ -4152,7 +4124,6 @@ export class MonkeyKernel extends EventEmitter {
           if (execResult.reason.startsWith('monkey_paper_mode:')) {
             reason += ` | ${execResult.reason}`;
           }
-          noteProjectedEntry();
           // v0.6.2 bookkeeping
           state.lastEntryAtMs = Date.now();
           if (isDCA) {
@@ -4181,7 +4152,6 @@ export class MonkeyKernel extends EventEmitter {
             state.entryTimeMsByLane[entryLane] = Date.now();
           }
         }
-          }
         }  // close v0.8.7 trading-paused else branch
       } else if (action === 'scalp_exit' && heldSide) {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
@@ -4193,6 +4163,16 @@ export class MonkeyKernel extends EventEmitter {
           exitTypeBit === 2 ? 'trailing_harvest' :
           exitTypeBit === 3 ? 'trend_flip_harvest' :
           'scalp_exit';
+        // #931 exit-attribution: extract the inner gate name from the reason
+        // string prefix (e.g. "conviction_failed: conf=...", "bracket_sl: mark...",
+        // "stale_held: position open ..."). The 12+ inner gates that all surface
+        // as 'scalp_exit' need per-gate distinguishability for the rr-asymmetry
+        // audit (Matrix council 2026-05-26). Parses reason up to first ':' for
+        // the gate name; falls back to exitType.
+        const reasonPrefix = reason.split(':')[0]?.trim() ?? '';
+        const exitGate = reasonPrefix && reasonPrefix !== 'closed_paper'
+          ? reasonPrefix
+          : exitType;
         const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
         const scalpLane = (
           scalpDeriv?.lane === 'scalp' || scalpDeriv?.lane === 'trend'
@@ -4207,12 +4187,12 @@ export class MonkeyKernel extends EventEmitter {
             markPrice: lastPrice,
             exitReason: exitType,
             pnlAtDecision,
+            exitGate,
             lane: scalpLane,
           });
           executed = closeResult.executed;
           monkeyOrderId = closeResult.orderId;
           if (executed) {
-            noteProjectedClose(pnlAtDecision);
             // Clear lane-scoped trade-level state now the lane closed.
             // Other lanes' bookkeeping is preserved (proposal #10).
             state.peakPnlUsdtByLane[scalpLane] = null;
@@ -4267,7 +4247,6 @@ export class MonkeyKernel extends EventEmitter {
             lane: ownOpenRow?.lane ?? 'swing',
           });
           if (closeResult.executed) {
-            noteProjectedClose(pnlAtDecision);
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
             state.dcaAddCount = 0;
@@ -4318,25 +4297,6 @@ export class MonkeyKernel extends EventEmitter {
                 leg: 'reverse_reopen',
               });
             } else {
-              const reverseReopenRiskHalt = currentEntryRiskSettingsHalt();
-              if (reverseReopenRiskHalt) {
-                reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | risk_settings: reverse reopen suppressed (${reverseReopenRiskHalt.kind})`;
-                (derivation as Record<string, unknown>).reverseReopenRiskSettingsHalt = reverseReopenRiskHalt;
-                logger.warn('[Monkey] reverse reopen suppressed — risk_settings halt', {
-                  symbol,
-                  kind: reverseReopenRiskHalt.kind,
-                  ...(reverseReopenRiskHalt.kind === 'daily_loss_limit'
-                    ? {
-                        todayRealizedPnl: reverseReopenRiskHalt.todayRealizedPnl,
-                        limitPct: reverseReopenRiskHalt.limitPct,
-                        equityUsdt: reverseReopenRiskHalt.equityUsdt,
-                      }
-                    : {
-                        openMonkeyPositions: reverseReopenRiskHalt.openMonkeyPositions,
-                        cap: reverseReopenRiskHalt.cap,
-                      }),
-                });
-              } else {
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
             const execResult = await this.executeEntry({
@@ -4360,7 +4320,6 @@ export class MonkeyKernel extends EventEmitter {
             executed = execResult.executed;
             monkeyOrderId = execResult.orderId;
             if (executed) {
-              noteProjectedEntry();
               state.lastEntryAtMs = Date.now();
               // Re-snapshot rejustification anchors for the new direction.
               state.regimeAtOpenByLane[reversalLane] = mode;
@@ -4375,7 +4334,6 @@ export class MonkeyKernel extends EventEmitter {
             } else {
               reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
             }
-              }
             }  // close v0.8.7 trading-paused else branch
           } else {
             reason += ` | flatten failed: ${closeResult.reason}; reverse aborted`;
@@ -4546,23 +4504,6 @@ export class MonkeyKernel extends EventEmitter {
           });
           (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
         } else {
-          const riskHalt = currentEntryRiskSettingsHalt();
-          if (riskHalt?.kind === 'daily_loss_limit') {
-            (derivation as Record<string, unknown>).agentMRiskSettingsHalt = riskHalt;
-            logger.warn('[AgentM] entry suppressed — risk_settings daily loss limit', {
-              symbol,
-              todayRealizedPnl: riskHalt.todayRealizedPnl,
-              limitPct: riskHalt.limitPct,
-              equityUsdt: riskHalt.equityUsdt,
-            });
-          } else if (riskHalt?.kind === 'max_concurrent_positions') {
-            (derivation as Record<string, unknown>).agentMRiskSettingsHalt = riskHalt;
-            logger.warn('[AgentM] entry suppressed — risk_settings max concurrent positions', {
-              symbol,
-              openMonkeyPositions: riskHalt.openMonkeyPositions,
-              cap: riskHalt.cap,
-            });
-          } else {
         const mResult = await this.executeEntry({
           symbol,
           side: mDecision.action === 'enter_long' ? 'long' : 'short',
@@ -4585,7 +4526,6 @@ export class MonkeyKernel extends EventEmitter {
             symbol, side: mDecision.action, reason: mResult.reason,
           });
         } else {
-          noteProjectedEntry();
           logger.info('[AgentM] entry placed', {
             symbol, side: mDecision.action, orderId: mResult.orderId,
             margin: clampedSize.toFixed(2), leverage: mDecision.leverage,
@@ -4594,7 +4534,6 @@ export class MonkeyKernel extends EventEmitter {
         }
           }
         }  // close v0.8.7 trading-paused else branch
-      }
       }  // close mHeadroom > 0 else branch
     }
 
@@ -4697,24 +4636,6 @@ export class MonkeyKernel extends EventEmitter {
         // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
         && !isTradingPaused()
       ) {
-        const riskHalt = currentEntryRiskSettingsHalt();
-        if (riskHalt) {
-          (derivation as Record<string, unknown>).agentTRiskSettingsHalt = riskHalt;
-          logger.warn('[AgentT] entry suppressed — risk_settings halt', {
-            symbol,
-            kind: riskHalt.kind,
-            ...(riskHalt.kind === 'daily_loss_limit'
-              ? {
-                  todayRealizedPnl: riskHalt.todayRealizedPnl,
-                  limitPct: riskHalt.limitPct,
-                  equityUsdt: riskHalt.equityUsdt,
-                }
-              : {
-                  openMonkeyPositions: riskHalt.openMonkeyPositions,
-                  cap: riskHalt.cap,
-                }),
-          });
-        } else {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
             ? 'long'
@@ -4744,7 +4665,6 @@ export class MonkeyKernel extends EventEmitter {
         });
         derivation.agentTExecuted = tResult.executed;
         if (tResult.executed) {
-          noteProjectedEntry();
           // Mirror the new unit into TurtleState. Stop, ATR, leverage,
           // margin all derive from the decision; entryPrice is the
           // exchange fill estimate (executeEntry doesn't currently
@@ -4772,7 +4692,6 @@ export class MonkeyKernel extends EventEmitter {
           logger.info('[AgentT] entry rejected', {
             symbol, side: tSide, reason: tResult.reason,
           });
-        }
         }
       } else if (
         (tDecision.action === 'exit_stop' || tDecision.action === 'exit_donchian')
@@ -4825,7 +4744,6 @@ export class MonkeyKernel extends EventEmitter {
               lane: 'trend',
             });
             if (closeResult.executed) {
-              noteProjectedClose(pnlAtDecision, tRows.length);
               this.turtleStates.set(
                 symbol,
                 turtleClearUnits(tState, tDecision.action, Date.now()),
@@ -5075,24 +4993,6 @@ export class MonkeyKernel extends EventEmitter {
           }
           if (lMargin > 0) {
             const lLeverage = leverage.value;
-            const riskHalt = currentEntryRiskSettingsHalt();
-            if (riskHalt) {
-              (derivation as Record<string, unknown>).agentLRiskSettingsHalt = riskHalt;
-              logger.warn('[AgentL] entry suppressed — risk_settings halt', {
-                symbol,
-                kind: riskHalt.kind,
-                ...(riskHalt.kind === 'daily_loss_limit'
-                  ? {
-                      todayRealizedPnl: riskHalt.todayRealizedPnl,
-                      limitPct: riskHalt.limitPct,
-                      equityUsdt: riskHalt.equityUsdt,
-                    }
-                  : {
-                      openMonkeyPositions: riskHalt.openMonkeyPositions,
-                      cap: riskHalt.cap,
-                    }),
-              });
-            } else {
             const lResult = await this.executeEntry({
               symbol,
               side: lDecision.action === 'enter_long' ? 'long' : 'short',
@@ -5112,7 +5012,6 @@ export class MonkeyKernel extends EventEmitter {
             });
             (derivation as Record<string, unknown>).agentLExecuted = lResult.executed;
             if (lResult.executed) {
-              noteProjectedEntry();
               const ld = lDecision.labelDistribution;
               logger.info('[AgentL] entry placed', {
                 symbol, side: lDecision.action, orderId: lResult.orderId,
@@ -5147,7 +5046,6 @@ export class MonkeyKernel extends EventEmitter {
               logger.info('[AgentL] entry rejected', {
                 symbol, side: lDecision.action, reason: lResult.reason,
               });
-            }
             }
           }
         }
@@ -6085,7 +5983,7 @@ export class MonkeyKernel extends EventEmitter {
         recentHarvests: recentPnls.length,
       });
 
-      if (isMonkeyPaperMode()) {
+      if (this.shouldRouteOrdersToPaper()) {
         let lPaperRealizedPnl = 0;
         let lPaperRealizedQty = 0;
         try {
@@ -6101,7 +5999,8 @@ export class MonkeyKernel extends EventEmitter {
             await pool.query(
               `UPDATE autonomous_trades
                   SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                      exit_reason = $2, exit_order_id = $3, pnl = $4
+                      exit_reason = $2, exit_order_id = $3, pnl = $4,
+                      exit_gate = 'agent_l_force_harvest'
                 WHERE id = $5`,
               [lastPrice, 'agent_l_force_harvest', closeOrderId, rowPnl, row.id],
             );
@@ -6265,21 +6164,27 @@ export class MonkeyKernel extends EventEmitter {
         continue;
       }
 
-      // Update only L's rows (close them with proportional PnL).
+      // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty + side.
+      // The prior `aggPnl * qtyShare` formula approximated correctly only when all
+      // rows shared the same entry price; SAFE_PNL_FROM_ROW handles DCA stacks
+      // with different entries and prevents caller-aggregate phantoms.
       let lLiveRealizedPnl = 0;
       let lLiveRealizedQty = 0;
       try {
         for (const row of rows) {
           const rowQty = Math.abs(Number(row.quantity) || 0);
-          const qtyShare = aggQty > 0 ? rowQty / aggQty : 0;
-          const rowPnl = aggPnl * qtyShare;
-          await pool.query(
+          const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [lastPrice, 'agent_l_force_harvest', orderId, rowPnl, row.id],
+                    exit_reason = $2, exit_order_id = $3, exit_gate = 'agent_l_force_harvest',
+                    ${SAFE_PNL_FROM_ROW}
+              WHERE id = $4
+              RETURNING pnl`,
+            [lastPrice, 'agent_l_force_harvest', orderId, row.id],
           );
+          const rowPnl = updated.rows[0]?.pnl
+            ? Number(updated.rows[0].pnl)
+            : aggPnl * (aggQty > 0 ? rowQty / aggQty : 0);
           this.arbiter.recordSettled('L', rowPnl);
           this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
           lLiveRealizedPnl += rowPnl;
@@ -6356,6 +6261,14 @@ export class MonkeyKernel extends EventEmitter {
     markPrice: number;
     exitReason: string;
     pnlAtDecision: number;
+    /**
+     * 2026-05-26 (#931 exit-asymmetry audit): which inner gate fired the
+     * close. `exit_reason` is too coarse — 300 closes labelled 'scalp_exit'
+     * span 10+ distinct gates (conviction_failed, bracket_sl, bracket_tp,
+     * stale_bleed, regime_change, etc.). exit_gate captures the gate name
+     * for downstream attribution. Falls back to exitReason when unspecified.
+     */
+    exitGate?: string;
     /** Proposal #10: when provided, close only autonomous_trades rows
      *  matching this lane (and send ``posSide`` on the exchange close
      *  in HEDGE mode so the other lane stays untouched). When omitted,
@@ -6364,7 +6277,10 @@ export class MonkeyKernel extends EventEmitter {
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, tradeId, heldSide, markPrice, exitReason, pnlAtDecision } = req;
     const closeLane = req.lane;
-    if (isMonkeyPaperMode()) {
+    // #931 exit-attribution: gate name (e.g. 'conviction_failed', 'bracket_sl');
+    // defaults to exitReason for back-compat at call-sites we haven't migrated.
+    const exitGate = req.exitGate ?? exitReason;
+    if (this.shouldRouteOrdersToPaper()) {
       if (!Number.isFinite(markPrice) || markPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping close', {
           symbol,
@@ -6407,40 +6323,58 @@ export class MonkeyKernel extends EventEmitter {
           L: { pnl: 0, qty: 0 },
         };
         if (rows.length === 0) {
-          await pool.query(
+          // #931 safe-pnl — compute from the row's own data.
+          const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [markPrice, exitReason, null, pnlAtDecision, tradeId],
+                    exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
+              WHERE id = $4
+              RETURNING pnl`,
+            [markPrice, exitReason, null, tradeId, exitGate],
           );
-          this.arbiter.recordSettled('K', pnlAtDecision);
-          this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
-          paperPerAgentTotals.K.pnl += pnlAtDecision;
+          const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
+          this.arbiter.recordSettled('K', safePnl);
+          this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl);
+          paperPerAgentTotals.K.pnl += safePnl;
           // Paper-mode single-row fallback: estimate qty from
           // pnl/markPrice — only used for margin denominator below;
           // a tiny floor keeps margin non-zero on near-flat closes.
-          paperPerAgentTotals.K.qty += Math.max(Math.abs(pnlAtDecision) / Math.max(markPrice, 1), 0.01);
+          paperPerAgentTotals.K.qty += Math.max(Math.abs(safePnl) / Math.max(markPrice, 1), 0.01);
           this.pushPerAgentCloseRewards(symbol, markPrice, paperPerAgentTotals);
           return { executed: true, orderId: null, reason: 'closed_paper' };
         }
-        const pnlPerRow = pnlAtDecision / rows.length;
+        // #931 safe-pnl: pre-fix used `pnlAtDecision / rows.length` (divide by row
+        // count, not by qty share) — wrong even on its own terms when rows had
+        // different sizes. Use row's own SAFE_PNL_FROM_ROW; only override when
+        // paperClosePosition supplies an explicit settlement pnl (which already
+        // accounts for the position's own entry/exit, so is correct per-row).
         let orderId: string | null = null;
         for (const row of rows) {
-          let rowPnl = pnlPerRow;
           const closeOrderId = row.order_id ? `paper-close-${row.order_id}` : `paper-close-${row.id}`;
+          let explicitPnl: number | null = null;
           if (row.order_id && row.order_id.startsWith('paper-')) {
             const close = await paperClosePosition(row.order_id, markPrice, exitReason);
-            rowPnl = close.pnl;
+            explicitPnl = close.pnl;
             orderId = closeOrderId;
           }
-          await pool.query(
-            `UPDATE autonomous_trades
-                SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [markPrice, exitReason, closeOrderId, rowPnl, row.id],
+          // Either use the explicit paperClosePosition pnl, OR compute from row.
+          const updated = await pool.query<{ pnl: string }>(
+            explicitPnl !== null
+              ? `UPDATE autonomous_trades
+                    SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                        exit_reason = $2, exit_order_id = $3, pnl = $4, exit_gate = $6
+                  WHERE id = $5
+                  RETURNING pnl`
+              : `UPDATE autonomous_trades
+                    SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                        exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
+                  WHERE id = $4
+                  RETURNING pnl`,
+            explicitPnl !== null
+              ? [markPrice, exitReason, closeOrderId, explicitPnl, row.id, exitGate]
+              : [markPrice, exitReason, closeOrderId, row.id, exitGate],
           );
+          const rowPnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : (explicitPnl ?? 0);
           const agentLabel: AgentLabel =
             row.agent === 'M' ? 'M'
               : row.agent === 'T' ? 'T'
@@ -6485,10 +6419,14 @@ export class MonkeyKernel extends EventEmitter {
       // Sibling kernel/agent is mid-close or just finished — the exchange
       // position is gone (or about to be). Mark our local row closed so
       // bookkeeping stays consistent; no exchange call needed.
+      // #931 safe-pnl: compute from row's own entry/qty/side, not caller aggregate.
+      // The race-loss path was writing the aggregate pnlAtDecision to a single
+      // row by tradeId, producing phantom values when multiple rows existed.
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason='race_lost_to_sibling', pnl=$2 WHERE id=$3`,
-        [markPrice, pnlAtDecision, tradeId],
+                exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
+                ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+        [markPrice, tradeId],
       ).catch(() => { /* non-fatal */ });
       const reason = acquired.reason === 'recently_closed'
         ? `race_lost_to_sibling: closed by ${acquired.heldBy} ${acquired.ageMs}ms ago`
@@ -6561,10 +6499,11 @@ export class MonkeyKernel extends EventEmitter {
       const reason = race.raced
         ? `race_lost_to_sibling: exchange position already 0 (sibling=${race.siblingId} ${race.ageMs}ms ago)`
         : 'exchange_position_vanished';
+      // #931 safe-pnl — see comment at race_lost_to_sibling above.
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason=$2, pnl=$3 WHERE id=$4`,
-        [markPrice, dbExitReason, pnlAtDecision, tradeId],
+                exit_reason=$2, exit_gate=$2, ${SAFE_PNL_FROM_ROW} WHERE id=$3`,
+        [markPrice, dbExitReason, tradeId],
       ).catch(() => { /* non-fatal */ });
       return { executed: false, orderId: null, reason };
     }
@@ -6864,10 +6803,12 @@ export class MonkeyKernel extends EventEmitter {
       if (is21002) {
         const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
         if (race.raced) {
+          // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
           await pool.query(
             `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                    exit_reason=$2, pnl=$3 WHERE id=$4`,
-            [markPrice, 'race_lost_to_sibling', pnlAtDecision, tradeId],
+                    exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
+                    ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+            [markPrice, tradeId],
           ).catch(() => { /* non-fatal */ });
           return {
             executed: false, orderId: null,
@@ -6903,10 +6844,13 @@ export class MonkeyKernel extends EventEmitter {
           }
           if (retryPlan.ok === false && retryPlan.reason === '21002_position_already_flat') {
             // Position is already flat — nothing to close. Mark the row.
+            // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
             await pool.query(
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                      exit_reason=$2, pnl=$3 WHERE id=$4`,
-              [markPrice, 'exchange_position_vanished', pnlAtDecision, tradeId],
+                      exit_reason='exchange_position_vanished',
+                      exit_gate='exchange_position_vanished',
+                      ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+              [markPrice, tradeId],
             ).catch(() => { /* non-fatal */ });
             return {
               executed: false, orderId: null,
@@ -7000,34 +6944,46 @@ export class MonkeyKernel extends EventEmitter {
         L: { pnl: 0, qty: 0 },
       };
       if (rows.length === 0 || totalQty === 0) {
-        // Fallback — single-row close (covers edge case of race)
-        await pool.query(
+        // #931 safe-pnl: compute pnl from row's own entry/qty/side via SAFE_PNL_FROM_ROW,
+        // RETURNING the value so chemistry receives the actual row pnl (not the
+        // caller-aggregate that could be a phantom across multiple rows).
+        const updated = await pool.query<{ pnl: string }>(
           `UPDATE autonomous_trades
               SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                  exit_reason = $2, exit_order_id = $3, pnl = $4
-            WHERE id = $5`,
-          [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
+                  exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
+            WHERE id = $4
+            RETURNING pnl`,
+          [markPrice, exitReason, orderId, tradeId, exitGate],
         );
+        const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
         // Single-row fallback: assume Agent K (the established default).
-        this.arbiter.recordSettled('K', pnlAtDecision);
+        this.arbiter.recordSettled('K', safePnl);
         // v0.8.8 per-agent reactive cognition: feed outcome to K's
         // emotion + neurochemistry stack (dopamine on win, frustration
         // on loss). See per_agent_state.ts.
-        this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
-        perAgentTotals.K.pnl += pnlAtDecision;
+        this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl);
+        perAgentTotals.K.pnl += safePnl;
         perAgentTotals.K.qty += exchangeQty || 0.01;
       } else {
+        // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty +
+        // side via SAFE_PNL_FROM_ROW, returning the computed value so chemistry +
+        // arbiter feedback see the true per-row pnl. Pre-fix used
+        // `rowPnl = pnlAtDecision * qtyShare` which assumed all rows shared
+        // the kernel's weightedEntry — wrong when DCA adds had different entries,
+        // and structurally vulnerable to caller-aggregate phantoms.
         for (const row of rows) {
           const rowQty = Math.abs(Number(row.quantity) || 0);
-          const qtyShare = rowQty / totalQty;
-          const rowPnl = pnlAtDecision * qtyShare;
-          await pool.query(
+          const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [markPrice, exitReason, orderId, rowPnl, row.id],
+                    exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
+              WHERE id = $4
+              RETURNING pnl`,
+            [markPrice, exitReason, orderId, row.id, exitGate],
           );
+          const rowPnl = updated.rows[0]?.pnl
+            ? Number(updated.rows[0].pnl)
+            : pnlAtDecision * (rowQty / totalQty);
           // Tag-aware arbiter feedback. Pre-separation rows have
           // agent=NULL or 'K' (default from migration 039); those
           // attribute to K. T (Turtle classical TA) was added in the
@@ -7059,12 +7015,16 @@ export class MonkeyKernel extends EventEmitter {
       // pins at least the primary tradeId row to closed, breaking the
       // 21002-retry loop. Reconciler still picks up any siblings.
       try {
+        // #931 safe-pnl: compute from row's own data; the bulk per-row UPDATE
+        // failed and we don't know which rows are still open, so the simplest
+        // safe path is to use the row's own arithmetic.
         await pool.query(
           `UPDATE autonomous_trades
               SET status='closed', exit_price=$1, exit_time=NOW(),
-                  exit_reason=$2, exit_order_id=$3, pnl=$4
-            WHERE id=$5 AND status='open'`,
-          [markPrice, `${exitReason}__db_recovery`, orderId, pnlAtDecision, tradeId],
+                  exit_reason=$2, exit_order_id=$3, exit_gate='db_recovery',
+                  ${SAFE_PNL_FROM_ROW}
+            WHERE id=$4 AND status='open'`,
+          [markPrice, `${exitReason}__db_recovery`, orderId, tradeId],
         );
       } catch (recoveryErr) {
         logger.error('[Monkey] close DB recovery also failed — full reconciler dependency', {
@@ -7344,7 +7304,7 @@ export class MonkeyKernel extends EventEmitter {
       );
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
       if (!userId) {
-        if (isMonkeyPaperMode()) {
+        if (this.shouldRouteOrdersToPaper()) {
           // Paper mode — resolve a user_id that satisfies the
           // autonomous_trades.user_id → users(id) foreign key. Prefer
           // any existing user; on a fresh paper/staging DB (empty
@@ -7377,7 +7337,7 @@ export class MonkeyKernel extends EventEmitter {
           return { executed: false, orderId: null, reason: 'no_credentials' };
         }
       }
-      if (isMonkeyPaperMode()) {
+      if (this.shouldRouteOrdersToPaper()) {
         // Paper mode — synthetic risk-kernel state at the paper
         // bankroll, no exchange call. Equity matches what the sizing
         // path (fetchAccountContext) used, so the risk kernel's
@@ -7537,7 +7497,7 @@ export class MonkeyKernel extends EventEmitter {
         ? (req.side === 'long' ? 'LONG' : 'SHORT')
         : undefined;
 
-    if (isMonkeyPaperMode()) {
+    if (this.shouldRouteOrdersToPaper()) {
       if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping entry', {
           symbol,
@@ -7913,6 +7873,16 @@ export class MonkeyKernel extends EventEmitter {
           kappaAtExit: symState?.kappa,
           agent: agentKey,
         });
+        // Mirror the close into Python autonomic so both kernels'
+        // neurochemistries share the same outcome stream.
+        void callAutonomicReward({
+          instanceId: this.instanceId,
+          source: `own_close:${agentKey}`,
+          symbol,
+          realizedPnlUsdt: t.pnl,
+          marginUsdt: margin,
+          kappaAtExit: symState?.kappa,
+        });
       }
     } catch { /* non-fatal */ }
   }
@@ -7944,19 +7914,95 @@ export class MonkeyKernel extends EventEmitter {
     const pnlFrac = input.marginUsdt > 0
       ? input.realizedPnlUsdt / input.marginUsdt
       : 0;
-    // Dopamine: positive only, saturates at 3× margin win (pnlFrac ≥ 3).
-    // Scales by tanh so losses don't punish via dopamine (that path is
-    // self_observation's job).
+
+    // 2026-05-25 (observer-derive PR) — replaces magic input scales
+    // (1.5×, 0.5×, 2×, /10) with observer-derived normalization against
+    // the kernel's own rolling reward + κ distributions. Same MAPPING
+    // shape (tanh); same OUTPUT CAPS (which are STRUCTURAL design
+    // choices documented below); only the SCALES adapt to observed
+    // distributions.
+    //
+    // Output caps (structural):
+    //   - Dopamine cap 0.5 — biggest signal because dopamine directly
+    //     drives reward learning (rewardMult in sizing).
+    //   - Endorphin cap 0.3 — peak-state reward, smaller than dopamine
+    //     so it doesn't dominate the chemistry mix; gated by κ-proximity.
+    //   - Serotonin cap 0.15 — smallest because serotonin is the
+    //     slow-mood-shift signal, not the per-event reward.
+    //   - Loss mood-dip cap 0.1 — much smaller than the win-side dop
+    //     cap so losses don't punish via dopamine (self_observation
+    //     owns loss-side learning; chemistry treats losses as small mood
+    //     dips, not punishments).
+    //
+    // pnlFrac normalization: use MAD (Median Absolute Deviation) — a
+    // robust statistic that doesn't blow up under outliers — instead of
+    // stddev. Production evidence 2026-05-25: a single +$78 outlier win
+    // spiked the rolling stddev ~5×, suppressing chemistry response to
+    // every subsequent normal-magnitude close (the kernel couldn't
+    // "feel" -$5 losses as bad because they looked small relative to
+    // the outlier-inflated stddev). MAD is bounded by the median's
+    // breakdown point (50%) — a single outlier can't move it.
+    //
+    // MAD × 1.4826 ≈ stddev under Gaussian assumption; using raw MAD
+    // is fine here because the multiplier would cancel in the
+    // normalization ratio (and we're not making distributional claims).
+    const PNL_STDDEV_MIN_SAMPLES = 5;
+    let pnlFracNormalized: number = pnlFrac;
+    if (this.pendingRewards.length >= PNL_STDDEV_MIN_SAMPLES) {
+      const pnls = this.pendingRewards.map((r) => r.pnlFraction).sort((a, b) => a - b);
+      const median = pnls.length % 2 === 0
+        ? (pnls[pnls.length / 2 - 1]! + pnls[pnls.length / 2]!) / 2
+        : pnls[Math.floor(pnls.length / 2)]!;
+      const deviations = pnls.map((p) => Math.abs(p - median)).sort((a, b) => a - b);
+      const mad = deviations.length % 2 === 0
+        ? (deviations[deviations.length / 2 - 1]! + deviations[deviations.length / 2]!) / 2
+        : deviations[Math.floor(deviations.length / 2)]!;
+      if (mad > 1e-12) {
+        pnlFracNormalized = pnlFrac / mad;
+      }
+    }
+
     const dop = pnlFrac > 0
-      ? Math.tanh(pnlFrac * 1.5) * 0.5  // 1 % win → 0.01, 10 % → 0.07, 100 % → 0.45
-      : -Math.tanh(-pnlFrac * 0.5) * 0.1;  // small mood dip on loss
-    // Serotonin: stable wins reinforce calm. Only positive on wins.
-    const ser = pnlFrac > 0 ? Math.tanh(pnlFrac) * 0.15 : 0;
-    // Endorphins: peak-state reward. Fires if closed near κ* with a win.
-    const kappaProxim = input.kappaAtExit != null
-      ? Math.exp(-Math.abs(input.kappaAtExit - 64) / 10)
-      : 0.5;
-    const endo = pnlFrac > 0 ? Math.tanh(pnlFrac * 2) * 0.3 * kappaProxim : 0;
+      ? Math.tanh(pnlFracNormalized) * 0.5
+      : -Math.tanh(-pnlFracNormalized) * 0.1;
+    const ser = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 : 0;
+
+    // κ-proximity width: observer-derived from the rolling distribution
+    // of kappaAtExit values across recent rewards. Replaces the magic
+    // `/10` decay width. When stats are insufficient, falls back to a
+    // bounded identity on κ-distance (tanh-squashed).
+    // 2026-05-25 — same MAD-based robust normalization. Outlier κ
+    // values (e.g. a single trade that closed at κ=120) would have
+    // inflated stddev under the previous formulation, suppressing the
+    // κ-proximity envelope for everything else.
+    let kappaProxim: number;
+    if (input.kappaAtExit == null) {
+      kappaProxim = 0.5;
+    } else {
+      const kappaHistory: number[] = [];
+      for (const r of this.pendingRewards) {
+        const k = (r as { kappaAtExit?: number }).kappaAtExit;
+        if (typeof k === 'number' && Number.isFinite(k)) kappaHistory.push(k);
+      }
+      if (kappaHistory.length >= PNL_STDDEV_MIN_SAMPLES) {
+        const sorted = [...kappaHistory].sort((a, b) => a - b);
+        const kMedian = sorted.length % 2 === 0
+          ? (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2
+          : sorted[Math.floor(sorted.length / 2)]!;
+        const kDevs = sorted.map((k) => Math.abs(k - kMedian)).sort((a, b) => a - b);
+        const kMad = kDevs.length % 2 === 0
+          ? (kDevs[kDevs.length / 2 - 1]! + kDevs[kDevs.length / 2]!) / 2
+          : kDevs[Math.floor(kDevs.length / 2)]!;
+        if (kMad > 1e-12) {
+          kappaProxim = Math.exp(-Math.abs(input.kappaAtExit - 64) / kMad);
+        } else {
+          kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
+        }
+      } else {
+        kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
+      }
+    }
+    const endo = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim : 0;
 
     this.pendingRewards.push({
       source: input.source,
@@ -7982,6 +8028,117 @@ export class MonkeyKernel extends EventEmitter {
       ser: ser.toFixed(3),
       endo: endo.toFixed(3),
     });
+
+    // 2026-05-25 — kernel-rotation tracking. Update rolling PnL window
+    // + consecutive-loss counter; if the close trips the demotion
+    // trigger (default 5 consec losses), log + emit so operator/UI/
+    // arbiter can observe. Does NOT auto-halt the kernel — chemistry
+    // is the per-tick feedback channel; rotation is a structural
+    // signal layered on top.
+    const rotationResult = recordRotationClose(this.rotation, input.realizedPnlUsdt);
+    if (rotationResult.demoted) {
+      logger.warn(`[${this.label}] kernel-rotation DEMOTED to paper`, {
+        instanceId: this.instanceId,
+        reason: rotationResult.reason,
+        rollingWinRate: rollingWinRate(this.rotation),
+        rollingTrades: this.rotation.rollingPnls.length,
+      });
+      this.bus.publish({
+        type: BusEventType.OUTCOME,
+        source: this.instanceId,
+        symbol: input.symbol,
+        payload: {
+          kind: 'kernel_rotation_demotion',
+          mode: this.rotation.mode,
+          reason: rotationResult.reason,
+          rollingWinRate: rollingWinRate(this.rotation),
+        },
+      });
+    }
+    // 2026-05-25 — auto-promotion check. If this is a paper-mode kernel
+    // and its rolling WR has caught up to within ROTATION_PROMOTION_WR_GAP
+    // (10pp) of the best live peer, promote back. Idempotent: returns
+    // null for live kernels or paper kernels still under the gate.
+    if (this.rotation.mode === 'paper') {
+      this.tryAutoPromote(input.symbol);
+    }
+  }
+
+  /**
+   * Auto-promotion check called after a virtual close. Walks the peer
+   * registry (allMonkeyKernels) to find the best live WR; if this
+   * kernel's paper-mode WR has reached the gate, promotes.
+   */
+  private tryAutoPromote(symbol: string | undefined): void {
+    const peers: RotationPeerSnapshot[] = [];
+    for (const peer of allMonkeyKernels) {
+      if (peer === this) continue;
+      const r = peer.rotation;
+      peers.push({
+        mode: r.mode,
+        rollingWinRate: rollingWinRate(r),
+        rollingSampleCount: r.rollingPnls.length,
+      });
+    }
+    const reason = shouldAutoPromote(this.rotation, peers);
+    if (!reason) return;
+    const result = promoteToLive(this.rotation, reason);
+    if (result.promoted) {
+      logger.info(`[${this.label}] kernel-rotation AUTO-PROMOTED to live`, {
+        instanceId: this.instanceId,
+        reason: result.reason,
+        rollingWinRate: rollingWinRate(this.rotation),
+        rollingTrades: this.rotation.rollingPnls.length,
+      });
+      this.bus.publish({
+        type: BusEventType.OUTCOME,
+        source: this.instanceId,
+        symbol,
+        payload: {
+          kind: 'kernel_rotation_promotion',
+          mode: this.rotation.mode,
+          reason: result.reason,
+          rollingWinRate: rollingWinRate(this.rotation),
+        },
+      });
+    }
+  }
+
+  /**
+   * Operator-driven re-promotion of a paper-mode kernel back to live.
+   * Resets the consecutive-loss counter so the kernel doesn't
+   * immediately re-demote on its next close. No-op if already live.
+   * Until the auto-promotion follow-up PR lands, this is the only way
+   * back to live mode.
+   */
+  promoteKernelToLive(reason: string = 'manual operator promotion'): boolean {
+    const result = promoteToLive(this.rotation, reason);
+    if (result.promoted) {
+      logger.info(`[${this.label}] kernel-rotation PROMOTED to live`, {
+        instanceId: this.instanceId,
+        reason: result.reason,
+      });
+    }
+    return result.promoted;
+  }
+
+  /** Read-only snapshot of the rotation state for telemetry / API. */
+  getRotationState(): Readonly<RotationState> {
+    return this.rotation;
+  }
+
+  /**
+   * Decide whether placeOrder calls should route to the paper simulator
+   * instead of the real exchange. Two paths reach this:
+   *   1. The global `MONKEY_PAPER_MODE=true` env (back-compat, applies
+   *      to ALL kernels — used historically for whole-kernel dry runs).
+   *   2. This kernel's rotation state has been demoted to 'paper'
+   *      (per-kernel paper rotation, PR #921 scaffold).
+   * Either path routes the same way through `paperPlaceOrder`, so the
+   * downstream code is unchanged.
+   */
+  private shouldRouteOrdersToPaper(): boolean {
+    return isMonkeyPaperMode() || this.rotation.mode === 'paper';
   }
 
   /**
@@ -8227,6 +8384,13 @@ export class MonkeyKernel extends EventEmitter {
           marginUsdt: 5,
           agent: 'K',
         });
+        void callAutonomicReward({
+          instanceId: this.instanceId,
+          source: 'witnessed_liveSignal',
+          symbol,
+          realizedPnlUsdt: realizedPnl * 0.5,
+          marginUsdt: 5,
+        });
       }
     } catch (err) {
       logger.debug('[Monkey] witnessExit failed (fail-soft)', {
@@ -8252,7 +8416,7 @@ export class MonkeyKernel extends EventEmitter {
     // notionals so the kernel can size + place paper trades. The
     // kernel's paper positions live in autonomous_trades (read via
     // findOpenMonkeyTrade), so a null exchange heldSide here is correct.
-    if (isMonkeyPaperMode()) {
+    if (this.shouldRouteOrdersToPaper()) {
       const paperEquity = Number(process.env.MONKEY_PAPER_EQUITY_USDT) || 1000;
       return {
         equityFraction: Math.min(1, paperEquity / 27.15),
@@ -8333,15 +8497,18 @@ export class MonkeyKernel extends EventEmitter {
 //
 // Net: 0.5 × 0.5 × 0.2 = 0.05 × bank — positions ~5% of equity.
 //
-// Defaults bumped to 0.7 per kernel (combined 1.4× when same-direction).
-// CREATOR_CHOP raised in compositional_executive.ts companion change.
-// All env-tunable for operator-driven tuning per [[feedback-standing-env-flip-auth]].
+// 2026-05-25 — per-kernel sizeFraction haircut removed per operator
+// autonomy doctrine. Both kernels see full availableEquity; the
+// exchange's margin requirements + the kernel's own chemistry feedback
+// (push_reward on close → dopamine/gaba modulation) are the only
+// restraints. If both kernels try to size into the same equity, the
+// second one reads a reduced availableEquity naturally because the
+// first's margin is already committed at the broker.
 export const monkeyKernel = new MonkeyKernel({
   instanceId: 'monkey-position',
   timeframe: '15m',
   tickMs: 30_000,
   label: 'Monkey.Position',
-  sizeFraction: Number(process.env.MONKEY_POSITION_SIZE_FRACTION) || 0.7,
 });
 
 export const swingMonkey = new MonkeyKernel({
@@ -8349,7 +8516,6 @@ export const swingMonkey = new MonkeyKernel({
   timeframe: '5m',
   tickMs: 30_000,
   label: 'Monkey.Swing',
-  sizeFraction: Number(process.env.MONKEY_SWING_SIZE_FRACTION) || 0.7,
 });
 
 export const allMonkeyKernels: readonly MonkeyKernel[] = [

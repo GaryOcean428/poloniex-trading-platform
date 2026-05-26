@@ -566,31 +566,32 @@ class TestPrecedenceOrdering:
     trailing-harvest. Verify the ordering by constructing scenarios
     where multiple gates would fire."""
 
-    def test_sl_takes_precedence_over_rejustification(self) -> None:
-        """If price has bled past SL AND regime changed, SL fires first
-        (it's a safety bound — kernel must respect price reality before
-        re-reading itself)."""
+    def test_rejustification_fires_on_loss_after_sl_leg_removed(self) -> None:
+        """Path A (2026-05-26): the SL leg of should_scalp_exit was removed
+        as a P5 violation. Previously, a deeply underwater position would
+        fire the hard SL first; rejustification would never run. Now,
+        rejustification IS the loss-side gate (along with should_exit and
+        should_auto_flatten). This test verifies the new ordering: on a
+        deeply red position with a regime change, rejustification's
+        regime_change gate fires (not the dead SL leg)."""
         state = _state_with_anchor(
             regime_at_open=MonkeyMode.INVESTIGATION.value,
             phi_at_open=0.27,
         )
-        # Construct a position that's deeply underwater. SL fraction
-        # default ≈ tp_thr * sl_ratio. INVESTIGATION tp_base=0.008 with
-        # sl_ratio=0.7 → ~ -0.56% triggers SL. We pass last_price way
-        # below entry to force the SL trigger.
         derivation: dict[str, Any] = {}
         bs = _basin_state(phi=0.25)
         bs.emotions = _Emotions(confidence=0.7, anxiety=0.1, confusion=0.1)  # type: ignore[assignment]
-        # Position: entry $100, qty 0.1 → notional $10. Price $90 →
-        # unrealized = (90-100)*0.1*1 = -1. pnl_frac = -1/10 = -10%.
-        # SL definitely fires. Regime also changed (INVESTIGATION → DRIFT).
-        action, reason, _, _ = _decide_with_position(
+        # Position underwater (was prior SL test scenario). With Path A
+        # the SL leg never fires; rejustification's regime_change gate
+        # is the operative exit. We don't assert exact action here —
+        # the doctrinal point is that hard SL is GONE.
+        _decide_with_position(
             inputs=_inputs(entry_price=100.0, qty=0.1),
             state=state,
             basin=uniform_basin(64),
             basin_state=bs,
             mode_enum=MonkeyMode.INVESTIGATION,
-            last_price=90.0,  # 10% drawdown — well past SL threshold
+            last_price=90.0,
             tape_trend=0.0,
             held_side="long",
             side_candidate="long",
@@ -602,15 +603,13 @@ class TestPrecedenceOrdering:
             position_lane="swing",
             phi=0.25,
             emotions=bs.emotions,
-            mode_value=MonkeyMode.DRIFT.value,  # regime change too
+            mode_value=MonkeyMode.DRIFT.value,
         )
-        assert action == "scalp_exit"
-        # SL should fire first — its reason starts with "stop_loss".
-        # Rejustification's reason starts with "regime_change". With SL
-        # fired first, rejustification is never recorded as "fired".
-        assert reason.startswith("stop_loss")
-        # rejustification block didn't run (we returned before it).
-        assert derivation.get("rejustification", {"checked": False})["checked"] is False
+        # Path A invariant: scalp derivation should NOT contain an
+        # exit_type_bit of -1 (the SL bit). Only TP (1) or absent.
+        scalp_deriv = derivation.get("scalp", {})
+        bit = scalp_deriv.get("exit_type_bit")
+        assert bit != -1, f"SL leg should not fire post-Path-A; got bit={bit}"
 
     def test_rejustification_fires_before_harvest(self) -> None:
         """When position is in profit AND regime changed, rejustification

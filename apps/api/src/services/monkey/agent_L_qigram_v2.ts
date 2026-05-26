@@ -63,6 +63,16 @@ export const KAPPA_DRIFT = 0.1;
  *  Matches canonical `if correct and dominance > 0.7`. */
 export const KAPPA_CONFIDENCE_THRESHOLD = 0.7;
 
+/** LRU cap on `_entries`. Matches loop.ts HISTORY_MAX = 100 so this is
+ *  a kernel-wide memory-shape bound (same as phiHistory / basinHistory /
+ *  surpriseHistory), not a new tuning knob. With this cap the
+ *  sovereignty getter ranges meaningfully: active / HISTORY_MAX
+ *  responds to decay over time, to wrong-outcome zeroing via
+ *  `recordOutcome`, and to integration pauses. Without it,
+ *  per-tick consolidate produces sov === 1.0 deterministically
+ *  (active and total are the same set by construction). */
+export const QIGRAMV2_HISTORY_MAX = 100;
+
 /** κ delta on a correct + high-confidence outcome. */
 export const KAPPA_UP_STEP = 2.0;
 
@@ -225,6 +235,7 @@ export class QIGRAMv2State {
       category: opts.category ?? existing?.category ?? '',
       trajectory: opts.trajectory ?? existing?.trajectory ?? {},
     });
+    this.evictOldestIfFull();
   }
 
   /** Store a basin without an outcome (default weight=1.0, correct=null).
@@ -243,6 +254,20 @@ export class QIGRAMv2State {
       category: opts.category ?? existing?.category ?? '',
       trajectory: opts.trajectory ?? existing?.trajectory ?? {},
     });
+    this.evictOldestIfFull();
+  }
+
+  /** LRU eviction by insertion order. Map iteration order is insertion
+   *  order, and Map.set on an existing key preserves that position —
+   *  so re-integrating an existing id does NOT count as a fresh insert
+   *  and does not displace another. Only true new-id inserts that push
+   *  size above QIGRAMV2_HISTORY_MAX trigger eviction of the oldest. */
+  private evictOldestIfFull(): void {
+    while (this._entries.size > QIGRAMV2_HISTORY_MAX) {
+      const oldestKey = this._entries.keys().next().value;
+      if (oldestKey === undefined) return;
+      this._entries.delete(oldestKey);
+    }
   }
 
   /** Attribute an outcome to a previously-stored basin entry.
@@ -280,9 +305,9 @@ export class QIGRAMv2State {
 
   // ── Consolidation ─────────────────────────────────────────────────
 
-  /** Remove dead-weight entries — the canonical sleep-cycle CONSOLIDATING
-   *  pass. Mirrors qig-core 2.8.0 `SleepCycleManager.consolidate()`, which
-   *  prunes low-mass entries during the sleep cycle.
+  /** Remove dead-weight entries — a tombstone reaper, NOT a destructive
+   *  op. Mirrors the eviction subset of qig-core 2.8.0
+   *  `SleepCycleManager.consolidate()`.
    *
    *  SEPARATE from `decayAll()`: decay reduces weight every tick;
    *  `consolidate()` REMOVES entries that decay has already driven dead
@@ -292,8 +317,11 @@ export class QIGRAMv2State {
    *  denominator (`_entries.size`) — and therefore `baseFrac = Φ ×
    *  sovereignty × maturity` position sizing — decays toward zero.
    *
-   *  Eviction is the sleep cycle's job, not a per-tick side-effect — the
-   *  caller gates this on the kernel's sleep/consolidation phase.
+   *  Because consolidate() cannot touch a live (above-threshold) entry,
+   *  it is SAFE for the caller to pair it with `decayAll()` on every
+   *  tick. The earlier phase-gating guidance assumed the richer
+   *  destructive semantics of qig-core's SleepCycleManager — it does
+   *  not apply to this reduced TS port.
    *
    *  Returns the number of entries pruned.
    */
@@ -406,6 +434,126 @@ export class QIGRAMv2State {
         trajectory: r.trajectory ?? {},
       });
     }
+  }
+}
+
+// ─── Per-symbol partition ────────────────────────────────────────────
+
+/** Per-symbol partition over QIGRAMv2State. Each MonkeyKernel handles
+ *  DEFAULT_SYMBOLS (currently 2) and integrates one basin per symbol
+ *  per tick. With a single shared QIGRAMv2State, the LRU cap at
+ *  QIGRAMV2_HISTORY_MAX (100) only covers ~100/N_SYMBOLS ticks of
+ *  age before eviction — for N_SYMBOLS = 2 that is ~49 ticks, far
+ *  below the ~90 ticks needed for 0.95^k decay to cross
+ *  MIN_ACTIVE_WEIGHT, so sov pins at 1.0 in steady state.
+ *
+ *  Per-symbol partition isolates each symbol's LRU buffer so
+ *  HISTORY_MAX = 100 covers ≥ 90-tick decay-to-threshold on every
+ *  symbol independently. Bonus: per-symbol sov is a more informative
+ *  signal than the conflated aggregate (mirrors the per-symbol
+ *  SelfObservation asymmetry surfaced by PR #911).
+ *
+ *  Empty partitions return sov=1.0 ("no information yet"); the kernel
+ *  treats that the same as a freshly-warmed legitimate 1.0. */
+export class QIGRAMv2Partition {
+  private readonly stores: Map<string, QIGRAMv2State> = new Map();
+  private readonly totalProblemsPerSymbol: number | null;
+
+  constructor(totalProblemsPerSymbol: number | null = null) {
+    this.totalProblemsPerSymbol = totalProblemsPerSymbol;
+  }
+
+  private storeFor(symbol: string): QIGRAMv2State {
+    let s = this.stores.get(symbol);
+    if (!s) {
+      s = new QIGRAMv2State(this.totalProblemsPerSymbol);
+      this.stores.set(symbol, s);
+    }
+    return s;
+  }
+
+  integrate(
+    symbol: string,
+    id: string,
+    basin: Basin,
+    opts: {
+      weight: number;
+      correct: boolean;
+      category?: string;
+      trajectory?: Record<string, unknown>;
+    },
+  ): void {
+    this.storeFor(symbol).integrate(id, basin, opts);
+  }
+
+  store(
+    symbol: string,
+    id: string,
+    basin: Basin,
+    opts: { category?: string; trajectory?: Record<string, unknown> } = {},
+  ): void {
+    this.storeFor(symbol).store(id, basin, opts);
+  }
+
+  decayAll(symbol: string): void {
+    const s = this.stores.get(symbol);
+    if (s) s.decayAll();
+  }
+
+  /** Explicit cleanup of a symbol's dead-weight entries. Not required
+   *  per-tick under LRU; useful before persistence or after a wrong-
+   *  outcome attribution burst. */
+  consolidate(symbol: string): number {
+    const s = this.stores.get(symbol);
+    return s ? s.consolidate() : 0;
+  }
+
+  recordOutcome(symbol: string, id: string, correct: boolean): boolean {
+    const s = this.stores.get(symbol);
+    return s ? s.recordOutcome(id, correct) : false;
+  }
+
+  recall(symbol: string, query: Basin): RecallResultV2 | null {
+    const s = this.stores.get(symbol);
+    return s ? s.recall(query) : null;
+  }
+
+  recallByCategory(symbol: string, category: string): CategoryRecallResultV2 | null {
+    const s = this.stores.get(symbol);
+    return s ? s.recallByCategory(category) : null;
+  }
+
+  tack(symbol: string, confidence: number, correct: boolean): void {
+    this.storeFor(symbol).tack(confidence, correct);
+  }
+
+  kappa(symbol: string): number {
+    const s = this.stores.get(symbol);
+    return s ? s.kappa : KAPPA_FIXED_POINT;
+  }
+
+  activeEntries(symbol: string): BasinEntryV2[] {
+    const s = this.stores.get(symbol);
+    return s ? s.activeEntries() : [];
+  }
+
+  totalEntries(symbol: string): number {
+    const s = this.stores.get(symbol);
+    return s ? s.totalEntries : 0;
+  }
+
+  /** Sovereignty for a single symbol. Empty partition returns 1.0
+   *  ("no information") so a cold-start symbol does not inject a
+   *  spurious 0 into baseFrac = Φ × sov × maturity. */
+  sovereignty(symbol: string): number {
+    const s = this.stores.get(symbol);
+    if (!s || s.totalEntries === 0) return 1.0;
+    return s.sovereignty;
+  }
+
+  /** All symbols currently tracked. Useful for telemetry. */
+  symbols(): string[] {
+    return Array.from(this.stores.keys());
   }
 }
 

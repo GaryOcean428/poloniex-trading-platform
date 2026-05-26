@@ -5,7 +5,6 @@
 // Re-export feature-based components
 export * from './auth';
 export * from './dashboard';
-export * from './trading';
 export * from './ui';
 
 // Top-level components (default exports)
