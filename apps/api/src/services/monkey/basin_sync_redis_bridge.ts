@@ -33,8 +33,10 @@ import { createClient, type RedisClientType } from 'redis';
 
 import { pool } from '../../db/connection.js';
 import { logger } from '../../utils/logger.js';
+import { insertKernelPrediction } from './kernel_predictions.js';
 
 export const BASIN_SYNC_WRITE_CHANNEL = 'monkey:basin:sync:writes';
+export const PREDICTION_WRITE_CHANNEL = 'monkey:prediction:writes';
 
 interface BasinSyncWritePayload {
   instance_id: string;
@@ -53,6 +55,30 @@ interface BasinSyncWritePayload {
     endorphins: number;
   } | null;
   at_ms: number;
+}
+
+interface PredictionWritePayload {
+  trade_id?: string | number | null;
+  kernel_id: string;
+  perception_basin: number[];
+  strategy_forecast_basin: number[];
+  fisher_rao_disagreement: number;
+  basin_velocity?: number | null;
+  phi?: number | null;
+  kappa_eff?: number | null;
+  predicted_horizon_seconds?: number | null;
+  predicted_terminal_pnl_usdt?: number | null;
+  predicted_pnl_stddev_usdt?: number | null;
+  predicted_direction?: -1 | 0 | 1 | null;
+  predicted_confidence?: number | null;
+  neurochemistry?: Record<string, number> | null;
+  regime_weights?: { quantum?: number; efficient?: number; equilibrium?: number } | null;
+  mode?: string | null;
+  lane?: string | null;
+  snapshot_reason: 'entry' | 'state_transition' | 'periodic' | 'gate_fire' | 'exit';
+  triggering_gate?: string | null;
+  kernel_version?: string;
+  source_path: string;
 }
 
 function bridgeLive(): boolean {
@@ -112,6 +138,23 @@ function validate(raw: unknown): BasinSyncWritePayload | null {
   return r as unknown as BasinSyncWritePayload;
 }
 
+function validatePrediction(raw: unknown): PredictionWritePayload | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.kernel_id !== 'string' || r.kernel_id.length === 0) return null;
+  if (!Array.isArray(r.perception_basin) || r.perception_basin.length !== 64) return null;
+  if (!Array.isArray(r.strategy_forecast_basin) || r.strategy_forecast_basin.length !== 64) return null;
+  for (const v of [...r.perception_basin, ...r.strategy_forecast_basin]) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  }
+  if (typeof r.fisher_rao_disagreement !== 'number' || !Number.isFinite(r.fisher_rao_disagreement)) {
+    return null;
+  }
+  if (typeof r.snapshot_reason !== 'string' || r.snapshot_reason.length === 0) return null;
+  if (typeof r.source_path !== 'string' || r.source_path.length === 0) return null;
+  return r as unknown as PredictionWritePayload;
+}
+
 async function handleMessage(raw: string): Promise<void> {
   _messagesReceived++;
   let parsed: unknown;
@@ -124,6 +167,7 @@ async function handleMessage(raw: string): Promise<void> {
     });
     return;
   }
+
   const payload = validate(parsed);
   if (!payload) {
     _messagesDropped++;
@@ -137,6 +181,58 @@ async function handleMessage(raw: string): Promise<void> {
     _messagesDropped++;
     logger.debug('[BasinSyncBridge] persist failed', {
       instance_id: payload.instance_id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+async function handlePredictionMessage(raw: string): Promise<void> {
+  _messagesReceived++;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    _messagesDropped++;
+    logger.debug('[BasinSyncBridge] prediction JSON parse failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  const payload = validatePrediction(parsed);
+  if (!payload) {
+    _messagesDropped++;
+    logger.debug('[BasinSyncBridge] prediction payload validation failed');
+    return;
+  }
+  try {
+    await insertKernelPrediction({
+      tradeId: payload.trade_id ?? null,
+      kernelId: payload.kernel_id,
+      perceptionBasin: payload.perception_basin,
+      strategyForecastBasin: payload.strategy_forecast_basin,
+      fisherRaoDisagreement: payload.fisher_rao_disagreement,
+      basinVelocity: payload.basin_velocity ?? null,
+      phi: payload.phi ?? null,
+      kappaEff: payload.kappa_eff ?? null,
+      predictedHorizonSeconds: payload.predicted_horizon_seconds ?? null,
+      predictedTerminalPnlUsdt: payload.predicted_terminal_pnl_usdt ?? null,
+      predictedPnlStddevUsdt: payload.predicted_pnl_stddev_usdt ?? null,
+      predictedDirection: payload.predicted_direction ?? null,
+      predictedConfidence: payload.predicted_confidence ?? null,
+      neurochemistry: payload.neurochemistry ?? null,
+      regimeWeights: payload.regime_weights ?? null,
+      mode: payload.mode ?? null,
+      lane: payload.lane ?? null,
+      snapshotReason: payload.snapshot_reason,
+      triggeringGate: payload.triggering_gate ?? null,
+      kernelVersion: payload.kernel_version,
+      sourcePath: payload.source_path,
+    });
+    _messagesPersisted++;
+  } catch (err) {
+    _messagesDropped++;
+    logger.debug('[BasinSyncBridge] prediction persist failed', {
+      kernel_id: payload.kernel_id,
       err: err instanceof Error ? err.message : String(err),
     });
   }
@@ -172,9 +268,17 @@ export async function initBasinSyncBridge(): Promise<void> {
         });
       });
     });
+    await _subscriber.subscribe(PREDICTION_WRITE_CHANNEL, (raw: string) => {
+      handlePredictionMessage(raw).catch((err) => {
+        logger.debug('[BasinSyncBridge] handlePredictionMessage threw', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
     _initialized = true;
     logger.info('[BasinSyncBridge] subscribed', {
       channel: BASIN_SYNC_WRITE_CHANNEL,
+      predictionChannel: PREDICTION_WRITE_CHANNEL,
     });
   } catch (err) {
     logger.error('[BasinSyncBridge] init failed', {

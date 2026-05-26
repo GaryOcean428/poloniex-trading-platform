@@ -76,6 +76,11 @@ from .persistence import PersistentMemory
 from .parameters import get_registry
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
+from .prediction_capture import (
+    build_prediction_payload,
+    clamp_cadence_seconds,
+    publish_prediction,
+)
 from .phi_gate import (
     GRAPH_LANE_MODE_MAP,
     phi_gate_routing_live,
@@ -291,6 +296,12 @@ class SymbolState:
     # to 0 the first tick the regime returns to regime_at_open or the
     # position closes/reopens.
     regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
+    # Prediction-corpus instrumentation bookkeeping. Read-only; never
+    # feeds back into executive decisions.
+    last_prediction_snapshot_at_ms: Optional[float] = None
+    last_prediction_mode: Optional[str] = None
+    last_prediction_lane: Optional[str] = None
+    last_prediction_basin_dir_sign: Optional[int] = None
 
 
 @dataclass
@@ -1494,6 +1505,91 @@ def run_tick(
         direction = "short"
     else:
         direction = "flat"
+
+    # Prediction corpus snapshot (read-only, fail-soft). Python cannot touch
+    # Postgres directly; publish to the existing Redis bridge path.
+    try:
+        cadence_s = clamp_cadence_seconds(float(bv))
+        dir_sign = 1 if basin_dir > 0 else -1 if basin_dir < 0 else 0
+        snapshot_reason: str | None = None
+        triggering_gate: str | None = None
+        if action.startswith("enter_") or action.startswith("reverse_"):
+            snapshot_reason = "entry"
+        elif action in ("scalp_exit", "exit", "flatten"):
+            snapshot_reason = "gate_fire"
+            triggering_gate = str(reason).split(":", 1)[0]
+        else:
+            mode_changed = (
+                state.last_prediction_mode is not None
+                and state.last_prediction_mode != mode
+            )
+            lane_changed = (
+                state.last_prediction_lane is not None
+                and state.last_prediction_lane != lane
+            )
+            basin_flipped = (
+                state.last_prediction_basin_dir_sign is not None
+                and dir_sign != 0
+                and state.last_prediction_basin_dir_sign != 0
+                and state.last_prediction_basin_dir_sign != dir_sign
+            )
+            due_periodic = (
+                state.last_prediction_snapshot_at_ms is None
+                or (now_ms - state.last_prediction_snapshot_at_ms) / 1000.0 >= cadence_s
+            )
+            if mode_changed or lane_changed or basin_flipped:
+                snapshot_reason = "state_transition"
+            elif due_periodic:
+                snapshot_reason = "periodic"
+        if snapshot_reason is not None:
+            trade_id = inputs.account.own_position_trade_id
+            if trade_id is None and inputs.account.lane_positions:
+                for lp in inputs.account.lane_positions:
+                    if lp.lane == lane or lp.side == held_side:
+                        trade_id = lp.trade_id
+                        break
+            pred_side = (
+                side_candidate if action.startswith("enter_") or action.startswith("reverse_")
+                else held_side if held_side is not None
+                else direction if direction in ("long", "short")
+                else None
+            )
+            confidence = max(0.0, min(1.0, 1.0 - float(entry_thr_d["value"])))
+            notional = max(0.0, float(size_d["value"])) * max(1.0, float(leverage_d["value"]))
+            pred_terminal = prediction_sign = 0.0
+            if pred_side == "long":
+                prediction_sign = 1.0
+            elif pred_side == "short":
+                prediction_sign = -1.0
+            pred_terminal = prediction_sign * notional * max(0.000001, float(entry_thr_d["value"]))
+            payload = build_prediction_payload(
+                trade_id=str(trade_id) if trade_id is not None else None,
+                kernel_id=os.environ.get("MONKEY_PY_INSTANCE_ID", "monkey-py-shadow"),
+                perception_basin=basin,
+                strategy_forecast_basin=state.identity_basin,
+                basin_velocity=float(bv),
+                phi=float(phi),
+                kappa_eff=float(state.kappa),
+                predicted_side=pred_side,
+                predicted_horizon_seconds=cadence_s,
+                predicted_terminal_pnl_usdt=pred_terminal,
+                predicted_pnl_stddev_usdt=max(0.000001, abs(pred_terminal) * (1.0 - confidence)),
+                predicted_confidence=confidence,
+                neurochemistry=nc.as_dict(),
+                regime_weights=regime_weights,
+                mode=str(mode),
+                lane=str(lane),
+                snapshot_reason=snapshot_reason,
+                triggering_gate=triggering_gate,
+            )
+            derivation["prediction_snapshot"] = payload
+            publish_prediction(payload)
+            state.last_prediction_snapshot_at_ms = now_ms
+            state.last_prediction_mode = mode
+            state.last_prediction_lane = str(lane)
+            state.last_prediction_basin_dir_sign = dir_sign
+    except Exception as err:  # noqa: BLE001
+        logger.warning("[PredictionCapture] snapshot failed: %s", err)
 
     # size_fraction pass-through; dca_intent from is_dca
     effective_size_frac = inputs.size_fraction
