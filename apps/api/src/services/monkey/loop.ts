@@ -298,27 +298,40 @@ const REWARD_QUEUE_MAX = 50;
  * basin must have moved more than 1/π in Fisher-Rao distance from the
  * entry anchor.
  */
-const REGIME_STABILITY_TICKS_FOR_EXIT =
-  Number(process.env.MONKEY_REGIME_STABILITY_TICKS_FOR_EXIT) || 3;
-/** CALIB-1 (2026-05-17): require N consecutive ticks of the conviction-
- *  failed condition before the exit fires. Same anti-noise rationale as
- *  REGIME_STABILITY_TICKS_FOR_EXIT — single-tick noise was driving most
- *  of the chop-zone losses observed in the 2026-05-17 CSV analysis.
- *  Default 2 is the minimum-evidence sentinel (1 = noise; ≥ 2 = signal),
- *  matching the HISTORY_MIN_SAMPLES=2 pattern in neurochemistry. Operator
- *  can override via MONKEY_CONVICTION_STABILITY_TICKS_FOR_EXIT env. */
-const CONVICTION_STABILITY_TICKS_FOR_EXIT =
-  Number(process.env.MONKEY_CONVICTION_STABILITY_TICKS_FOR_EXIT) || 2;
-/** CALIB-3 (2026-05-17): base tick requirement for the directional-
- *  disagreement exit. The actual per-lane requirement scales this up
- *  via DISAGREEMENT_LANE_MULTIPLIER so that scalp tolerates wrong-side
- *  briefly, swing tolerates moderately, trend tolerates persistently
- *  — per the user's "scalp=micro, swing=moderate, trend=macro"
- *  timescale doctrine. Live diagnostic 2026-05-17 showed swing-lane
- *  wrong-side positions bleeding with no fast-exit path.
- *  Operator can override via MONKEY_DISAGREEMENT_BASE_TICKS_FOR_EXIT env. */
-const DISAGREEMENT_BASE_TICKS_FOR_EXIT =
-  Number(process.env.MONKEY_DISAGREEMENT_BASE_TICKS_FOR_EXIT) || 4;
+// Phase 2 doctrine (2026-05-26): tick-count knobs replaced by an
+// observer-derived formula. The kernel's own basin integration (phi)
+// determines how much evidence it needs before firing exits:
+//
+//   ticks_required(phi) = max(MIN_EVIDENCE, ceil(MIN_EVIDENCE / phi))
+//
+// MIN_EVIDENCE = 2 is the minimum-evidence sentinel from the original
+// CALIB-1 doctrine ("1 = noise; ≥ 2 = signal"). At phi=1.0 (perfect
+// integration) → 2 ticks. At phi=0.5 (typical) → 4 ticks. At phi=0.25
+// (poor) → 8 ticks. The kernel that trusts its basin needs less
+// confirmation; the kernel reading a disorganised basin demands more.
+//
+// Removes three env knobs:
+//   MONKEY_REGIME_STABILITY_TICKS_FOR_EXIT      (was default 3)
+//   MONKEY_CONVICTION_STABILITY_TICKS_FOR_EXIT  (was default 2)
+//   MONKEY_DISAGREEMENT_BASE_TICKS_FOR_EXIT     (was default 4)
+//
+// All three were operator-prescribed anti-flicker minimums. Now the
+// kernel's integration state — already an observable — decides.
+//
+// Why phi not basin_velocity (Matrix's tier-3 suggestion): bv captures
+// movement speed but conflates "coherent fast move" with "fast noise."
+// Phi distinguishes them — high phi = stable basin (regardless of
+// speed) = less flicker risk. Anti-flicker is what these counts
+// originally encoded.
+const STABILITY_TICKS_MIN_EVIDENCE = 2;
+
+function stabilityTicksFromPhi(phi: number): number {
+  const safePhi = Math.max(phi, 0.01);
+  return Math.max(
+    STABILITY_TICKS_MIN_EVIDENCE,
+    Math.ceil(STABILITY_TICKS_MIN_EVIDENCE / safePhi),
+  );
+}
 /** CALIB-3 lane-timescale multipliers. Encodes the user's lane-
  *  timeframe doctrine: scalp = micro (1×), swing = moderate (3×),
  *  trend = macro (10×). With base=4, this gives scalp=4 ticks (≈2 min
@@ -3200,17 +3213,22 @@ export class MonkeyKernel extends EventEmitter {
         const convictionFailedStreak = state.convictionFailedStreakByLane[heldLane] ?? 0;
         const directionalDisagreementStreak =
           state.directionalDisagreementStreakByLane[heldLane] ?? 0;
-        // Registry-controlled stability requirement; default 3 ticks.
-        // TS has no parameter registry yet — the constant lives in
-        // executive.ts mirroring ml-worker's _DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT.
-        const regimeStabilityTicksRequired = REGIME_STABILITY_TICKS_FOR_EXIT;
+        // Phase 2 doctrine (2026-05-26): tick counts derived from
+        // current phi (basin integration). High integration → fewer
+        // ticks needed; low integration → more confirmation required.
+        // See stabilityTicksFromPhi() comment for the formula and the
+        // three env knobs it replaces.
+        const baseStabilityTicks = stabilityTicksFromPhi(phi);
+        const regimeStabilityTicksRequired = baseStabilityTicks;
         // CALIB-3 lane timescale doctrine: scalp=micro (1×), swing=moderate (3×),
         // trend=macro (10×). Applies to both conviction-failed and directional-
         // disagreement so the same scalp-tolerates-noise-but-swing-doesn't logic
         // governs both streak gates. See DISAGREEMENT_LANE_MULTIPLIER comment.
+        // Lane multipliers stay as structural (lane-timeframe encoding) —
+        // future cleanup may derive them from lane-timeframe ratios.
         const laneMultiplier = DISAGREEMENT_LANE_MULTIPLIER[heldLane] ?? 1;
-        const convictionFailedTicksRequired = CONVICTION_STABILITY_TICKS_FOR_EXIT * laneMultiplier;
-        const directionalDisagreementTicksRequired = DISAGREEMENT_BASE_TICKS_FOR_EXIT * laneMultiplier;
+        const convictionFailedTicksRequired = baseStabilityTicks * laneMultiplier;
+        const directionalDisagreementTicksRequired = baseStabilityTicks * laneMultiplier;
         const rejustResult = !exitFired
           ? evaluateRejustification({
               regimeAtOpen,
