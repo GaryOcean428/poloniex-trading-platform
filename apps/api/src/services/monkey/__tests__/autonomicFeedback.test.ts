@@ -309,8 +309,18 @@ describe('autonomic feedback — ne z-scored from basin\'s own surprise history'
   });
 });
 
-describe('autonomic feedback — endorphins use basin κ stddev + coupling distribution', () => {
-  it('endo bell width adapts to basin\'s own κ stddev (no hardcoded SIGMA_KAPPA)', () => {
+describe('autonomic feedback — endorphins use canonical SIGMA_KAPPA + coupling distribution', () => {
+  it('endo bell width does NOT depend on basin\'s rolling κ stddev (uses canonical SIGMA_KAPPA=16.0)', () => {
+    // 2026-05-26 (#934 chemistry-pinning audit): the κ-proximity envelope
+    // width is the canonical structural constant ENDORPHIN_KAPPA_SIGMA=16.0
+    // from qig_core, NOT the basin's rolling stddev(kappaHistory). Two
+    // different basins with very different rolling σ_κ but the same
+    // |κ-κ*| should now produce identical endo values (modulo any
+    // coupling-history-driven sophiaGate differences).
+    //
+    // Pre-fix this test asserted endoWide > endoTight because the wide
+    // basin's stddev would make exp(-|κ-κ*|/σ) less negative. Post-fix
+    // both basins use σ=16.0 → identical endo.
     const baseInputs = {
       isAwake: true,
       phiDelta: 0,
@@ -342,7 +352,13 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
         externalCouplingHistory: couplingHistory,
       },
     }).endorphins;
-    expect(endoWide).toBeGreaterThan(endoTight);
+    // Both basins should produce identical endo since the canonical SIGMA
+    // is no longer a function of kappaHistory.
+    expect(endoTight).toBeCloseTo(endoWide, 6);
+    // And both should be in the healthy-signal range (|κ-κ*|=6, σ=16 →
+    // exp(-6/16)≈0.687, sophiaGate≈1 since coupling=0.8 well above mean).
+    expect(endoTight).toBeGreaterThan(0.5);
+    expect(endoTight).toBeLessThan(0.8);
   });
 
   it('Sophia gate opens once coupling exceeds the basin\'s observed mean', () => {

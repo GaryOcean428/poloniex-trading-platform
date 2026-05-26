@@ -89,3 +89,145 @@ describe('neurochemistry — endorphin Sophia gate (post-strip)', () => {
     expect(hi).toBeLessThan(1);
   });
 });
+
+describe('neurochemistry — endorphin κ-proximity canonical SIGMA (#934 fix)', () => {
+  // 2026-05-26: pin canonical ENDORPHIN_KAPPA_SIGMA = 16.0 behaviour.
+  // The prior implementation used stddev(kappaHistory) for σ in the
+  // κ-proximity exp envelope, which collapsed to ~3e-11 in production
+  // because the basin's rolling σ_κ (~0.09) is much smaller than |κ-κ*|
+  // (~2.18). These tests pin the canonical scale.
+  function inputsAtKappa(kappa: number): NeurochemicalInputs {
+    return {
+      isAwake: true,
+      phiDelta: 0,
+      basinVelocity: 0.1,
+      surprise: 0,
+      quantumWeight: 0.5,
+      kappa,
+      externalCoupling: COUPLING_MEAN,  // sophiaGate = sigmoid(0) = 0.5
+      observables: {
+        kappaHistory: [63.8, 64.0, 64.2],  // mean 64, σ ≈ 0.2 — would have collapsed exp envelope
+        externalCouplingHistory: [
+          COUPLING_MEAN - COUPLING_SIGMA,
+          COUPLING_MEAN,
+          COUPLING_MEAN + COUPLING_SIGMA,
+        ],
+      },
+    };
+  }
+
+  it('|κ−κ*|=2.18 produces healthy endo signal under canonical SIGMA (~0.44 not 1e-11)', () => {
+    // Production-typical κ-distance ≈ 2.18 (observed κ ≈ 66.18).
+    // Pre-fix: exp(-2.18/0.2) ≈ 2e-5 (basin σ_κ from inputsAtKappa's kappaHistory)
+    // Post-fix: exp(-2.18/16) ≈ 0.873 × sigmoid(0)=0.5 ≈ 0.44
+    const endo = computeNeurochemicals(inputsAtKappa(66.18)).endorphins;
+    expect(endo).toBeGreaterThan(0.30);
+    expect(endo).toBeLessThan(0.50);
+  });
+
+  it('|κ−κ*|=0 (at κ*) produces endo = sophia_gate (κ-prox saturates at 1)', () => {
+    // At κ=κ*, exp(0)=1, so endo = 1 × sigmoid(0) = 0.5
+    const endo = computeNeurochemicals(inputsAtKappa(64.0)).endorphins;
+    expect(endo).toBeCloseTo(0.5, 4);
+  });
+
+  it('|κ−κ*|=16 (one canonical SIGMA away) produces endo ≈ sophia_gate / e', () => {
+    // exp(-16/16) = 1/e ≈ 0.368; with sophia_gate at 0.5 → endo ≈ 0.184
+    const endo = computeNeurochemicals(inputsAtKappa(80.0)).endorphins;
+    expect(endo).toBeGreaterThan(0.15);
+    expect(endo).toBeLessThan(0.22);
+  });
+
+  it('|κ−κ*|=32 (2σ away) produces small but non-zero endo', () => {
+    // exp(-32/16) = e^-2 ≈ 0.135; with sophia_gate at 0.5 → endo ≈ 0.068
+    const endo = computeNeurochemicals(inputsAtKappa(96.0)).endorphins;
+    expect(endo).toBeGreaterThan(0.05);
+    expect(endo).toBeLessThan(0.10);
+  });
+
+  it('does NOT pin at floor across the basin\'s production κ range', () => {
+    // Sample 10 kappa values spanning production observed range
+    const samples = [65.5, 65.8, 66.0, 66.18, 66.3, 66.5, 67.0, 68.0, 70.0, 75.0];
+    const endos = samples.map(k => computeNeurochemicals(inputsAtKappa(k)).endorphins);
+    // Pre-fix: all values would be ~0.01 (rolling stddev collapse)
+    // Post-fix: all values should be in [0.1, 0.5] (canonical scale)
+    expect(Math.min(...endos)).toBeGreaterThan(0.05);
+    // Monotonic decrease as |κ-κ*| increases
+    for (let i = 1; i < endos.length; i++) {
+      expect(endos[i]).toBeLessThanOrEqual(endos[i-1]! + 1e-9);
+    }
+  });
+});
+
+describe('neurochemistry — dopamine soft-saturation flag (#934 fix)', () => {
+  // 2026-05-26: pin MONKEY_DOP_SOFT_SATURATION_LIVE behaviour.
+  // Default (flag false / unset): legacy clip-then-sum, pins at 1.0
+  // Flag true: 1 - exp(-(a+b)), asymptotic, no pinning
+  function dopInputs(rewardDelta: number): NeurochemicalInputs {
+    return {
+      isAwake: true,
+      phiDelta: 5.0,  // sigmoid(5) ≈ 0.993 — pushes dopFromPhi near 1
+      basinVelocity: 0.1,
+      surprise: 0,
+      quantumWeight: 0.5,
+      kappa: 64,
+      externalCoupling: 0.5,
+      rewardDopamineDelta: rewardDelta,
+    };
+  }
+
+  it('default (flag unset): clip-then-sum pins at 1.0 when sum >= 1', () => {
+    const prev = process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    delete process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    try {
+      const nc = computeNeurochemicals(dopInputs(1.0));
+      expect(nc.dopamine).toBe(1.0);
+    } finally {
+      if (prev !== undefined) process.env.MONKEY_DOP_SOFT_SATURATION_LIVE = prev;
+    }
+  });
+
+  it('flag enabled: 1-exp(-sum) approaches 1.0 without pinning', () => {
+    const prev = process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    process.env.MONKEY_DOP_SOFT_SATURATION_LIVE = 'true';
+    try {
+      // sum = sigmoid(5) + 1.0 ≈ 1.993 → 1 - exp(-1.993) ≈ 0.864
+      const nc = computeNeurochemicals(dopInputs(1.0));
+      expect(nc.dopamine).toBeGreaterThan(0.80);
+      expect(nc.dopamine).toBeLessThan(0.90);
+    } finally {
+      if (prev !== undefined) process.env.MONKEY_DOP_SOFT_SATURATION_LIVE = prev;
+      else delete process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    }
+  });
+
+  it('flag enabled: never reaches 1.0 even at extreme input', () => {
+    const prev = process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    process.env.MONKEY_DOP_SOFT_SATURATION_LIVE = 'true';
+    try {
+      // Even when both components are at their clip ceiling, dop < 1
+      const nc = computeNeurochemicals(dopInputs(1.0));
+      expect(nc.dopamine).toBeLessThan(1.0);
+    } finally {
+      if (prev !== undefined) process.env.MONKEY_DOP_SOFT_SATURATION_LIVE = prev;
+      else delete process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    }
+  });
+
+  it('flag enabled: produces monotonic gradient from sum=0 to sum=2', () => {
+    const prev = process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    process.env.MONKEY_DOP_SOFT_SATURATION_LIVE = 'true';
+    try {
+      // Vary rewardDopamineDelta from 0 to 1; sum varies from sigmoid(5)≈0.993 to ≈1.993
+      const samples = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
+      const dops = samples.map(r => computeNeurochemicals(dopInputs(r)).dopamine);
+      // Each successive dop value must be strictly greater (monotonic gradient)
+      for (let i = 1; i < dops.length; i++) {
+        expect(dops[i]).toBeGreaterThan(dops[i-1]!);
+      }
+    } finally {
+      if (prev !== undefined) process.env.MONKEY_DOP_SOFT_SATURATION_LIVE = prev;
+      else delete process.env.MONKEY_DOP_SOFT_SATURATION_LIVE;
+    }
+  });
+});
