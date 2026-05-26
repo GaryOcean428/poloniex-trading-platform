@@ -165,8 +165,12 @@ describe('shouldScalpExit lane envelope (Path A: TP-only)', () => {
 });
 
 
-describe('shouldExtendBracket meaningful-profit trail gate', () => {
-  it('does not ratchet SL for sub-dime, sub-1% ROI profit', () => {
+describe('shouldExtendBracket trail gate (2026-05-25 strip)', () => {
+  it('ratchets SL on any positive profit — meaningful-profit gate removed', () => {
+    // Pre-strip: sub-dime / sub-1% profit gated trail off. Post-strip:
+    // minTrailRoi = 0 and minTrailProfitUsdt = 0, so any inProfit
+    // position with conviction permits ratchet. Chemistry learns
+    // whether early trailing protects or over-tightens.
     const result = shouldExtendBracket({
       heldSide: 'long',
       entryPrice: 100,
@@ -180,28 +184,9 @@ describe('shouldExtendBracket meaningful-profit trail gate', () => {
       currentPnlUsdt: 0.05,
     });
 
-    expect(result.changed).toBe(false);
-    expect(result.newSl).toBeNull();
-    expect(String(result.reason)).toContain('meaningfulProfit=false');
-  });
-
-  it('ratchets SL once profit clears the meaningful floor', () => {
-    const result = shouldExtendBracket({
-      heldSide: 'long',
-      entryPrice: 100,
-      markPrice: 101.50,
-      currentTp: 102,
-      currentSl: 99,
-      freshTpDistance: 1,
-      freshSlDistance: 0.20,
-      conviction: 0.4,
-      currentRoiFrac: 0.015,
-      currentPnlUsdt: 0.25,
-    });
-
+    // newSl candidate = 100.40 - 0.20 = 100.20 > currentSl 99 → ratchet.
     expect(result.changed).toBe(true);
-    expect(result.newTp).toBeNull();
-    expect(result.newSl).toBeCloseTo(101.30, 9);
+    expect(result.newSl).toBeCloseTo(100.20, 6);
   });
 });
 

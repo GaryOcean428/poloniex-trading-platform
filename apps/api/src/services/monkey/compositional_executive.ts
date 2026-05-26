@@ -103,21 +103,41 @@ export function evaluateCell(
     };
   }
 
-  // DISSOLVER — disordered, direction unreliable → sit out
-  // All three direction cells suppress entries; the direction is only
-  // recorded for telemetry. The label distinguishes the three sub-cases
-  // so retrospective analysis can see WHY the trade was suppressed.
+  // DISSOLVER — disordered, direction unreliable → reduced conviction.
+  //
+  // 2026-05-26: hard 0.0 multiplier replaced with 0.2 SAFETY_BOUND floor.
+  // The 0.0 multiplier was a code-side cap that fully froze the kernel
+  // whenever the phase classifier fired DISSOLVER — observationally
+  // dominant on ETH/BTC during chop-heavy hours, leading to long
+  // periods of zero entries (e.g. ~30+ consecutive ticks on 2026-05-26
+  // 12:07-12:14 UTC with cellSizeMul=0 / sizeValue=0 / no trades).
+  //
+  // The autonomy doctrine (cf. polytrade_autonomy_doctrine,
+  // polytrade_code_side_caps_stripped) is that the kernel restrains
+  // itself via chemistry feedback, not via hardcoded "don't trade"
+  // gates. Catastrophic safety is owned by should_auto_flatten (P15).
+  //
+  // The 0.2 floor mirrors the existing CHOP suppression filter at
+  // loop.ts ~3681 (`Math.max(0.2, 1 - confidence)`) — both encode the
+  // same SAFETY_BOUND that the kernel always attempts a defensive-
+  // sized position rather than fully sitting out.
+  //
+  // harvestTightness stays 'tight' — when sizing is reduced, exits
+  // are aggressive to protect the smaller position from chop bleed.
+  // laneBias stays 'observe' so chooseLane biases toward the smallest
+  // lane (scalp) consistent with reduced-conviction sizing.
+  const DISSOLVER_FLOOR = 0.2;
   if (direction === 'TREND_UP' || direction === 'TREND_DOWN') {
     return {
-      phase, direction, laneBias: 'observe', sizeMultiplier: 0.0,
+      phase, direction, laneBias: 'observe', sizeMultiplier: DISSOLVER_FLOOR,
       harvestTightness: 'tight',
-      label: `DISSOLVER×${direction}: don't trade — momentum likely reverting`,
+      label: `DISSOLVER×${direction}: reduced conviction — momentum reverting`,
     };
   }
   return {
-    phase, direction, laneBias: 'observe', sizeMultiplier: 0.0,
+    phase, direction, laneBias: 'observe', sizeMultiplier: DISSOLVER_FLOOR,
     harvestTightness: 'tight',
-    label: 'DISSOLVER×CHOP: sit out (max entropy)',
+    label: 'DISSOLVER×CHOP: reduced conviction (max entropy)',
   };
 }
 

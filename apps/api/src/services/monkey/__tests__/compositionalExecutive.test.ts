@@ -26,10 +26,14 @@ describe('evaluateCell — 3×3 compositional matrix coverage', () => {
     }
   });
 
-  it('DISSOLVER cells all have sizeMultiplier=0 (sit out)', () => {
+  it('DISSOLVER cells floor at 0.2 SAFETY_BOUND (reduced conviction, not sit-out)', () => {
+    // 2026-05-26: hard 0.0 multiplier replaced with 0.2 floor — autonomy
+    // doctrine forbids hardcoded "don't trade" gates; the kernel always
+    // attempts a defensive-sized position. P15 (should_auto_flatten) owns
+    // catastrophic safety. Mirrors the CHOP suppression filter floor.
     for (const d of directions) {
       const cell = evaluateCell('DISSOLVER', d);
-      expect(cell.sizeMultiplier).toBe(0.0);
+      expect(cell.sizeMultiplier).toBe(0.2);
       expect(cell.laneBias).toBe('observe');
     }
   });
@@ -70,9 +74,9 @@ describe('evaluateCell — 3×3 compositional matrix coverage', () => {
   });
 
   it('DISSOLVER cells label distinguishes CHOP from TREND sub-cases', () => {
-    expect(evaluateCell('DISSOLVER', 'CHOP').label).toContain('sit out');
-    expect(evaluateCell('DISSOLVER', 'TREND_UP').label).toContain("don't trade");
-    expect(evaluateCell('DISSOLVER', 'TREND_DOWN').label).toContain("don't trade");
+    expect(evaluateCell('DISSOLVER', 'CHOP').label).toContain('max entropy');
+    expect(evaluateCell('DISSOLVER', 'TREND_UP').label).toContain('momentum reverting');
+    expect(evaluateCell('DISSOLVER', 'TREND_DOWN').label).toContain('momentum reverting');
   });
 
   it('is pure — same input always yields same output', () => {

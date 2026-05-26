@@ -2662,9 +2662,10 @@ export class MonkeyKernel extends EventEmitter {
     const equityReading = observeEquity(`${this.instanceId}:${symbol}`, availableEquity);
     const sense3Deflection = sizeDeflection(equityReading);
     // REGIME-1 Phase 3 — when REGIME_COMPOSITIONAL_LIVE=true, fold the
-    // cell-recommended sizeMultiplier in. DISSOLVER cells suppress entries
-    // entirely (multiplier=0); CREATOR×CHOP halves them; PRESERVER×CHOP
-    // is 0.7x; trending cells are 1.0x (no further effect).
+    // cell-recommended sizeMultiplier in. DISSOLVER cells floor at 0.2
+    // SAFETY_BOUND (reduced conviction, not sit-out — 2026-05-26 autonomy
+    // doctrine alignment); CREATOR×CHOP is 0.75x; PRESERVER×CHOP is 0.85x;
+    // trending cells are 1.0x.
     const cellSizeMul = (cellLive && cellAction) ? cellAction.sizeMultiplier : 1.0;
     const cappedEquity = availableEquity * effectiveSizeFraction * sense3Deflection * cellSizeMul;
     // Proposal #10 — lane selection. Each tick picks the locally-optimal
