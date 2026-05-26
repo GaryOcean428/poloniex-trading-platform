@@ -7303,7 +7303,6 @@ export class MonkeyKernel extends EventEmitter {
         // the kernel's weightedEntry — wrong when DCA adds had different entries,
         // and structurally vulnerable to caller-aggregate phantoms.
         for (const row of rows) {
-          const selectedRowQty = Math.abs(Number(row.quantity) || 0);
           const updated = await pool.query<{ pnl: string; entry_price: string; side: string; quantity: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
@@ -7313,11 +7312,26 @@ export class MonkeyKernel extends EventEmitter {
             [markPrice, exitReason, orderId, row.id, exitGate],
           );
           const returned = updated.rows[0];
-          const rowQty = returned?.quantity != null
-            ? Math.abs(Number(returned.quantity) || 0)
-            : selectedRowQty;
-          const sideStr = String(returned?.side ?? '') as 'buy' | 'sell' | 'long' | 'short';
-          const entryPrice = Number(returned?.entry_price);
+          if (!returned) {
+            logger.warn('[Monkey] close row update returned no row; skipping row reward accounting', {
+              tradeId: row.id,
+              symbol,
+              exitReason,
+            });
+            continue;
+          }
+          const rowQty = Math.abs(Number(returned.quantity) || 0);
+          const sideStr = String(returned.side ?? '');
+          if (sideStr !== 'buy' && sideStr !== 'sell' && sideStr !== 'long' && sideStr !== 'short') {
+            logger.warn('[Monkey] close row returned invalid side; skipping row reward accounting', {
+              tradeId: row.id,
+              symbol,
+              side: returned.side,
+              exitReason,
+            });
+            continue;
+          }
+          const entryPrice = Number(returned.entry_price);
           const sideSign = sideStr === 'buy' || sideStr === 'long' ? 1 : -1;
           const rowPnlRaw = updated.rows[0]?.pnl
             ? Number(updated.rows[0].pnl)
