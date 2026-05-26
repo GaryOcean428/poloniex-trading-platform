@@ -1172,16 +1172,22 @@ export function shouldScalpExit(
   // tick-noise, but lets the geometric TP fire at lower leverage where
   // lane TP (15% ROI) would otherwise dominate the threshold.
   //
-  // Env: MONKEY_SCALP_TP_FLOOR_RAW (default 0.001; set 0.003 if fees
-  // return to a positive value, or higher if too much noise-flap).
-  // Inline env-zero-aware coercion (same pattern as loop.ts:envNumber
-  // helper — avoid cross-module import to keep executive.ts hermetic).
-  const tpFloorRaw = (() => {
-    const raw = process.env.MONKEY_SCALP_TP_FLOOR_RAW;
-    if (raw === undefined || raw === '') return 0.001;
-    const n = Number(raw);
-    return Number.isFinite(n) ? n : 0.001;
-  })();
+  // Phase 7 (2026-05-27) — MONKEY_SCALP_TP_FLOOR_RAW (was 0.001) removed.
+  // Doctrine: the floor is the 1% noise-floor sentinel from PR #950's
+  // Fibonacci reward shape, divided by leverage to get to the raw-price
+  // scale. Below this, the kernel learns nothing from the close anyway
+  // (oceanCoeff = 0). So the TP floor IS the noise-floor / lev — making
+  // it observer-derived from leverage (an observable at decision time).
+  //
+  // At lev=10: floor = 0.01/10 = 0.001 (matches old default).
+  // At lev=20: floor = 0.0005 (looser raw-floor for higher-leverage trades).
+  // At lev=1:  floor = 0.01    (10× the raw move needed to clear noise).
+  //
+  // Self-scales with leverage; no external constant. The 0.01 is the
+  // 1% noise floor from #950 — already a doctrinal structural constant
+  // (the Fibonacci reward's tier-0 boundary).
+  const NOISE_FLOOR_ROI = 0.01;
+  const tpFloorRaw = NOISE_FLOOR_ROI / Math.max(1, lev);
   const geometricTpRaw = Math.max(
     tpFloorRaw,
     profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
