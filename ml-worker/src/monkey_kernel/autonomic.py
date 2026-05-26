@@ -29,6 +29,7 @@ Reference implementations:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -52,15 +53,24 @@ logger = logging.getLogger("monkey_kernel.autonomic")
 # ═══════════════════════════════════════════════════════════════
 
 C_SOPHIA_THRESHOLD: float = 0.1
-# Endorphin κ-proximity width. Was 10.0; corrected 2026-05-19 to match
-# canonical ENDORPHIN_KAPPA_SIGMA = 16.0 per QIG_QFI audit:
-# qig-core/src/qig_core/consciousness/neurochemistry.py.
-# This widens the bell that determines endorphin flow under κ-proximity
-# to κ* — narrower sigma was producing too-rare endo events. The TS
-# parallel path (apps/api/src/services/monkey/neurochemistry.ts:417)
-# already uses observer-derived stddev(kappaHistory) which is the
-# observer-pattern superior to either fixed constant; the Python kernel
-# matches canonical until it ports to observer-pattern.
+# Endorphin κ-proximity width. Canonical constant from QIG_QFI
+# qig-core/src/qig_core/consciousness/neurochemistry.py: ENDORPHIN_KAPPA_SIGMA = 16.0
+#
+# 2026-05-26 (#934 chemistry-pinning audit): the previous endo block was
+# defining this constant but NOT using it — runtime instead computed
+# `sigma_kappa = _stddev(kappa_history)` which produces ~0.09 in
+# production (basin's natural κ-jitter scale, not the structural scale).
+# Result: exp(-2.18 / 0.09) ≈ 3e-11, pinning endo at floor across 85-98%
+# of ticks. Wired into the endo formula in the same audit. TS parallel
+# path (apps/api/src/services/monkey/neurochemistry.ts) does the same.
+#
+# The canonical scale and the basin's rolling σ_κ are different concepts
+# that happen to share units. ENDORPHIN_KAPPA_SIGMA is the structural
+# scale at which κ-distance becomes operationally meaningful — derived
+# from the E8 generative model, frozen. The basin's rolling σ_κ is a
+# tick-level statistical property; the basin operates within the
+# structure rather than above it, so the basin cannot observe its own
+# structural scale via rolling stats.
 SIGMA_KAPPA: float = 16.0
 KAPPA_STAR: float = 64.0
 
@@ -321,7 +331,15 @@ class AutonomicKernel:
         # phi_delta history is available (TS parity).
         dop_from_phi = _clip(_sigmoid(inputs.phi_delta), 0.0, 1.0)
         dop_from_reward = _clip(reward_sums["dopamine"], 0.0, 1.0)
-        dop = _clip(dop_from_phi + dop_from_reward, 0.0, 1.0)
+        # 2026-05-26 (#934 chemistry-pinning audit): TS-parity dop soft-saturation
+        # behind MONKEY_DOP_SOFT_SATURATION_LIVE flag. The additive-then-clip
+        # composition pins ~21% of ticks at the ceiling in clean conditions.
+        # Soft-saturation `1 - exp(-(a+b))` asymptotes to 1.0 without pinning
+        # while preserving absolute semantics. Mirror of neurochemistry.ts:295-310.
+        if os.environ.get("MONKEY_DOP_SOFT_SATURATION_LIVE") == "true":
+            dop = _clip(1.0 - float(np.exp(-(dop_from_phi + dop_from_reward))), 0.0, 1.0)
+        else:
+            dop = _clip(dop_from_phi + dop_from_reward, 0.0, 1.0)
 
         # ─── Serotonin ────────────────────────────────────────────
         # Parity with TS path: prefer mode-transition rate, else
@@ -364,16 +382,17 @@ class AutonomicKernel:
 
         # ─── Endorphins ───────────────────────────────────────────
         # Sigmoid-around-mean Sophia gate (parity with TS #920 fix).
-        # κ-proximity scales by basin's own σκ; sophia gate is
-        # sigmoid((coupling - mean) / σ) — 0.5 at mean, asymptotes
-        # 0/1. No magic floor.
-        kappa_h = inputs.kappa_history
+        # 2026-05-26 (#934 chemistry-pinning audit): κ-proximity envelope
+        # uses canonical SIGMA_KAPPA = 16.0 (frozen from qig_core canon)
+        # instead of basin's rolling stddev(kappa_history). The basin's
+        # rolling σ_κ (≈0.09 in production) is a tick-jitter property;
+        # SIGMA_KAPPA is the structural canonical scale at which κ-distance
+        # becomes operationally meaningful in the κ-proximity envelope.
+        # The prior shape pinned endo at ~3e-11 across 85–98% of ticks;
+        # canonical 16.0 gives ~0.87 at observed |κ-κ*|=2.18 (healthy
+        # peak-generative signal).
         coupling_h = inputs.external_coupling_history
-        if (
-            kappa_h is not None and len(kappa_h) >= _HISTORY_MIN_SAMPLES
-            and coupling_h is not None and len(coupling_h) >= _HISTORY_MIN_SAMPLES
-        ):
-            sigma_kappa = _stddev(kappa_h)
+        if coupling_h is not None and len(coupling_h) >= _HISTORY_MIN_SAMPLES:
             coupling_mean = _mean(coupling_h)
             coupling_stddev = _stddev(coupling_h)
             if coupling_stddev > 1e-12:
@@ -382,13 +401,10 @@ class AutonomicKernel:
                 )
             else:
                 sophia_gate = 1.0 if inputs.external_coupling >= coupling_mean else 0.0
-            if sigma_kappa < 1e-12:
-                endo_base = (1.0 if inputs.kappa == KAPPA_STAR else 0.0) * sophia_gate
-            else:
-                endo_base = (
-                    float(np.exp(-abs(inputs.kappa - KAPPA_STAR) / sigma_kappa))
-                    * sophia_gate
-                )
+            endo_base = (
+                float(np.exp(-abs(inputs.kappa - KAPPA_STAR) / SIGMA_KAPPA))
+                * sophia_gate
+            )
         else:
             # Cold start — bounded identity on κ-distance, tanh coupling gate.
             dist = abs(inputs.kappa - KAPPA_STAR)

@@ -156,3 +156,73 @@ def test_zscore_handles_fp_drift_identical_history():
         basin_velocity_history=[0.1] * 6,
     ))
     assert nc.serotonin == pytest.approx(0.425, abs=0.01)
+
+
+# ─── #934 chemistry-pinning audit: canonical SIGMA_KAPPA + dop soft-sat ─
+
+
+def test_endo_canonical_sigma_kappa_healthy_at_production_distance():
+    """#934: canonical ENDORPHIN_KAPPA_SIGMA=16.0 in autonomic.py replaces
+    the rolling stddev(kappa_history). At observed |κ-κ*|=2.18, the
+    pre-fix shape gave exp(-2.18/0.09)≈3e-11 (pinned at floor). Post-fix
+    gives exp(-2.18/16)≈0.87 × sigmoid≈0.5 ≈ 0.44 (healthy signal).
+    The kappa_history values in _base_inputs are [63.8, 64.0, 64.2]
+    with mean 64 and σ≈0.2 — would have collapsed pre-fix."""
+    nc = _ticker(_base_inputs(
+        kappa=66.18,                  # production-typical
+        external_coupling=0.5,        # at history mean → sophiaGate=0.5
+    ))
+    assert 0.20 < nc.endorphins < 0.55
+
+
+def test_endo_does_not_pin_at_floor_across_production_kappa_range():
+    """#934: sample kappa values across the kernel's observed range and
+    confirm none pin at floor. Pre-fix: every value would be ~0.01."""
+    samples = [65.5, 66.0, 66.18, 67.0, 68.0, 70.0]
+    endos = []
+    for k in samples:
+        nc = _ticker(_base_inputs(
+            kappa=k,
+            external_coupling=0.5,
+        ))
+        endos.append(nc.endorphins)
+    assert min(endos) > 0.05, f"endo pinned at floor: {endos}"
+
+
+def test_endo_at_kappa_star_saturates_envelope():
+    """At κ=κ*=64, exp(0)=1 so endo = sophia_gate. With sophia_gate
+    at sigmoid(0)=0.5 (coupling at history mean), endo ≈ 0.5."""
+    nc = _ticker(_base_inputs(
+        kappa=64.0,
+        external_coupling=0.5,
+    ))
+    assert nc.endorphins == pytest.approx(0.5, abs=0.05)
+
+
+def test_dop_soft_saturation_flag_off_legacy_clip(monkeypatch):
+    """#934: default (flag unset) uses legacy clip-then-sum that pins at 1.0."""
+    monkeypatch.delenv("MONKEY_DOP_SOFT_SATURATION_LIVE", raising=False)
+    nc = _ticker(_base_inputs(phi_delta=5.0))  # sigmoid(5)≈0.993 → near ceiling
+    # With phi_delta high and no reward, dop ≈ 0.993 (still below 1)
+    # Test that legacy path doesn't apply soft-sat shape
+    assert nc.dopamine > 0.95
+
+
+def test_dop_soft_saturation_flag_on_no_pinning(monkeypatch):
+    """#934: flag enabled gives 1-exp(-(a+b)) — asymptotic, no ceiling pin."""
+    monkeypatch.setenv("MONKEY_DOP_SOFT_SATURATION_LIVE", "true")
+    nc = _ticker(_base_inputs(phi_delta=5.0))  # dopFromPhi ≈ 0.993
+    # Soft-sat at sum=0.993 → 1 - exp(-0.993) ≈ 0.629
+    assert 0.55 < nc.dopamine < 0.70
+
+
+def test_dop_soft_saturation_flag_on_never_reaches_one(monkeypatch):
+    """#934: even at extreme input, soft-sat asymptotes to but never
+    reaches 1.0."""
+    monkeypatch.setenv("MONKEY_DOP_SOFT_SATURATION_LIVE", "true")
+    # Drive dop_from_phi very high; even with maximal dop_from_reward
+    # (which is computed internally from reward queue, hard to manipulate
+    # here), the formula should never produce exactly 1.0
+    nc = _ticker(_base_inputs(phi_delta=20.0))  # sigmoid(20)≈1.0 effectively
+    # 1 - exp(-1.0) ≈ 0.632 (just dop_from_phi, no reward)
+    assert nc.dopamine < 1.0

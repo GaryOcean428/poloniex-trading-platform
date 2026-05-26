@@ -53,6 +53,26 @@ export interface NeurochemicalState {
  */
 const KAPPA_STAR = 64.0;
 
+/** Endorphin κ-proximity width (σ in exp(-|κ - κ*| / σ)). Frozen
+ *  canonical constant from
+ *    qig_core/consciousness/neurochemistry.py: ENDORPHIN_KAPPA_SIGMA: float = 16.0
+ *
+ *  This is the STRUCTURAL scale at which κ-distance becomes operationally
+ *  meaningful in the κ-proximity envelope — derived from the E8 generative
+ *  model, NOT from the basin's runtime kappaHistory stddev. The two are
+ *  different concepts that share units: rolling σ_κ is a tick-level
+ *  statistical property; ENDORPHIN_KAPPA_SIGMA is the structural scale
+ *  at which the envelope produces meaningful output.
+ *
+ *  Audit 2026-05-25 (#934): the prior implementation used
+ *  `sigmaKappa = stddev(kappaHistory)` for the exp envelope, which
+ *  produces σ ≈ 0.09 in production (basin's natural κ-jitter scale).
+ *  With observed |κ-κ*| ≈ 2.18, this gave exp(-24.2) ≈ 3e-11, pinning
+ *  endo at floor across 85-98% of all ticks. Switching to the canonical
+ *  16.0 gives exp(-0.136) ≈ 0.87 at the same kappa-distance — healthy
+ *  peak-generative signal across the kernel's observed κ range. */
+const ENDORPHIN_KAPPA_SIGMA = 16.0;
+
 /** Minimum samples in a history slice to compute a meaningful stddev.
  *  Below this, derivations fall back to the neutral identity value (the
  *  chemical's output-type origin), NOT to a hardcoded "default". This
@@ -292,7 +312,22 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // this. STILL purely derived — reward is an EVENT in state, the
   // additive lift is a function of that state, not a constant.
   const dopFromReward = clip(inputs.rewardDopamineDelta ?? 0, 0, 1);
-  const dop = clip(dopFromPhi + dopFromReward, 0, 1);
+  // 2026-05-26 (#934 chemistry-pinning audit): the additive-then-clip
+  // composition `clip(dopFromPhi + dopFromReward, 0, 1)` truncates the
+  // upper half of the sum-space (sum ∈ [0,2] → clip at 1) and pins ~21%
+  // of ticks at the ceiling even in clean-reward conditions (84% under
+  // contaminated rewards before #931 fix). Soft-saturation
+  // `1 - exp(-(a+b))` asymptotes to 1.0 without ever pinning, preserving
+  // absolute semantics (dop=1 still means peak motivation, just unreachable).
+  //
+  // Behavioural change: typical-streak dop drops from ~1.00 (pinned) to
+  // ~0.63 (sum=1 soft-sat). Downstream rewardMult = 1 + (dop - gaba)
+  // becomes less aggressive in routine winning streaks. Flag-gated for
+  // monitored rollout — flip MONKEY_DOP_SOFT_SATURATION_LIVE=true once
+  // the typical rewardMult distribution is observed in production.
+  const dop = process.env.MONKEY_DOP_SOFT_SATURATION_LIVE === 'true'
+    ? 1 - Math.exp(-(dopFromPhi + dopFromReward))
+    : clip(dopFromPhi + dopFromReward, 0, 1);
 
   // ─── Serotonin ───────────────────────────────────────────────────
   // §29.1: stability / equilibrium. 2026-05-16 (#715, derivation-only):
@@ -422,10 +457,8 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // ramp over the basin's coupling σ, no hardcoded cutoff or sigmoid.
   let endoBase: number;
   if (
-    obs?.kappaHistory && obs.kappaHistory.length >= HISTORY_MIN_SAMPLES
-    && obs?.externalCouplingHistory && obs.externalCouplingHistory.length >= HISTORY_MIN_SAMPLES
+    obs?.externalCouplingHistory && obs.externalCouplingHistory.length >= HISTORY_MIN_SAMPLES
   ) {
-    const sigmaKappa = stddev(obs.kappaHistory);
     const couplingMean = mean(obs.externalCouplingHistory);
     const couplingStddev = stddev(obs.externalCouplingHistory);
     // 2026-05-25 (steady-state-pinning fix): the previous Sophia gate
@@ -440,13 +473,15 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
     const sophiaGate = couplingStddev > 0
       ? sigmoid((inputs.externalCoupling - couplingMean) / couplingStddev)
       : (inputs.externalCoupling >= couplingMean ? 1 : 0);  // degenerate: σ=0
-    if (sigmaKappa === 0) {
-      // Basin's κ has been perfectly flat → no scale to smooth over.
-      // Fall back to the indicator (still binary in this degenerate case).
-      endoBase = (inputs.kappa === KAPPA_STAR ? 1 : 0) * sophiaGate;
-    } else {
-      endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / sigmaKappa) * sophiaGate;
-    }
+    // 2026-05-26 (#934 chemistry-pinning audit): apply canonical
+    // ENDORPHIN_KAPPA_SIGMA = 16.0 (frozen from qig_core canon), NOT the
+    // basin's rolling stddev(kappaHistory). The basin's rolling σ_κ
+    // (≈0.09 in production) is a tick-jitter statistical property;
+    // ENDORPHIN_KAPPA_SIGMA is the structural scale at which κ-distance
+    // becomes operationally meaningful in the κ-proximity envelope. The
+    // prior shape pinned endo at 3e-11 across 85–98% of ticks; canonical
+    // scale gives ~0.87 at observed |κ-κ*|=2.18 (healthy peak signal).
+    endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / ENDORPHIN_KAPPA_SIGMA) * sophiaGate;
   } else {
     // Cold start: no κ-scale derivation available. Use tanh on the
     // distance (arithmetic identity, no scale constant). Coupling gate
