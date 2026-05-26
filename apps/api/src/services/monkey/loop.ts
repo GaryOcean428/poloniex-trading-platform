@@ -61,6 +61,12 @@ import { wsPositionCache } from './ws_position_cache.js';
 import { marketIntelCache } from './market_intel.js';
 import futuresWebSocket from '../../websocket/futuresWebSocket.js';
 import { BasinSync } from './basin_sync.js';
+import {
+  clampPredictionCadenceSeconds,
+  predictionDirectionFromSide,
+  recordKernelPrediction,
+  type PredictionSnapshotReason,
+} from './kernel_predictions.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { logParityDiff } from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
@@ -690,6 +696,12 @@ interface SymbolState {
    *  position so the bracket is committed at entry. null until the
    *  first tick with ≥15 candles of history (ATR needs period+1). */
   lastFrBracket: { tpDistance: number; slDistance: number } | null;
+  /** Prediction-corpus instrumentation state. Read-only bookkeeping that
+   *  decides when to snapshot; never feeds back into executive decisions. */
+  lastPredictionSnapshotAtMs: number | null;
+  lastPredictionMode: string | null;
+  lastPredictionLane: string | null;
+  lastPredictionBasinDirSign: -1 | 0 | 1 | null;
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -1300,6 +1312,103 @@ export class MonkeyKernel extends EventEmitter {
     return this.symbolStates.get(symbol)?.latestBasinSnapshot ?? null;
   }
 
+  private predictionCadenceSeconds(state: SymbolState, basinVelocityNow: number): number {
+    const vals = [...state.bvHistory, basinVelocityNow]
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v) && v > 0);
+    const mean = vals.length > 0
+      ? vals.reduce((sum, v) => sum + v, 0) / vals.length
+      : null;
+    return clampPredictionCadenceSeconds(mean);
+  }
+
+  private predictionStateTransitionReason(
+    state: SymbolState,
+    mode: string,
+    lane: string,
+    basinDir: number,
+    nowMs: number,
+    cadenceSeconds: number,
+  ): PredictionSnapshotReason | null {
+    const dirSign: -1 | 0 | 1 =
+      basinDir > 0 ? 1 : basinDir < 0 ? -1 : 0;
+    const modeChanged = state.lastPredictionMode !== null && state.lastPredictionMode !== mode;
+    const laneChanged = state.lastPredictionLane !== null && state.lastPredictionLane !== lane;
+    const basinFlipped =
+      state.lastPredictionBasinDirSign !== null
+      && dirSign !== 0
+      && state.lastPredictionBasinDirSign !== 0
+      && dirSign !== state.lastPredictionBasinDirSign;
+    const duePeriodic =
+      state.lastPredictionSnapshotAtMs === null
+      || (nowMs - state.lastPredictionSnapshotAtMs) / 1000 >= cadenceSeconds;
+    if (modeChanged || laneChanged || basinFlipped) return 'state_transition';
+    if (duePeriodic) return 'periodic';
+    return null;
+  }
+
+  private notePredictionSnapshotState(
+    state: SymbolState,
+    mode: string,
+    lane: string,
+    basinDir: number,
+    nowMs: number,
+  ): void {
+    state.lastPredictionSnapshotAtMs = nowMs;
+    state.lastPredictionMode = mode;
+    state.lastPredictionLane = lane;
+    state.lastPredictionBasinDirSign = basinDir > 0 ? 1 : basinDir < 0 ? -1 : 0;
+  }
+
+  private recordPredictionSnapshot(input: {
+    state: SymbolState;
+    tradeId?: string | number | null;
+    basin: Basin;
+    strategyForecast: Basin;
+    basinVelocity: number;
+    phi: number;
+    kappa: number;
+    nc: NeurochemicalState;
+    regimeWeights: { quantum: number; efficient: number; equilibrium: number };
+    mode: string;
+    lane: string;
+    reason: PredictionSnapshotReason;
+    triggeringGate?: string | null;
+    predictedSide?: 'long' | 'short' | 'flat' | null;
+    sizeUsdt: number;
+    leverage: number;
+    entryThreshold: number;
+  }): void {
+    const cadenceSeconds = this.predictionCadenceSeconds(input.state, input.basinVelocity);
+    const predictedDirection = predictionDirectionFromSide(input.predictedSide ?? 'flat');
+    const confidence = Math.min(1, Math.max(0, 1 - Number(input.entryThreshold || 0)));
+    const notional = Math.max(0, Number(input.sizeUsdt) || 0) * Math.max(1, Number(input.leverage) || 1);
+    const predictedTerminal = predictedDirection * notional * Math.max(0.000001, Number(input.entryThreshold) || 0);
+    const predictedStddev = Math.max(0.000001, Math.abs(predictedTerminal) * (1 - confidence));
+    recordKernelPrediction({
+      tradeId: input.tradeId ?? null,
+      kernelId: this.instanceId,
+      perceptionBasin: input.basin,
+      strategyForecastBasin: input.strategyForecast,
+      fisherRaoDisagreement: fisherRao(input.basin, input.strategyForecast),
+      basinVelocity: input.basinVelocity,
+      phi: input.phi,
+      kappaEff: input.kappa,
+      predictedHorizonSeconds: cadenceSeconds,
+      predictedTerminalPnlUsdt: predictedTerminal,
+      predictedPnlStddevUsdt: predictedStddev,
+      predictedDirection,
+      predictedConfidence: confidence,
+      neurochemistry: input.nc,
+      regimeWeights: input.regimeWeights,
+      mode: input.mode,
+      lane: input.lane,
+      snapshotReason: input.reason,
+      triggeringGate: input.triggeringGate ?? null,
+      sourcePath: 'apps/api/src/services/monkey/loop.ts',
+    });
+  }
+
   /**
    * 2026-05-16 — L-veto-over-K telemetry accessor. Returns the running
    * total of K entries suppressed by L's high-conviction disagreeing
@@ -1595,6 +1704,10 @@ export class MonkeyKernel extends EventEmitter {
       kappaHistory: [],
       externalCouplingHistory: [],
       lastFrBracket: null,
+      lastPredictionSnapshotAtMs: null,
+      lastPredictionMode: null,
+      lastPredictionLane: null,
+      lastPredictionBasinDirSign: null,
     };
   }
 
@@ -3737,6 +3850,55 @@ export class MonkeyKernel extends EventEmitter {
         : CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
     };
 
+    const predictionNowMs = Date.now();
+    const predictionCadenceSeconds = this.predictionCadenceSeconds(state, bv);
+    const periodicPredictionReason = this.predictionStateTransitionReason(
+      state, mode, positionLane, basinDir, predictionNowMs, predictionCadenceSeconds,
+    );
+    if (periodicPredictionReason) {
+      this.recordPredictionSnapshot({
+        state,
+        tradeId: ownOpenRow?.id ?? null,
+        basin,
+        strategyForecast: state.identityBasin,
+        basinVelocity: bv,
+        phi,
+        kappa: state.kappa,
+        nc,
+        regimeWeights,
+        mode,
+        lane: positionLane,
+        reason: periodicPredictionReason,
+        predictedSide: heldSide ?? (direction === 'long' || direction === 'short' ? direction : 'flat'),
+        sizeUsdt: size.value,
+        leverage: leverage.value,
+        entryThreshold: entryThr.value,
+      });
+      this.notePredictionSnapshotState(state, mode, positionLane, basinDir, predictionNowMs);
+    }
+    if ((action === 'exit' || action === 'flatten') && ownOpenRow?.id) {
+      const gateName = action === 'flatten' ? 'auto_flatten' : 'kernel_disagreement';
+      this.recordPredictionSnapshot({
+        state,
+        tradeId: ownOpenRow.id,
+        basin,
+        strategyForecast: state.identityBasin,
+        basinVelocity: bv,
+        phi,
+        kappa: state.kappa,
+        nc,
+        regimeWeights,
+        mode,
+        lane: ownOpenRow.lane ?? positionLane,
+        reason: 'gate_fire',
+        triggeringGate: gateName,
+        predictedSide: heldSide,
+        sizeUsdt: size.value,
+        leverage: leverage.value,
+        entryThreshold: entryThr.value,
+      });
+    }
+
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
     //
     // Post agent-separation (K vs M) + Turtle control arm (T): the arbiter
@@ -4151,6 +4313,24 @@ export class MonkeyKernel extends EventEmitter {
             state.heldSideByLane[entryLane] = sideCandidate;
             state.entryTimeMsByLane[entryLane] = Date.now();
           }
+          this.recordPredictionSnapshot({
+            state,
+            tradeId: execResult.tradeId ?? null,
+            basin,
+            strategyForecast: state.identityBasin,
+            basinVelocity: bv,
+            phi,
+            kappa: state.kappa,
+            nc,
+            regimeWeights,
+            mode,
+            lane: isDCA && heldSide ? (ownOpenRow?.lane ?? positionLane) : positionLane,
+            reason: 'entry',
+            predictedSide: action === 'enter_long' ? 'long' : 'short',
+            sizeUsdt: cappedMargin,
+            leverage: leverage.value,
+            entryThreshold: entryThr.value,
+          });
         }
         }  // close v0.8.7 trading-paused else branch
       } else if (action === 'scalp_exit' && heldSide) {
@@ -4180,6 +4360,25 @@ export class MonkeyKernel extends EventEmitter {
             : 'swing'
         ) as 'scalp' | 'swing' | 'trend';
         if (tradeId) {
+          this.recordPredictionSnapshot({
+            state,
+            tradeId,
+            basin,
+            strategyForecast: state.identityBasin,
+            basinVelocity: bv,
+            phi,
+            kappa: state.kappa,
+            nc,
+            regimeWeights,
+            mode,
+            lane: scalpLane,
+            reason: 'gate_fire',
+            triggeringGate: exitGate,
+            predictedSide: heldSide,
+            sizeUsdt: size.value,
+            leverage: leverage.value,
+            entryThreshold: entryThr.value,
+          });
           const closeResult = await this.closeHeldPosition({
             symbol,
             tradeId,
@@ -4214,6 +4413,25 @@ export class MonkeyKernel extends EventEmitter {
             state.lastEntryAtMs = null;
             state.slDeferRemainingTicks = 0;
             state.tapeFlipStreak = 0;
+            this.recordPredictionSnapshot({
+              state,
+              tradeId,
+              basin,
+              strategyForecast: state.identityBasin,
+              basinVelocity: bv,
+              phi,
+              kappa: state.kappa,
+              nc,
+              regimeWeights,
+              mode,
+              lane: scalpLane,
+              reason: 'exit',
+              triggeringGate: exitGate,
+              predictedSide: heldSide,
+              sizeUsdt: size.value,
+              leverage: leverage.value,
+              entryThreshold: entryThr.value,
+            });
           }
           if (!executed) {
             reason += ` | close: ${closeResult.reason}`;
@@ -4237,6 +4455,25 @@ export class MonkeyKernel extends EventEmitter {
           pnlAtDecision = (lastPrice - entryP) * qty * sidesign;
         }
         if (existingRowId) {
+          this.recordPredictionSnapshot({
+            state,
+            tradeId: existingRowId,
+            basin,
+            strategyForecast: state.identityBasin,
+            basinVelocity: bv,
+            phi,
+            kappa: state.kappa,
+            nc,
+            regimeWeights,
+            mode,
+            lane: ownOpenRow?.lane ?? 'swing',
+            reason: 'gate_fire',
+            triggeringGate: 'override_reverse',
+            predictedSide: heldSide,
+            sizeUsdt: size.value,
+            leverage: leverage.value,
+            entryThreshold: entryThr.value,
+          });
           const closeResult = await this.closeHeldPosition({
             symbol,
             tradeId: existingRowId,
@@ -4330,6 +4567,24 @@ export class MonkeyKernel extends EventEmitter {
               state.directionalDisagreementStreakByLane[reversalLane] = 0;
               state.heldSideByLane[reversalLane] = newSide;
               state.entryTimeMsByLane[reversalLane] = Date.now();
+              this.recordPredictionSnapshot({
+                state,
+                tradeId: execResult.tradeId ?? null,
+                basin,
+                strategyForecast: state.identityBasin,
+                basinVelocity: bv,
+                phi,
+                kappa: state.kappa,
+                nc,
+                regimeWeights,
+                mode,
+                lane: reversalLane,
+                reason: 'entry',
+                predictedSide: newSide,
+                sizeUsdt: size.value,
+                leverage: leverage.value,
+                entryThreshold: entryThr.value,
+              });
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
             } else {
               reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
@@ -7112,7 +7367,7 @@ export class MonkeyKernel extends EventEmitter {
      *  for instant fill. Null when cell isn't resolved (legacy
      *  call sites). */
     cellDirection?: 'TREND_UP' | 'CHOP' | 'TREND_DOWN' | null;
-  }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
+  }): Promise<{ executed: boolean; orderId: string | null; reason: string; tradeId?: string | null }> {
     const { symbol, side, marginUsdt, entryPrice, minNotional } = req;
     // 2026-05-13 — continuous-regime leverage sanity bound.
     //
@@ -7524,16 +7779,18 @@ export class MonkeyKernel extends EventEmitter {
         const orderId: string | null = paper.orderId;
         const agentTag = req.agent ?? 'K';
         const laneTag = req.lane ?? 'swing';
+        let tradeId: string | null = null;
         try {
           const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
           const reasonEncoded =
             `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
-          await pool.query(
+          const inserted = await pool.query(
             `INSERT INTO autonomous_trades
                (user_id, symbol, side, entry_price, quantity, leverage,
                 confidence, reason, order_id, paper_trade, engine_version, agent, lane,
                 take_profit, stop_loss, engine_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             RETURNING id`,
             [
               userId, symbol, exchangeSide, paper.fillPrice, formattedSize, leverage,
               req.phi, reasonEncoded, orderId, true, getEngineVersion(), agentTag, laneTag,
@@ -7544,6 +7801,7 @@ export class MonkeyKernel extends EventEmitter {
               tpPrice, slPrice, 'monkey-k',
             ],
           );
+          tradeId = String((inserted.rows[0] as { id?: string | number } | undefined)?.id ?? '') || null;
         } catch (err) {
           logger.error('[Monkey] paper DB insert failed after simulated placement — ORPHAN RISK', {
             orderId, err: err instanceof Error ? err.message : String(err),
@@ -7574,7 +7832,7 @@ export class MonkeyKernel extends EventEmitter {
           },
         });
 
-        return { executed: true, orderId, reason: paperModeReason };
+        return { executed: true, orderId, reason: paperModeReason, tradeId };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.error('[Monkey] paper placeOrder failed', { symbol, side, err: message });
@@ -7790,16 +8048,18 @@ export class MonkeyKernel extends EventEmitter {
     // Format: monkey|kernel=<id>|agent=<K|M>|lane=<scalp|swing|trend>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
     const agentTag = req.agent ?? 'K';
     const laneTag = req.lane ?? 'swing';
+    let tradeId: string | null = null;
     try {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
         `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
-      await pool.query(
+      const inserted = await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
             confidence, reason, order_id, paper_trade, engine_version, agent, lane,
             take_profit, stop_loss, engine_type)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         RETURNING id`,
         [
           userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
           req.phi, reasonEncoded, orderId, false, getEngineVersion(), agentTag, laneTag,
@@ -7808,6 +8068,7 @@ export class MonkeyKernel extends EventEmitter {
           tpPrice, slPrice, 'monkey-k',
         ],
       );
+      tradeId = String((inserted.rows[0] as { id?: string | number } | undefined)?.id ?? '') || null;
     } catch (err) {
       logger.error('[Monkey] DB insert failed after exchange placement — ORPHAN RISK', {
         orderId, err: err instanceof Error ? err.message : String(err),
@@ -7837,7 +8098,7 @@ export class MonkeyKernel extends EventEmitter {
       },
     });
 
-    return { executed: true, orderId, reason: 'placed' };
+    return { executed: true, orderId, reason: 'placed', tradeId };
   }
 
   /**
