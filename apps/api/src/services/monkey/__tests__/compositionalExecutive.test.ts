@@ -47,22 +47,41 @@ describe('evaluateCell — 3×3 compositional matrix coverage', () => {
     }
   });
 
-  it('CREATOR + CHOP → scalp bias, tight harvest, 0.75x size (env-tunable)', () => {
+  it('CREATOR + CHOP → scalp bias, tight harvest, observer-derived size (Phase 1 2026-05-26)', () => {
+    // Default observer (phi=0.5, regimeConfidence=1.0) → chopMultiplier =
+    // max(0.2, 0.5 × 1.0) = 0.5. REGIME_CREATOR_CHOP_SIZE_MULT env knob
+    // removed; CHOP sizing is now phi × regimeConfidence floored at the
+    // DISSOLVER SAFETY_BOUND.
     const cell = evaluateCell('CREATOR', 'CHOP');
     expect(cell.laneBias).toBe('scalp');
     expect(cell.harvestTightness).toBe('tight');
-    // 0.75 default (bumped from 0.5 in 2026-05-19 sizing-knobs pass per
-    // user report "small positions, low leverage, tiny wins").
-    // Env override: REGIME_CREATOR_CHOP_SIZE_MULT.
-    expect(cell.sizeMultiplier).toBe(0.75);
+    expect(cell.sizeMultiplier).toBeCloseTo(0.5, 9);
   });
 
-  it('PRESERVER + CHOP → swing (mean-revert), normal harvest, 0.85x size (env-tunable)', () => {
+  it('PRESERVER + CHOP → swing (mean-revert), normal harvest, observer-derived size', () => {
+    // Same observer-derived formula as CREATOR×CHOP. The historical
+    // CREATOR-vs-PRESERVER differentiation (was 0.75 vs 0.85) now
+    // emerges naturally from observables: PRESERVER cells fire when
+    // chemistry is more coherent so phi × regimeConfidence is
+    // structurally higher in those states.
     const cell = evaluateCell('PRESERVER', 'CHOP');
     expect(cell.laneBias).toBe('swing');
     expect(cell.harvestTightness).toBe('normal');
-    // 0.85 default (bumped from 0.7). Env: REGIME_PRESERVER_CHOP_SIZE_MULT.
-    expect(cell.sizeMultiplier).toBe(0.85);
+    expect(cell.sizeMultiplier).toBeCloseTo(0.5, 9);
+  });
+
+  it('CHOP cells scale with phi × regimeConfidence, floored at 0.2 SAFETY_BOUND', () => {
+    // High conviction → larger multiplier; deteriorating either input
+    // shrinks the multiplier until the 0.2 DISSOLVER floor stops it.
+    const high = evaluateCell('CREATOR', 'CHOP', { phi: 0.85, regimeConfidence: 0.9 });
+    expect(high.sizeMultiplier).toBeCloseTo(0.85 * 0.9, 9);
+
+    const moderate = evaluateCell('CREATOR', 'CHOP', { phi: 0.6, regimeConfidence: 0.7 });
+    expect(moderate.sizeMultiplier).toBeCloseTo(0.6 * 0.7, 9);
+
+    // Floor: phi=0.3 × regimeConfidence=0.4 = 0.12 → clamped to 0.2.
+    const floored = evaluateCell('CREATOR', 'CHOP', { phi: 0.3, regimeConfidence: 0.4 });
+    expect(floored.sizeMultiplier).toBe(0.2);
   });
 
   it('CREATOR + TREND_UP and CREATOR + TREND_DOWN → trend lane, full size', () => {

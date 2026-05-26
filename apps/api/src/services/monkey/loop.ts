@@ -2592,8 +2592,14 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
     void cellDirectionOverridden;  // surfaced via log only; tests via env-disable
+    // Phase 1 doctrine (2026-05-26): thread observer context so CHOP
+    // cells derive their size multiplier from kernel-internal phi ×
+    // regimeConfidence instead of operator env knobs (now removed).
     const cellAction: CellAction | null = (cellPhase !== null && cellDirection !== null)
-      ? evaluateCell(cellPhase, cellDirection)
+      ? evaluateCell(cellPhase, cellDirection, {
+          phi,
+          regimeConfidence: regimeReading.confidence,
+        })
       : null;
     const cellLive = process.env.REGIME_COMPOSITIONAL_LIVE === 'true';
 

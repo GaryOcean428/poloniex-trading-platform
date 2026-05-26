@@ -43,15 +43,55 @@ export interface CellAction {
 }
 
 /**
+ * Observer context for cell evaluation. Phase 1 (2026-05-26) — when
+ * supplied, CHOP cells derive `sizeMultiplier` from `phi × regimeConfidence`
+ * floored at the DISSOLVER SAFETY_BOUND (0.2) instead of reading the
+ * operator-tunable env knobs `REGIME_*_CHOP_SIZE_MULT`. The kernel's
+ * own observables drive the multiplier; no operator prescription
+ * between the chemistry and the action.
+ *
+ * Optional for back-compat: legacy callers + test fixtures that don't
+ * thread observables still get a deterministic default (phi=0.5,
+ * regimeConfidence=1.0 → multiplier 0.5 ≈ the previous CHOP envelope
+ * midpoint). New production callers in loop.ts MUST pass observables
+ * so the doctrine-clean derivation fires.
+ */
+export interface CellObserverContext {
+  phi: number;
+  regimeConfidence: number;
+}
+
+const DEFAULT_OBSERVER: CellObserverContext = { phi: 0.5, regimeConfidence: 1.0 };
+
+/**
  * Look up the cell action for a (phase, direction) joint state.
  *
- * Pure function — no rolling state, no thresholds. Same inputs always
- * yield the same output.
+ * Pure function — no rolling state, no env reads. CHOP cells use the
+ * observer context to derive their size multiplier from kernel-internal
+ * observables (phi × regimeConfidence floored at 0.2). Trending cells
+ * stay at full conviction (1.0). DISSOLVER cells stay at the 0.2
+ * SAFETY_BOUND floor (PR #946).
  */
 export function evaluateCell(
   phase: RegimePhase,
   direction: TrajectoryDirection,
+  observer: CellObserverContext = DEFAULT_OBSERVER,
 ): CellAction {
+  // Phase 1 doctrine: CHOP-cell multiplier is observer-derived, NOT an
+  // env knob. The kernel's own phi × regimeConfidence composite
+  // determines how aggressively the kernel sizes in chop, floored at
+  // the DISSOLVER SAFETY_BOUND (0.2) — same floor that prevents zero-
+  // sizing in DISSOLVER regimes. Higher integration (phi) AND higher
+  // regime conviction → larger multiplier; deteriorating either → smaller.
+  // Removes REGIME_CREATOR_CHOP_SIZE_MULT (was 0.75) and
+  // REGIME_PRESERVER_CHOP_SIZE_MULT (was 0.85). The historical
+  // CREATOR-vs-PRESERVER differentiation (0.75 vs 0.85, "preservation
+  // cells get more conviction") now emerges naturally from observables:
+  // PRESERVER cells fire when the kernel's chemistry is more coherent,
+  // so phi × regimeConfidence is structurally higher in those states
+  // without us having to pre-bake the differentiation.
+  const chopMultiplier = Math.max(0.2, observer.phi * observer.regimeConfidence);
+
   // CREATOR — h-dominated, broken-symmetry → discovery + breakouts
   if (phase === 'CREATOR') {
     if (direction === 'TREND_UP') return {
@@ -64,16 +104,9 @@ export function evaluateCell(
       harvestTightness: 'normal',
       label: 'CREATOR×TREND_DOWN: aggressive trend-follow (short)',
     };
-    // CHOP within CREATOR — symmetry-breaking imminent, trade lightly.
-    // 2026-05-19: sizeMultiplier bumped 0.5 → 0.75 per user report
-    // "small positions, low leverage, tiny wins." Doctrine preserved
-    // (still "lightly" — full size = 1.0 for trending cells, 0.75 here)
-    // but the prior 0.5 compounded with sizeFraction 0.5 to leave bot
-    // at 0.25× equity per side — entries were structurally too small
-    // to produce meaningful absolute wins. Env-tunable for operator tuning.
     return {
       phase, direction, laneBias: 'scalp',
-      sizeMultiplier: Number(process.env.REGIME_CREATOR_CHOP_SIZE_MULT) || 0.75,
+      sizeMultiplier: chopMultiplier,
       harvestTightness: 'tight',
       label: 'CREATOR×CHOP: trade lightly, expect breakout',
     };
@@ -91,13 +124,9 @@ export function evaluateCell(
       harvestTightness: 'loose',
       label: 'PRESERVER×TREND_DOWN: ride established short',
     };
-    // CHOP within PRESERVER — consolidating before continuation, mean-revert.
-    // sizeMultiplier env-tunable (default 0.85, bumped from 0.7 in 2026-05-19
-    // sizing-knobs pass — preservation cells still get full conviction since
-    // continuation is the likely outcome).
     return {
       phase, direction, laneBias: 'swing',
-      sizeMultiplier: Number(process.env.REGIME_PRESERVER_CHOP_SIZE_MULT) || 0.85,
+      sizeMultiplier: chopMultiplier,
       harvestTightness: 'normal',
       label: 'PRESERVER×CHOP: mean-revert (consolidating)',
     };
