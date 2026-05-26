@@ -1,38 +1,75 @@
 /**
  * positionContractsBound.test.ts — pure-helper tests for the per-position
- * contracts cap that prevents 21010-class oversized-position bugs at the
- * source rather than via the chunker downstream.
+ * contracts cap.
+ *
+ * Phase 9 (2026-05-27): MONKEY_MAX_CONTRACTS_PER_POSITION env knob and
+ * `getMaxContractsPerPosition()` removed. The venue-derived ceiling
+ * `VENUE_CONTRACTS_CEILING` (8000 = 10000 venue cap − 2000 chunker buffer)
+ * remains as a structural wall. The typical operating cap is now
+ * `kernelDerivedContractCap()`, computed from observables.
  */
 import { describe, it, expect } from 'vitest';
 import {
-  MAX_CONTRACTS_PER_POSITION_DEFAULT,
-  getMaxContractsPerPosition,
+  VENUE_CONTRACTS_CEILING,
+  kernelDerivedContractCap,
   headroomContracts,
   clampNewContractsToCap,
 } from '../positionContractsBound.js';
 
-describe('MAX_CONTRACTS_PER_POSITION_DEFAULT', () => {
-  it('is 8000 (2000-contract buffer below Poloniex 10000 cap)', () => {
-    expect(MAX_CONTRACTS_PER_POSITION_DEFAULT).toBe(8000);
+describe('VENUE_CONTRACTS_CEILING', () => {
+  it('is 8000 (venue 10000 − 2000 chunker buffer)', () => {
+    expect(VENUE_CONTRACTS_CEILING).toBe(8000);
   });
 });
 
-describe('getMaxContractsPerPosition', () => {
-  it('returns default when env var is unset', () => {
-    delete process.env.MONKEY_MAX_CONTRACTS_PER_POSITION;
-    expect(getMaxContractsPerPosition()).toBe(8000);
+describe('kernelDerivedContractCap', () => {
+  const baseObservers = {
+    availableEquityUsdt: 1000,
+    markPrice: 2000,    // ETH-ish
+    contractSize: 0.01, // ETH contract size
+    leverage: 10,
+    dopamine: 0.5,
+    phi: 0.5,
+    gaba: 0.5,
+  };
+
+  it('scales with risk fraction × equity × leverage / (mark × contractSize)', () => {
+    // risk_fraction = max(0.1, 0.5 × 0.5 × 0.5) = max(0.1, 0.125) = 0.125
+    // cap = floor((1000 × 0.125 × 10) / (2000 × 0.01)) = floor(1250 / 20) = 62
+    expect(kernelDerivedContractCap(baseObservers)).toBe(62);
   });
 
-  it('honors env var override', () => {
-    process.env.MONKEY_MAX_CONTRACTS_PER_POSITION = '5000';
-    expect(getMaxContractsPerPosition()).toBe(5000);
-    delete process.env.MONKEY_MAX_CONTRACTS_PER_POSITION;
+  it('floors risk fraction at 0.1 SAFETY_BOUND', () => {
+    // gaba=0.95 → (1 - 0.95) = 0.05 → 0.5 × 0.5 × 0.05 = 0.0125 → clamped to 0.1
+    // cap = floor((1000 × 0.1 × 10) / (2000 × 0.01)) = floor(1000 / 20) = 50
+    expect(kernelDerivedContractCap({ ...baseObservers, gaba: 0.95 })).toBe(50);
   });
 
-  it('falls back to default on non-numeric env', () => {
-    process.env.MONKEY_MAX_CONTRACTS_PER_POSITION = 'abc';
-    expect(getMaxContractsPerPosition()).toBe(8000);
-    delete process.env.MONKEY_MAX_CONTRACTS_PER_POSITION;
+  it('caps at VENUE_CONTRACTS_CEILING regardless of kernel envelope', () => {
+    // Huge equity + max risk-fraction → kernel cap exceeds venue ceiling.
+    // Result: clamped to 8000.
+    expect(kernelDerivedContractCap({
+      ...baseObservers,
+      availableEquityUsdt: 1_000_000,
+      dopamine: 1, phi: 1, gaba: 0,
+    })).toBe(VENUE_CONTRACTS_CEILING);
+  });
+
+  it('zero equity → zero cap (kernel cannot open anything)', () => {
+    expect(kernelDerivedContractCap({ ...baseObservers, availableEquityUsdt: 0 }))
+      .toBe(0);
+  });
+
+  it('higher dopamine → larger cap (kernel willing to expose more)', () => {
+    const low = kernelDerivedContractCap({ ...baseObservers, dopamine: 0.2 });
+    const high = kernelDerivedContractCap({ ...baseObservers, dopamine: 0.9 });
+    expect(high).toBeGreaterThan(low);
+  });
+
+  it('higher gaba → smaller cap (kernel more inhibited)', () => {
+    const calm = kernelDerivedContractCap({ ...baseObservers, gaba: 0.1 });
+    const anxious = kernelDerivedContractCap({ ...baseObservers, gaba: 0.8 });
+    expect(anxious).toBeLessThan(calm);
   });
 });
 

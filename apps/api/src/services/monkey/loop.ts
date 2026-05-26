@@ -211,7 +211,8 @@ import {
 import { foresightVeto } from './per_agent_foresight.js';
 import {
   clampNewContractsToCap,
-  getMaxContractsPerPosition,
+  kernelDerivedContractCap,
+  VENUE_CONTRACTS_CEILING,
 } from './positionContractsBound.js';
 
 /** Default Monkey watchlist. */
@@ -4346,6 +4347,10 @@ export class MonkeyKernel extends EventEmitter {
           phi,
           kappa: state.kappa,
           sovereignty,
+          // Phase 9 — kernel-derived contract cap observables.
+          availableEquityUsdt: availableEquity,
+          dopamine: nc.dopamine,
+          gaba: nc.gaba,
           trajectoryId: null,
           isDCAAdd: isDCA,
           dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
@@ -7522,6 +7527,12 @@ export class MonkeyKernel extends EventEmitter {
     phi: number;
     kappa: number;
     sovereignty: number;
+    /** Phase 9 (2026-05-27) — observables threaded for kernel-derived
+     *  contract cap. The kernel's own risk envelope from chemistry +
+     *  equity; replaces MONKEY_MAX_CONTRACTS_PER_POSITION env knob. */
+    availableEquityUsdt?: number;
+    dopamine?: number;
+    gaba?: number;
     trajectoryId: number | null;
     /** v0.6.2: true when this is a DCA add, not an initial entry. */
     isDCAAdd?: boolean;
@@ -7869,13 +7880,12 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
-    // Per-position contracts cap (#11) — keep cumulative open contracts
-    // for (agent, symbol, side, lane) below MAX_CONTRACTS_PER_POSITION
-    // (default 8000, with 2000-contract buffer below Poloniex's 10000
-    // per-order rejection threshold). When already-open contracts plus
-    // this new entry's contracts would exceed the cap, clamp the new
-    // entry; if no headroom, suppress the entry entirely. Independent
-    // per-agent — K, M, T each get their own envelope.
+    // Per-position contracts cap (#11) — Phase 9 (2026-05-27):
+    // kernel-derived from observables (chemistry × equity × leverage)
+    // instead of operator env knob MONKEY_MAX_CONTRACTS_PER_POSITION.
+    // The 8000 venue-derived ceiling (10000 venue cap − 2000 chunker
+    // buffer) remains as a structural wall but is no longer the typical
+    // operating cap — kernel's own risk envelope sits below it.
     if (symbolLotSize > 0) {
       const effectiveAgent = (req.agent ?? 'K') as 'K' | 'M' | 'T';
       const effectiveLane = (req.lane ?? 'swing') as 'scalp' | 'swing' | 'trend';
@@ -7883,7 +7893,21 @@ export class MonkeyKernel extends EventEmitter {
       const currentContracts = await this.sumOpenContractsForPosition(
         symbol, effectiveAgent, side, effectiveLane, symbolLotSize,
       );
-      const cap = getMaxContractsPerPosition();
+      // Phase 9 — kernel-derived cap when observables are threaded;
+      // fall back to venue ceiling (8000) when caller hasn't supplied
+      // equity yet. Old call sites that don't thread the new observables
+      // keep working at the venue-ceiling level.
+      const cap = req.availableEquityUsdt && req.availableEquityUsdt > 0
+        ? kernelDerivedContractCap({
+            availableEquityUsdt: req.availableEquityUsdt,
+            markPrice: req.entryPrice,
+            contractSize: symbolLotSize,
+            leverage: req.leverage,
+            dopamine: req.dopamine ?? 0.5,
+            phi: req.phi,
+            gaba: req.gaba ?? 0.5,
+          })
+        : VENUE_CONTRACTS_CEILING;
       const clampedNewContracts = clampNewContractsToCap(
         newContracts, currentContracts, cap,
       );
