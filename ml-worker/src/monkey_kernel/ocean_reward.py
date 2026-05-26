@@ -61,7 +61,11 @@ def fibonacci_reward_coefficient(roi_frac: float) -> int:
 
     :param roi_frac: realized ROI as a fraction (0.05 = 5%)
     """
-    if not isinstance(roi_frac, (int, float)) or math.isnan(roi_frac) or roi_frac < 0.01:
+    if (
+        not isinstance(roi_frac, (int, float))
+        or not math.isfinite(roi_frac)
+        or roi_frac < 0.01
+    ):
         return 0
     if roi_frac < 0.02:
         return 1
@@ -86,7 +90,11 @@ def fibonacci_reward_tier(roi_frac: float) -> int:
 
     Tier 0 = below 1% noise floor. Tier 1..8 are the Fibonacci buckets.
     """
-    if not isinstance(roi_frac, (int, float)) or math.isnan(roi_frac) or roi_frac < 0.01:
+    if (
+        not isinstance(roi_frac, (int, float))
+        or not math.isfinite(roi_frac)
+        or roi_frac < 0.01
+    ):
         return 0
     if roi_frac < 0.02:
         return 1
@@ -105,4 +113,61 @@ def fibonacci_reward_tier(roi_frac: float) -> int:
     return 8
 
 
-__all__ = ["fibonacci_reward_coefficient", "fibonacci_reward_tier"]
+TRAIL_TIERS: tuple[float, ...] = (0.03, 0.05, 0.08, 0.13, 0.21)
+
+
+def ocean_trail_retracement(coherence_streak: float) -> float:
+    """Ocean's trail/SL retracement tier as a function of the kernel's
+    coherence streak — Matrix tier-3 doctrine extension (2026-05-26).
+
+    Braden's directive: "ocean sets the trail based off noise and its
+    confidence. if it expects it will go higher after some accumulation
+    then set it more flexibly. fib magnitude. if it is uncertain then
+    it sets it tight after the expected peak is reached. sl set
+    similarly."
+
+    Reads ONE kernel-observable — the consecutive-tick count where
+    Fisher-Rao(perception, strategy_forecast) stayed below shouldExit's
+    threshold (i.e. the kernel has been coherent on this position) —
+    and selects a Fibonacci-tier retracement window from the canonical
+    trail-eligible subset {3%, 5%, 8%, 13%, 21%}.
+
+    High streak → kernel sustained coherence → looser trail. Low streak
+    → tight trail. The streak length IS the tier index, capped at the
+    length of the trail-eligible subset. NO formula combines noise +
+    confidence with operator-picked coefficients — pure count of an
+    observable (Matrix's "Mechanism B").
+
+    Tier 1 (1%) and tier 2 (2%) excluded as too-tight noise band;
+    tier 8 (34%) excluded as harvest-cap. Remaining five tiers cover
+    "tight enough to capture" through "loose enough to give a trend
+    room."
+    """
+    if not isinstance(coherence_streak, (int, float)):
+        return TRAIL_TIERS[0]
+    if coherence_streak != coherence_streak:  # NaN
+        return TRAIL_TIERS[0]
+    if coherence_streak < 0:
+        return TRAIL_TIERS[0]
+    idx = min(int(coherence_streak), len(TRAIL_TIERS) - 1)
+    return TRAIL_TIERS[idx]
+
+
+def ocean_trail_tier_index(coherence_streak: float) -> int:
+    """Surface the trail tier index (0..4) for telemetry."""
+    if not isinstance(coherence_streak, (int, float)):
+        return 0
+    if coherence_streak != coherence_streak:  # NaN
+        return 0
+    if coherence_streak < 0:
+        return 0
+    return min(int(coherence_streak), len(TRAIL_TIERS) - 1)
+
+
+__all__ = [
+    "fibonacci_reward_coefficient",
+    "fibonacci_reward_tier",
+    "TRAIL_TIERS",
+    "ocean_trail_retracement",
+    "ocean_trail_tier_index",
+]

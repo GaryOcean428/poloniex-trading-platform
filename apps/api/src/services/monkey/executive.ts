@@ -1550,7 +1550,10 @@ export function shouldExtendBracket(args: {
   markPrice: number;
   currentTp: number | null;
   currentSl: number | null;
-  /** Fresh FR bracket distances this tick (frBracketDistances output). */
+  /** Fresh FR bracket distances this tick (frBracketDistances output).
+   *  Used as a FALLBACK when oceanTrailRetracementPct is not provided
+   *  (back-compat for the executeEntry path which still anchors the
+   *  initial bracket via ATR/Pine geometry). */
   freshTpDistance: number;
   freshSlDistance: number;
   /** Fresh conviction = φ × rConf ∈ [0,1]. */
@@ -1559,10 +1562,19 @@ export function shouldExtendBracket(args: {
   currentRoiFrac: number;
   /** Current unrealized PnL in USDT; used to reject sub-meaningful ratchets. */
   currentPnlUsdt: number;
+  /** Ocean-tier trail retracement window as a fraction of mark price
+   *  (e.g. 0.05 = 5%). Matrix tier-3 doctrine extension (2026-05-26):
+   *  when supplied, this replaces freshSlDistance as the authoritative
+   *  SL trail distance — `oceanTrailRetracement(coherenceStreak)` reads
+   *  one kernel-observable (consecutive coherent ticks per shouldExit)
+   *  and picks a Fibonacci-tier retracement from {3%, 5%, 8%, 13%, 21%}.
+   *  When omitted, falls back to freshSlDistance (legacy ATR path). */
+  oceanTrailRetracementPct?: number;
 }): BracketRevision {
   const {
     heldSide, entryPrice, markPrice, currentTp, currentSl,
     freshTpDistance, freshSlDistance, conviction, currentRoiFrac, currentPnlUsdt,
+    oceanTrailRetracementPct,
   } = args;
 
   const convThreshold =
@@ -1573,23 +1585,31 @@ export function shouldExtendBracket(args: {
   // ROI; chemistry learns whether early trailing protects or
   // over-tightens via push_reward feedback on close outcomes.
   //
-  // 2026-05-26 — PR #944 attempted to re-introduce env-knob gates
-  // (MONKEY_BRACKET_TRAIL_MIN_ROI=0.10, MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD=0.02)
-  // as a "fix" for trading-flat symptoms. Two problems:
-  //   (a) Doctrine violation — operator-tunable hardcoded thresholds
-  //       are explicitly forbidden in the autonomy doctrine; calibration
-  //       is observer-derived from chemistry.
-  //   (b) Wrong diagnosis — trading-flat root cause was DISSOLVER cell
-  //       sizeMultiplier=0 (entry-side veto in compositional_executive),
-  //       not bracket-trail behaviour. PR #944 changed an unrelated knob.
-  // PR #944 is reverted as part of this PR; the real fix lives in
-  // compositional_executive.ts DISSOLVER cell floor.
+  // 2026-05-26 (#948) — sub-1% ROI noise floor moved to the LEARNING
+  // signal (ocean_reward.ts emits zero positive chemistry below 1%).
+  // The trail itself fires on any positive ROI; chemistry stops
+  // valuing sub-1% closes; setup-selection re-routes via learning.
+  // This is the canonical "reward shape, not gate" pattern —
+  // shouldExtendBracket does NOT gate the kernel's action.
   const minTrailRoi = 0;
   const minTrailProfitUsdt = 0;
   const meaningfulProfit =
     currentRoiFrac >= minTrailRoi
     && currentPnlUsdt >= minTrailProfitUsdt;
   const long = heldSide === 'long';
+
+  // Ocean-tier SL retracement, per Matrix tier-3 doctrine extension
+  // (2026-05-26). When oceanTrailRetracementPct is provided, it
+  // overrides the legacy freshSlDistance (ATR-derived). The new
+  // distance is `mark × pct` — i.e. the SL sits `pct` below mark
+  // (long) or above mark (short). Same tier value drives both the
+  // trail retracement window AND the SL distance (linked first-ship
+  // per Matrix's recommendation; decoupling is a follow-on if data
+  // shows the responsiveness budget needs separating).
+  const effectiveSlDistance =
+    oceanTrailRetracementPct !== undefined && oceanTrailRetracementPct > 0
+      ? markPrice * oceanTrailRetracementPct
+      : freshSlDistance;
 
   // ── TP extension ────────────────────────────────────────────────
   let newTp: number | null = null;
@@ -1603,18 +1623,23 @@ export function shouldExtendBracket(args: {
   }
 
   // ── SL trail ────────────────────────────────────────────────────
-  // Trail the stop `freshSlDistance` behind the mark, ratcheting only
-  // in the favourable direction.
+  // Trail the stop `effectiveSlDistance` behind the mark, ratcheting
+  // only in the favourable direction. Distance source: Ocean-tier
+  // retracement when supplied, else legacy ATR-derived freshSlDistance.
   let newSl: number | null = null;
   if (inProfit && meaningfulProfit && currentSl !== null) {
     const candidateSl = long
-      ? markPrice - freshSlDistance
-      : markPrice + freshSlDistance;
+      ? markPrice - effectiveSlDistance
+      : markPrice + effectiveSlDistance;
     const better = long ? candidateSl > currentSl : candidateSl < currentSl;
     if (better) newSl = candidateSl;
   }
 
   const changed = newTp !== null || newSl !== null;
+  const trailSource =
+    oceanTrailRetracementPct !== undefined && oceanTrailRetracementPct > 0
+      ? `ocean ${(oceanTrailRetracementPct * 100).toFixed(0)}%`
+      : 'ATR';
   return {
     changed,
     newTp,
@@ -1622,8 +1647,8 @@ export function shouldExtendBracket(args: {
     reason: changed
       ? `extend_bracket: ${newTp !== null ? `TP->${newTp.toFixed(2)} ` : ''}`
         + `${newSl !== null ? `SL->${newSl.toFixed(2)} ` : ''}`
-        + `(conv=${conviction.toFixed(2)}, roi=${(currentRoiFrac * 100).toFixed(2)}%)`
+        + `(conv=${conviction.toFixed(2)}, roi=${(currentRoiFrac * 100).toFixed(2)}%, trail=${trailSource})`
       : `bracket_hold: no favourable revision (conv=${conviction.toFixed(2)}, `
-        + `inProfit=${inProfit}, meaningfulProfit=${meaningfulProfit})`,
+        + `inProfit=${inProfit}, meaningfulProfit=${meaningfulProfit}, trail=${trailSource})`,
   };
 }
