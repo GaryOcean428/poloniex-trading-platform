@@ -32,6 +32,8 @@
  * (add/subtract/clamp/multiply by scalar decay factors).
  */
 
+import { fibonacciRewardCoefficient } from './ocean_reward.js';
+
 /** Reactive emotions specific to one agent, updated by that agent's
  *  own realized outcomes. Range [0, 1] for all fields. */
 export interface AgentReactiveEmotion {
@@ -105,6 +107,13 @@ export interface AgentOutcomeEvent {
   agent: 'K' | 'M' | 'T' | 'L';
   symbol: string;
   realizedPnl: number;
+  /** ROI as a fraction (realized PnL / margin used). Issue #948 —
+   *  Ocean reward gate consumes this to compute Fibonacci tier;
+   *  positive chemistry only fires at tier ≥ 1 (ROI ≥ 1%). Optional
+   *  for back-compat with callers that don't yet thread it through;
+   *  when omitted, falls back to the pre-Ocean behaviour (any
+   *  positive PnL grants positive chemistry). */
+  roiFrac?: number;
   /** Was this a winner relative to the agent's stated conviction at
    *  entry? Used for flow alignment. */
   expectedDirection: 'long' | 'short';
@@ -138,7 +147,19 @@ export function newPerAgentState(): PerAgentState {
 }
 
 /** Update the agent's reactive emotion + neurochemistry from a
- *  realized outcome. Pure transform. */
+ *  realized outcome. Pure transform.
+ *
+ *  Issue #948 (2026-05-26) — Ocean reward gate. Positive chemistry
+ *  fires only at Fibonacci tier ≥ 1 (ROI ≥ 1%), scaled by the tier
+ *  coefficient. Sub-1% wins emit ZERO positive chemistry — the kernel
+ *  learns they're noise, not signal. Negative chemistry (frustration,
+ *  gaba) unchanged: losses still feed normally regardless of magnitude.
+ *
+ *  When `outcome.roiFrac` is omitted, falls back to coefficient=1 if
+ *  `realizedPnl > 0` (pre-Ocean back-compat for callers that don't yet
+ *  thread ROI through). New callers MUST pass roiFrac so the Ocean
+ *  gate can fire correctly.
+ */
 export function applyOutcomeToState(
   prev: PerAgentState,
   outcome: AgentOutcomeEvent,
@@ -149,11 +170,25 @@ export function applyOutcomeToState(
     outcome.realizedDirection !== 'flat' &&
     outcome.realizedDirection === outcome.expectedDirection;
 
+  // Ocean reward coefficient — 0 below 1% ROI, Fibonacci-scaled above.
+  // When roiFrac is omitted, fall back to coefficient=1 on wins so
+  // legacy callers keep behaving as they did pre-#948 (chemistry fires
+  // on any positive PnL). New callers thread roiFrac → the gate fires.
+  const oceanCoeff =
+    isWinner && outcome.roiFrac !== undefined
+      ? fibonacciRewardCoefficient(outcome.roiFrac)
+      : isWinner ? 1 : 0;
+
   // Emotions — bounded in [0, 1].
   const e = prev.emotions;
-  const dopamineDelta = isWinner ? 0.20 : 0;
+  const dopamineDelta = oceanCoeff > 0 ? 0.20 * oceanCoeff : 0;
   const frustrationDelta = isLoser ? 0.20 : 0;
-  const flowDelta = isAligned ? 0.10 : -0.05;
+  // flow alignment fires only when the reward coefficient is non-zero
+  // OR when the agent is actively wrong; sub-1% noise wins don't shape
+  // alignment learning.
+  const flowDelta = isAligned && oceanCoeff > 0
+    ? 0.10
+    : !isAligned ? -0.05 : 0;
   const newEmotions: AgentReactiveEmotion = {
     dopamine: clamp01(e.dopamine + dopamineDelta - 0.05), // small constant decay
     frustration: clamp01(e.frustration + frustrationDelta - 0.03),
@@ -164,14 +199,18 @@ export function applyOutcomeToState(
   // Neurochemistry — moves slower than emotions, more bounded swings.
   const n = prev.neurochemistry;
   const newNeurochem: AgentNeurochemicalState = {
-    serotonin: clamp01(n.serotonin + (isWinner ? 0.04 : isLoser ? -0.04 : 0)),
+    serotonin: clamp01(
+      n.serotonin + (oceanCoeff > 0 ? 0.04 * oceanCoeff : isLoser ? -0.04 : 0),
+    ),
     dopamine: clamp01(n.dopamine + dopamineDelta * 0.5),
     norepinephrine: clamp01(
       n.norepinephrine + (Math.abs(outcome.realizedPnl) > 5 ? 0.10 : -0.02),
     ),
     acetylcholine: clamp01(n.acetylcholine + (isAligned ? 0.05 : -0.05)),
     gaba: clamp01(n.gaba + (isLoser ? 0.08 : -0.02)),
-    endorphins: clamp01(n.endorphins + (isWinner && isAligned ? 0.10 : -0.02)),
+    endorphins: clamp01(
+      n.endorphins + (oceanCoeff > 0 && isAligned ? 0.10 * oceanCoeff : -0.02),
+    ),
   };
 
   // Append to outcome ring.

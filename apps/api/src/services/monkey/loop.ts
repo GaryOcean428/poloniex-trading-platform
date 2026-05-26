@@ -101,6 +101,10 @@ import {
 import { frBracketDistances } from './fr_trade_params.js';
 import { applyConsensusOverride } from './consensus_arbiter.js';
 import {
+  fibonacciRewardCoefficient,
+  fibonacciRewardTier,
+} from './ocean_reward.js';
+import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
   CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
   chopSuppressEntry,
@@ -5601,12 +5605,17 @@ export class MonkeyKernel extends EventEmitter {
 
   /** v0.8.8 per-agent reactive cognition: distill a realized outcome
    *  into an emotion + neurochemistry update for the owning agent.
-   *  Called from closeHeldPosition after each settled close. */
+   *  Called from closeHeldPosition after each settled close.
+   *
+   *  Issue #948 (2026-05-26): `marginUsdt` threaded through so the
+   *  Ocean reward gate inside applyOutcomeToState can compute the
+   *  Fibonacci tier from ROI fraction (realizedPnl / marginUsdt). */
   private applyOutcomeToAgent(
     symbol: string,
     agent: AgentLabel,
     heldSide: 'long' | 'short',
     realizedPnl: number,
+    marginUsdt?: number,
   ): void {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
@@ -5616,8 +5625,13 @@ export class MonkeyKernel extends EventEmitter {
       realizedPnl > 0 ? heldSide
         : realizedPnl < 0 ? (heldSide === 'long' ? 'short' : 'long')
           : 'flat';
+    const roiFrac =
+      marginUsdt !== undefined && marginUsdt > 0
+        ? realizedPnl / marginUsdt
+        : undefined;
     const outcome: AgentOutcomeEvent = {
       agent, symbol, realizedPnl,
+      roiFrac,
       expectedDirection: heldSide,
       realizedDirection,
     };
@@ -7963,10 +7977,21 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
+    // Ocean reward dispense (issue #948 / Matrix tier-3 2026-05-26):
+    // positive chemistry fires ONLY at ROI ≥ 1%, scaled by Fibonacci
+    // coefficient (1, 2, 3, 5, 8, 13, 21, 34). "Reward the behavior you
+    // want. Not set knobs. This is how it learns." Below 1% is the
+    // noise floor — sub-1% wins teach nothing because they're
+    // statistically indistinguishable from fee-microstructure noise.
+    //
+    // Negative side unchanged — gaba on losses still feeds at the
+    // existing scale. Symmetric Fibonacci punishment is an open
+    // follow-on per Matrix's tier-3 walk; not assumed here.
+    const oceanCoeff = fibonacciRewardCoefficient(pnlFrac);
     const dop = pnlFrac > 0
-      ? Math.tanh(pnlFracNormalized) * 0.5
+      ? Math.tanh(pnlFracNormalized) * 0.5 * oceanCoeff
       : -Math.tanh(-pnlFracNormalized) * 0.1;
-    const ser = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 : 0;
+    const ser = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 * oceanCoeff : 0;
 
     // κ-proximity width: observer-derived from the rolling distribution
     // of kappaAtExit values across recent rewards. Replaces the magic
@@ -8003,7 +8028,9 @@ export class MonkeyKernel extends EventEmitter {
         kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
       }
     }
-    const endo = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim : 0;
+    const endo = pnlFrac > 0
+      ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim * oceanCoeff
+      : 0;
 
     this.pendingRewards.push({
       source: input.source,
@@ -8025,6 +8052,8 @@ export class MonkeyKernel extends EventEmitter {
       agent,
       pnl: input.realizedPnlUsdt.toFixed(4),
       pnlFrac: (pnlFrac * 100).toFixed(2) + '%',
+      oceanTier: fibonacciRewardTier(pnlFrac),
+      oceanCoeff,
       dop: dop.toFixed(3),
       ser: ser.toFixed(3),
       endo: endo.toFixed(3),

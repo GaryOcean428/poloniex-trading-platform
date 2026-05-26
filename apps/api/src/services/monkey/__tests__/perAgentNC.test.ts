@@ -96,9 +96,14 @@ describe('per-agent neurochemistry reward isolation', () => {
     const tOnly = kernel.decayedRewardSums(now, 'T');
     const lOnly = kernel.decayedRewardSums(now, 'L');
 
-    expect(mOnly.dopamine).toBeCloseTo(kOnly.dopamine, 6);
-    expect(tOnly.dopamine).toBeCloseTo(kOnly.dopamine, 6);
-    expect(lOnly.dopamine).toBeCloseTo(kOnly.dopamine, 6);
+    // Tolerance relaxed from 6→5 decimals 2026-05-26 (#948) — Ocean
+    // Fibonacci coefficient scales per-event dopamine deltas up to 34×,
+    // proportionally enlarging accumulated floating-point error in the
+    // decay sum. Logic is unchanged; this is a precision-tolerance
+    // adjustment for the larger magnitudes.
+    expect(mOnly.dopamine).toBeCloseTo(kOnly.dopamine, 5);
+    expect(tOnly.dopamine).toBeCloseTo(kOnly.dopamine, 5);
+    expect(lOnly.dopamine).toBeCloseTo(kOnly.dopamine, 5);
 
     // Unfiltered (legacy shared-pool behaviour) — sums all four. Must
     // be ~4× any single agent's window. This is the telemetry path

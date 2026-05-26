@@ -49,12 +49,14 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     return queue[queue.length - 1]!;
   }
 
-  it('cold start (no history) → falls back to identity-on-pnlFrac through tanh', () => {
+  it('cold start (no history) → falls back to identity-on-pnlFrac × Ocean coefficient', () => {
     k.pushReward({ source: 'test', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.pnlFraction).toBeCloseTo(0.10, 6);
-    // tanh(0.10) × 0.5 ≈ 0.0498 — confirms unscaled path
-    expect(r.dopamineDelta).toBeCloseTo(Math.tanh(0.10) * 0.5, 4);
+    // Issue #948 (2026-05-26): pnlFrac=0.10 (10%) lands in the
+    // Fibonacci [8%, 13%) bucket → oceanCoeff=8.
+    // Expected: tanh(0.10) × 0.5 × 8 ≈ 0.399.
+    expect(r.dopamineDelta).toBeCloseTo(Math.tanh(0.10) * 0.5 * 8, 4);
   });
 
   it('after several wins, dopamine z-normalizes against rolling stddev', () => {
@@ -70,23 +72,49 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     expect(big.dopamineDelta).toBeGreaterThan(Math.tanh(0.05) * 0.5);
   });
 
-  it('output caps remain STRUCTURAL — dopamine never exceeds 0.5', () => {
-    // Massive win shouldn't escape the cap.
+  it('per-event channel deltas scale with the Ocean Fibonacci coefficient (#948 — was capped, now expressive)', () => {
+    // Issue #948 (2026-05-26): the pre-Ocean caps (0.5/0.15/0.3) were
+    // PER-EVENT structural maxima. Post-Ocean, the per-event delta is
+    // multiplied by the Fibonacci coefficient (1..34) so a 100×-margin
+    // outlier win can deliver a strong learning signal in a single
+    // event. The CONSUMER (clamp01 in the chemistry update path) is
+    // what enforces the eventual [0, 1] saturation — not the per-event
+    // delta. This is the canonical "reward the behaviour you want"
+    // shape that Matrix tier-3 directed.
+    //
+    // Massive win (pnlFrac = 100/1 = 10000%) → Fibonacci cap = 34.
+    // Expected dopamine delta ≈ tanh(saturated) × 0.5 × 34 ≈ 17.
     k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
-    expect(r.dopamineDelta).toBeLessThanOrEqual(0.5);
+    // Coefficient cap is 34; tanh saturates to ~1; base scale 0.5 →
+    // upper bound on the per-event dopamine delta is 0.5 × 34 = 17.
+    expect(r.dopamineDelta).toBeGreaterThan(0.5);
+    expect(r.dopamineDelta).toBeLessThanOrEqual(0.5 * 34);
   });
 
-  it('output caps remain STRUCTURAL — serotonin never exceeds 0.15', () => {
+  it('serotonin per-event delta scales with Ocean coefficient (was capped at 0.15, now up to 0.15 × 34 = 5.1)', () => {
     k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
-    expect(r.serotoninDelta).toBeLessThanOrEqual(0.15);
+    expect(r.serotoninDelta).toBeGreaterThan(0.15);
+    expect(r.serotoninDelta).toBeLessThanOrEqual(0.15 * 34);
   });
 
-  it('output caps remain STRUCTURAL — endorphins never exceed 0.3 (κ-prox gated)', () => {
+  it('endorphin per-event delta scales with Ocean coefficient × κ-prox (was capped at 0.3, now up to 0.3 × 34 = 10.2)', () => {
     k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
     const r = lastReward();
-    expect(r.endorphinDelta).toBeLessThanOrEqual(0.3);
+    expect(r.endorphinDelta).toBeGreaterThan(0.3);
+    expect(r.endorphinDelta).toBeLessThanOrEqual(0.3 * 34);
+  });
+
+  it('sub-1% wins emit ZERO positive chemistry (#948 noise-floor doctrine)', () => {
+    // The substrate of #948: rewarding sub-1% wins teaches the kernel
+    // to chase noise. The Ocean gate (fibonacciRewardCoefficient < 1%
+    // returns 0) drops all positive deltas to zero in that band.
+    k.pushReward({ source: 'noise', realizedPnlUsdt: 0.005, marginUsdt: 1, agent: 'K' });
+    const r = lastReward();
+    expect(r.dopamineDelta).toBe(0);
+    expect(r.serotoninDelta).toBe(0);
+    expect(r.endorphinDelta).toBe(0);
   });
 
   it('loss produces negative dopamine bounded by 0.1 cap', () => {
