@@ -1390,7 +1390,14 @@ export class MonkeyKernel extends EventEmitter {
     const predictedTerminal = predictedDirection * notional * Math.max(0.000001, Number(input.entryThreshold) || 0);
     const predictedStddev = Math.max(0.000001, Math.abs(predictedTerminal) * (1 - confidence));
     recordKernelPrediction({
-      tradeId: input.tradeId ?? null,
+      // #949 narrowed KernelPredictionSnapshot.tradeId to string|null.
+      // Local input type still permits `number` for callsites that derive
+      // tradeId from `execResult` (could be either at compile time).
+      // Stringify at the boundary to satisfy the snapshot contract.
+      tradeId:
+        input.tradeId === null || input.tradeId === undefined
+          ? null
+          : String(input.tradeId),
       kernelId: this.instanceId,
       perceptionBasin: input.basin,
       strategyForecastBasin: input.strategyForecast,
