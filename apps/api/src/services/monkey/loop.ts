@@ -144,6 +144,7 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
+import { SAFE_PNL_FROM_ROW, verifyPnl } from './safePnlSql.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { observeEquity, sizeDeflection } from './equity_gradient.js';
 import {
@@ -6147,21 +6148,26 @@ export class MonkeyKernel extends EventEmitter {
         continue;
       }
 
-      // Update only L's rows (close them with proportional PnL).
+      // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty + side.
+      // The prior `aggPnl * qtyShare` formula approximated correctly only when all
+      // rows shared the same entry price; SAFE_PNL_FROM_ROW handles DCA stacks
+      // with different entries and prevents caller-aggregate phantoms.
       let lLiveRealizedPnl = 0;
       let lLiveRealizedQty = 0;
       try {
         for (const row of rows) {
           const rowQty = Math.abs(Number(row.quantity) || 0);
-          const qtyShare = aggQty > 0 ? rowQty / aggQty : 0;
-          const rowPnl = aggPnl * qtyShare;
-          await pool.query(
+          const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [lastPrice, 'agent_l_force_harvest', orderId, rowPnl, row.id],
+                    exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+              WHERE id = $4
+              RETURNING pnl`,
+            [lastPrice, 'agent_l_force_harvest', orderId, row.id],
           );
+          const rowPnl = updated.rows[0]?.pnl
+            ? Number(updated.rows[0].pnl)
+            : aggPnl * (aggQty > 0 ? rowQty / aggQty : 0);
           this.arbiter.recordSettled('L', rowPnl);
           this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
           lLiveRealizedPnl += rowPnl;
@@ -6289,40 +6295,58 @@ export class MonkeyKernel extends EventEmitter {
           L: { pnl: 0, qty: 0 },
         };
         if (rows.length === 0) {
-          await pool.query(
+          // #931 safe-pnl — compute from the row's own data.
+          const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [markPrice, exitReason, null, pnlAtDecision, tradeId],
+                    exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+              WHERE id = $4
+              RETURNING pnl`,
+            [markPrice, exitReason, null, tradeId],
           );
-          this.arbiter.recordSettled('K', pnlAtDecision);
-          this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
-          paperPerAgentTotals.K.pnl += pnlAtDecision;
+          const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
+          this.arbiter.recordSettled('K', safePnl);
+          this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl);
+          paperPerAgentTotals.K.pnl += safePnl;
           // Paper-mode single-row fallback: estimate qty from
           // pnl/markPrice — only used for margin denominator below;
           // a tiny floor keeps margin non-zero on near-flat closes.
-          paperPerAgentTotals.K.qty += Math.max(Math.abs(pnlAtDecision) / Math.max(markPrice, 1), 0.01);
+          paperPerAgentTotals.K.qty += Math.max(Math.abs(safePnl) / Math.max(markPrice, 1), 0.01);
           this.pushPerAgentCloseRewards(symbol, markPrice, paperPerAgentTotals);
           return { executed: true, orderId: null, reason: 'closed_paper' };
         }
-        const pnlPerRow = pnlAtDecision / rows.length;
+        // #931 safe-pnl: pre-fix used `pnlAtDecision / rows.length` (divide by row
+        // count, not by qty share) — wrong even on its own terms when rows had
+        // different sizes. Use row's own SAFE_PNL_FROM_ROW; only override when
+        // paperClosePosition supplies an explicit settlement pnl (which already
+        // accounts for the position's own entry/exit, so is correct per-row).
         let orderId: string | null = null;
         for (const row of rows) {
-          let rowPnl = pnlPerRow;
           const closeOrderId = row.order_id ? `paper-close-${row.order_id}` : `paper-close-${row.id}`;
+          let explicitPnl: number | null = null;
           if (row.order_id && row.order_id.startsWith('paper-')) {
             const close = await paperClosePosition(row.order_id, markPrice, exitReason);
-            rowPnl = close.pnl;
+            explicitPnl = close.pnl;
             orderId = closeOrderId;
           }
-          await pool.query(
-            `UPDATE autonomous_trades
-                SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [markPrice, exitReason, closeOrderId, rowPnl, row.id],
+          // Either use the explicit paperClosePosition pnl, OR compute from row.
+          const updated = await pool.query<{ pnl: string }>(
+            explicitPnl !== null
+              ? `UPDATE autonomous_trades
+                    SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                        exit_reason = $2, exit_order_id = $3, pnl = $4
+                  WHERE id = $5
+                  RETURNING pnl`
+              : `UPDATE autonomous_trades
+                    SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                        exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+                  WHERE id = $4
+                  RETURNING pnl`,
+            explicitPnl !== null
+              ? [markPrice, exitReason, closeOrderId, explicitPnl, row.id]
+              : [markPrice, exitReason, closeOrderId, row.id],
           );
+          const rowPnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : (explicitPnl ?? 0);
           const agentLabel: AgentLabel =
             row.agent === 'M' ? 'M'
               : row.agent === 'T' ? 'T'
@@ -6367,10 +6391,13 @@ export class MonkeyKernel extends EventEmitter {
       // Sibling kernel/agent is mid-close or just finished — the exchange
       // position is gone (or about to be). Mark our local row closed so
       // bookkeeping stays consistent; no exchange call needed.
+      // #931 safe-pnl: compute from row's own entry/qty/side, not caller aggregate.
+      // The race-loss path was writing the aggregate pnlAtDecision to a single
+      // row by tradeId, producing phantom values when multiple rows existed.
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason='race_lost_to_sibling', pnl=$2 WHERE id=$3`,
-        [markPrice, pnlAtDecision, tradeId],
+                exit_reason='race_lost_to_sibling', ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+        [markPrice, tradeId],
       ).catch(() => { /* non-fatal */ });
       const reason = acquired.reason === 'recently_closed'
         ? `race_lost_to_sibling: closed by ${acquired.heldBy} ${acquired.ageMs}ms ago`
@@ -6443,10 +6470,11 @@ export class MonkeyKernel extends EventEmitter {
       const reason = race.raced
         ? `race_lost_to_sibling: exchange position already 0 (sibling=${race.siblingId} ${race.ageMs}ms ago)`
         : 'exchange_position_vanished';
+      // #931 safe-pnl — see comment at race_lost_to_sibling above.
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason=$2, pnl=$3 WHERE id=$4`,
-        [markPrice, dbExitReason, pnlAtDecision, tradeId],
+                exit_reason=$2, ${SAFE_PNL_FROM_ROW} WHERE id=$3`,
+        [markPrice, dbExitReason, tradeId],
       ).catch(() => { /* non-fatal */ });
       return { executed: false, orderId: null, reason };
     }
@@ -6746,10 +6774,11 @@ export class MonkeyKernel extends EventEmitter {
       if (is21002) {
         const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
         if (race.raced) {
+          // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
           await pool.query(
             `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                    exit_reason=$2, pnl=$3 WHERE id=$4`,
-            [markPrice, 'race_lost_to_sibling', pnlAtDecision, tradeId],
+                    exit_reason='race_lost_to_sibling', ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+            [markPrice, tradeId],
           ).catch(() => { /* non-fatal */ });
           return {
             executed: false, orderId: null,
@@ -6785,10 +6814,11 @@ export class MonkeyKernel extends EventEmitter {
           }
           if (retryPlan.ok === false && retryPlan.reason === '21002_position_already_flat') {
             // Position is already flat — nothing to close. Mark the row.
+            // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
             await pool.query(
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                      exit_reason=$2, pnl=$3 WHERE id=$4`,
-              [markPrice, 'exchange_position_vanished', pnlAtDecision, tradeId],
+                      exit_reason='exchange_position_vanished', ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+              [markPrice, tradeId],
             ).catch(() => { /* non-fatal */ });
             return {
               executed: false, orderId: null,
@@ -6882,34 +6912,46 @@ export class MonkeyKernel extends EventEmitter {
         L: { pnl: 0, qty: 0 },
       };
       if (rows.length === 0 || totalQty === 0) {
-        // Fallback — single-row close (covers edge case of race)
-        await pool.query(
+        // #931 safe-pnl: compute pnl from row's own entry/qty/side via SAFE_PNL_FROM_ROW,
+        // RETURNING the value so chemistry receives the actual row pnl (not the
+        // caller-aggregate that could be a phantom across multiple rows).
+        const updated = await pool.query<{ pnl: string }>(
           `UPDATE autonomous_trades
               SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                  exit_reason = $2, exit_order_id = $3, pnl = $4
-            WHERE id = $5`,
-          [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
+                  exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+            WHERE id = $4
+            RETURNING pnl`,
+          [markPrice, exitReason, orderId, tradeId],
         );
+        const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
         // Single-row fallback: assume Agent K (the established default).
-        this.arbiter.recordSettled('K', pnlAtDecision);
+        this.arbiter.recordSettled('K', safePnl);
         // v0.8.8 per-agent reactive cognition: feed outcome to K's
         // emotion + neurochemistry stack (dopamine on win, frustration
         // on loss). See per_agent_state.ts.
-        this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
-        perAgentTotals.K.pnl += pnlAtDecision;
+        this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl);
+        perAgentTotals.K.pnl += safePnl;
         perAgentTotals.K.qty += exchangeQty || 0.01;
       } else {
+        // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty +
+        // side via SAFE_PNL_FROM_ROW, returning the computed value so chemistry +
+        // arbiter feedback see the true per-row pnl. Pre-fix used
+        // `rowPnl = pnlAtDecision * qtyShare` which assumed all rows shared
+        // the kernel's weightedEntry — wrong when DCA adds had different entries,
+        // and structurally vulnerable to caller-aggregate phantoms.
         for (const row of rows) {
           const rowQty = Math.abs(Number(row.quantity) || 0);
-          const qtyShare = rowQty / totalQty;
-          const rowPnl = pnlAtDecision * qtyShare;
-          await pool.query(
+          const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, pnl = $4
-              WHERE id = $5`,
-            [markPrice, exitReason, orderId, rowPnl, row.id],
+                    exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+              WHERE id = $4
+              RETURNING pnl`,
+            [markPrice, exitReason, orderId, row.id],
           );
+          const rowPnl = updated.rows[0]?.pnl
+            ? Number(updated.rows[0].pnl)
+            : pnlAtDecision * (rowQty / totalQty);
           // Tag-aware arbiter feedback. Pre-separation rows have
           // agent=NULL or 'K' (default from migration 039); those
           // attribute to K. T (Turtle classical TA) was added in the
@@ -6941,12 +6983,15 @@ export class MonkeyKernel extends EventEmitter {
       // pins at least the primary tradeId row to closed, breaking the
       // 21002-retry loop. Reconciler still picks up any siblings.
       try {
+        // #931 safe-pnl: compute from row's own data; the bulk per-row UPDATE
+        // failed and we don't know which rows are still open, so the simplest
+        // safe path is to use the row's own arithmetic.
         await pool.query(
           `UPDATE autonomous_trades
               SET status='closed', exit_price=$1, exit_time=NOW(),
-                  exit_reason=$2, exit_order_id=$3, pnl=$4
-            WHERE id=$5 AND status='open'`,
-          [markPrice, `${exitReason}__db_recovery`, orderId, pnlAtDecision, tradeId],
+                  exit_reason=$2, exit_order_id=$3, ${SAFE_PNL_FROM_ROW}
+            WHERE id=$4 AND status='open'`,
+          [markPrice, `${exitReason}__db_recovery`, orderId, tradeId],
         );
       } catch (recoveryErr) {
         logger.error('[Monkey] close DB recovery also failed — full reconciler dependency', {
