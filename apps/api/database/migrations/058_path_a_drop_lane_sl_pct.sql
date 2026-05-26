@@ -52,10 +52,8 @@ BEGIN
   RAISE NOTICE 'Path A: deleting % sl_pct rows from monkey_parameters and % rows from monkey_parameter_changes', param_count, change_count;
 END $$;
 
--- Drop audit rows FIRST to release the FK reference. Path A retires
--- these parameter names permanently — preserving their audit history
--- in the live changes table no longer serves rollback or governance,
--- and the PR commit history captures the retirement intent.
+-- Delete audit trail rows first (foreign key on monkey_parameter_changes.name
+-- references monkey_parameters.name — child rows must go before parent).
 DELETE FROM monkey_parameter_changes
 WHERE name IN (
   'executive.lane.scalp.sl_pct',
