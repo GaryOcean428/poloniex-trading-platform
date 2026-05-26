@@ -1568,13 +1568,27 @@ export function shouldExtendBracket(args: {
   const convThreshold =
     Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
   const inProfit = currentRoiFrac > 0;
-  const minTrailRoi =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI) || 0.10;
-  const minTrailProfitUsd =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD) || 0.02;
+  // 2026-05-25 strip — bracket trail minimums dropped to 0 per
+  // operator autonomy doctrine. Trail activates on any positive
+  // ROI; chemistry learns whether early trailing protects or
+  // over-tightens via push_reward feedback on close outcomes.
+  //
+  // 2026-05-26 — PR #944 attempted to re-introduce env-knob gates
+  // (MONKEY_BRACKET_TRAIL_MIN_ROI=0.10, MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD=0.02)
+  // as a "fix" for trading-flat symptoms. Two problems:
+  //   (a) Doctrine violation — operator-tunable hardcoded thresholds
+  //       are explicitly forbidden in the autonomy doctrine; calibration
+  //       is observer-derived from chemistry.
+  //   (b) Wrong diagnosis — trading-flat root cause was DISSOLVER cell
+  //       sizeMultiplier=0 (entry-side veto in compositional_executive),
+  //       not bracket-trail behaviour. PR #944 changed an unrelated knob.
+  // PR #944 is reverted as part of this PR; the real fix lives in
+  // compositional_executive.ts DISSOLVER cell floor.
+  const minTrailRoi = 0;
+  const minTrailProfitUsdt = 0;
   const meaningfulProfit =
     currentRoiFrac >= minTrailRoi
-    && currentPnlUsdt >= minTrailProfitUsd;
+    && currentPnlUsdt >= minTrailProfitUsdt;
   const long = heldSide === 'long';
 
   // ── TP extension ────────────────────────────────────────────────
