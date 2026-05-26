@@ -37,6 +37,15 @@ BEGIN
   RAISE NOTICE 'Path A: deleting % sl_pct rows from monkey_parameters', row_count;
 END $$;
 
+-- Delete audit trail rows first (foreign key on monkey_parameter_changes.name
+-- references monkey_parameters.name — child rows must go before parent).
+DELETE FROM monkey_parameter_changes
+WHERE name IN (
+  'executive.lane.scalp.sl_pct',
+  'executive.lane.swing.sl_pct',
+  'executive.lane.trend.sl_pct'
+);
+
 DELETE FROM monkey_parameters
 WHERE name IN (
   'executive.lane.scalp.sl_pct',
