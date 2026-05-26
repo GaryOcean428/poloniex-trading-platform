@@ -15,7 +15,7 @@ export type PredictionSnapshotReason =
   | 'exit';
 
 export interface KernelPredictionSnapshot {
-  tradeId?: string | number | null;
+  tradeId?: string | null;
   kernelId: string;
   perceptionBasin: ArrayLike<number>;
   strategyForecastBasin: ArrayLike<number>;
@@ -59,10 +59,9 @@ function basinArray(value: ArrayLike<number>): number[] {
   return Array.from(value, (x) => Number(x));
 }
 
-function tradeIdParam(value: string | number | null | undefined): number | null {
+function tradeIdParam(value: string | number | null | undefined): string | null {
   if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
-  return Number.isSafeInteger(n) ? n : null;
+  return String(value);
 }
 
 export function clampPredictionCadenceSeconds(

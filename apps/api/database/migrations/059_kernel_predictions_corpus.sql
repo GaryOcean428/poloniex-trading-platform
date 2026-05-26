@@ -6,7 +6,7 @@
 
 CREATE TABLE IF NOT EXISTS kernel_predictions (
   id                          BIGSERIAL PRIMARY KEY,
-  trade_id                    BIGINT REFERENCES autonomous_trades(id) ON DELETE CASCADE,
+  trade_id                    UUID REFERENCES autonomous_trades(id) ON DELETE CASCADE,
   kernel_id                   TEXT NOT NULL,
   snapshot_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
