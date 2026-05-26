@@ -94,9 +94,9 @@ BEGIN
   FROM migration_060_lot_sizes lots
   WHERE t.quantity_unit_normalized = TRUE
     AND t.symbol = lots.symbol
-    AND status = 'closed'
-    AND exit_price IS NOT NULL
-    AND entry_price IS NOT NULL
+    AND t.status = 'closed'
+    AND t.exit_price IS NOT NULL
+    AND t.entry_price IS NOT NULL
     AND (
       t.reason LIKE 'kernel_adopted|%'
       OR t.reason LIKE 'manual_open_user|%'

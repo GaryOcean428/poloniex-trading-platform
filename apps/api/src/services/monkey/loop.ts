@@ -7333,8 +7333,8 @@ export class MonkeyKernel extends EventEmitter {
           }
           const entryPrice = Number(returned.entry_price);
           const sideSign = sideStr === 'buy' || sideStr === 'long' ? 1 : -1;
-          const rowPnlRaw = updated.rows[0]?.pnl
-            ? Number(updated.rows[0].pnl)
+          const rowPnlRaw = returned.pnl
+            ? Number(returned.pnl)
             : Number.isFinite(entryPrice)
               ? rowQty * (markPrice - entryPrice) * sideSign
               : pnlAtDecision * (rowQty / totalQty);
