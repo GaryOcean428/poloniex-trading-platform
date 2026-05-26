@@ -144,28 +144,18 @@ export function currentEntryThreshold(
 // ~15-20x leverage. Mirror in ml-worker/scripts/recalibrate_lane_sl_tp_to_roi.sql.
 export const LANE_PARAMETER_DEFAULTS: Record<
   'scalp' | 'swing' | 'trend',
-  { slPct: number; tpPct: number; budgetFrac: number }
+  { tpPct: number; budgetFrac: number }
 > = {
-  // 2026-05-25 — per-lane budget caps removed per operator autonomy
-  // doctrine. Each lane can now claim full equity; the lane that's
-  // winning grows naturally via chemistry-driven sizing (dopamine
-  // from per-lane reward queue). slPct / tpPct retain their roles
-  // (per-lane retreat / target ROI on margin); only the static
-  // budgetFrac haircut is dropped to 1.0.
-  //
-  // 2026-05-25 (CC2 audit F4 doctrinal note): the prior "trend is
-  // opt-in by operator" doctrine (budgetFrac = 0 for trend) is
-  // explicitly RETIRED with this change. Lanes no longer encode a
-  // sizing-allocation constraint; they encode entry-threshold scale
-  // and exit envelope (slPct / tpPct) only. If a future operator
-  // wants to re-disable a lane as an opt-in, the cleanest mechanism
-  // is a `MONKEY_TREND_LANE_LIVE` env-flag check at the call site
-  // (similar to other operator MANDATEs), NOT restoring per-lane
-  // budgetFrac differentiation — that mixed two concepts (sizing
-  // allocation + behavioral envelope) into one field.
-  scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 1.0 },
-  swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 1.0 },
-  trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 1.0 },
+  // 2026-05-25 — per-lane budget caps removed per operator autonomy doctrine.
+  // 2026-05-26 (Path A) — per-lane SL (slPct) removed entirely.
+  //   Hard SL was a P5 violation: externally-imposed ROI threshold that
+  //   fired regardless of kernel's own perception state. Adverse exits
+  //   now flow through shouldExit (Fisher-Rao disagreement) and
+  //   shouldAutoFlatten (Pillar 1 catastrophic backstop). The TP side
+  //   stays chemistry-derived. See feedback_observer_derives_not_knobs.md.
+  scalp: { tpPct: 0.03, budgetFrac: 1.0 },
+  swing: { tpPct: 0.15, budgetFrac: 1.0 },
+  trend: { tpPct: 0.40, budgetFrac: 1.0 },
 };
 
 /**
@@ -182,13 +172,11 @@ export const NOTIONAL_CEILING_RATIO = 0;
 
 export function laneParam(
   lane: 'scalp' | 'swing' | 'trend',
-  key: 'slPct' | 'tpPct' | 'budgetFrac',
+  key: 'tpPct' | 'budgetFrac',
 ): number {
   // Mirror to ml-worker/src/monkey_kernel/executive.py::lane_param.
-  // TS has no parameter registry yet — defaults stand until the registry
-  // ports across (one of the items behind the persistence-completion
-  // tracking issue). The Python kernel reads from monkey_parameters; TS
-  // reads from these in-code defaults. Both are kept in lockstep.
+  // Path A (2026-05-26): 'slPct' removed from lane params — see
+  // LANE_PARAMETER_DEFAULTS doc.
   return LANE_PARAMETER_DEFAULTS[lane][key];
 }
 
@@ -995,20 +983,17 @@ export function shouldSlowBleedExit(args: {
   // Default $3 mirrors MONKEY_HARVEST_AGG_PEAK_USD so win/loss
   // discipline is symmetric out of the box; tune via env if the
   // realized-PnL distribution argues for it.
-  const laneSL = laneParam(lane, 'slPct');
-  // 2026-05-25 strip — MONKEY_SLOW_BLEED_ABS_USD env + $3 default
-  // removed. Any negative USD with adverse tape after 60min qualifies
-  // for the abs arm; chemistry learns the right give-up threshold.
+  // Path A (2026-05-26): laneSL removed from registry; pct-arm dead.
+  // The abs-arm with absBleedUsd=0 means "any negative USD with adverse
+  // tape after 60min qualifies". Pct-arm went away with lane SL params.
+  // Chemistry's gaba response learns the give-up threshold from the
+  // realized losses fed back through push_reward.
   const absBleedUsd = 0;
-  const pctArm = Math.abs(roiFrac) >= 0.5 * laneSL;
   const absArm = Math.abs(unrealizedPnlUsdt) >= absBleedUsd;
-  if (!pctArm && !absArm) {
+  if (!absArm) {
     return {
-      value: false, reason: 'under_half_sl_and_under_abs',
-      derivation: {
-        roiFrac, laneSL, halfSL: 0.5 * laneSL,
-        unrealizedPnlUsdt, absBleedUsd,
-      },
+      value: false, reason: 'under_abs_bleed_usd',
+      derivation: { roiFrac, unrealizedPnlUsdt, absBleedUsd },
     };
   }
   // Tape alignment with held side: for long, positive tape is aligned;
@@ -1021,12 +1006,11 @@ export function shouldSlowBleedExit(args: {
     };
   }
   const heldMin = (heldS / 60).toFixed(0);
-  const armLabel = pctArm && absArm ? 'pct+abs' : pctArm ? 'pct' : 'abs';
   return {
     value: true,
-    reason: `slow_bleed_exit[${lane}]: ${heldMin}min @ ROI=${(roiFrac * 100).toFixed(1)}% pnl=$${unrealizedPnlUsdt.toFixed(2)} (${armLabel} arm), tape adverse (align=${alignment.toFixed(2)})`,
+    reason: `slow_bleed_exit[${lane}]: ${heldMin}min @ ROI=${(roiFrac * 100).toFixed(1)}% pnl=$${unrealizedPnlUsdt.toFixed(2)} (abs arm), tape adverse (align=${alignment.toFixed(2)})`,
     derivation: {
-      roiFrac, laneSL, halfSL: 0.5 * laneSL,
+      roiFrac,
       unrealizedPnlUsdt, absBleedUsd,
       heldS, heldMs, alignment, tapeTrend, sideCode, laneCode,
       exitTypeBit: 9,  // SLOW_BLEED_EXIT
@@ -1106,21 +1090,21 @@ export function shouldAggregateBleedExit(
 }
 
 /**
- * shouldScalpExit — P&L-driven take-profit / stop-loss gate (v0.4).
+ * shouldScalpExit — Φ-derived take-profit gate (Path A, 2026-05-26).
  *
- * Reward-harvesting exit per UCP v6.6 §29.4: when realized reward
- * crosses a Φ-derived threshold, lock the gain. This sits BEFORE
- * Loop 2 (shouldExit) in the decision chain — a scalp win that
- * would otherwise be given back waiting for regime change is taken.
+ * **Take-profit-only** since Path A (P5 alignment). The hard-SL leg was
+ * an externally-imposed ROI threshold that fired regardless of where
+ * the kernel itself read the position going — a P5 (Observer-Sets-Params)
+ * violation. Adverse exits now flow through:
+ *   - `shouldExit` (Fisher-Rao disagreement between perception and
+ *     strategy_forecast — kernel reads its own prediction limit)
+ *   - `shouldAutoFlatten` (P15 catastrophic backstop on entropy/fhealth)
  *
- * Thresholds are derived, not configured:
- *   TP = 0.8 % - 0.3 %·dopamine + 0.5 %·Φ  (min 0.3 % to clear fees)
- *   SL = 50 % of TP  (asymmetric R:R favors running winners)
+ * TP threshold is chemistry-derived (unchanged):
+ *   TP = mode.tpBaseFrac - 0.3 %·dopamine + 0.5 %·Φ (min `tpFloorRaw`)
  *
  * High dopamine (recent wins) → take earlier (reward sensitivity up).
  * High Φ (integrated state)  → let winners run longer.
- * Floors at 0.3 % of notional so Poloniex round-trip taker fee
- * (~0.12 %) is always cleared with a buffer.
  */
 export function shouldScalpExit(
   unrealizedPnlUsdt: number,
@@ -1181,51 +1165,33 @@ export function shouldScalpExit(
     tpFloorRaw,
     profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
   );
-  const geometricSlRaw = geometricTpRaw * profile.slRatio;
   const geometricTp = geometricTpRaw * lev;
-  const geometricSl = geometricSlRaw * lev;
-  // Proposal #10 — per-lane envelope. Lane SL/TP are stored on the ROI
-  // scale (post-v0.8.6 rescale). Take the wider of (geometric, lane) so
-  // the fee-clear floor is never breached but the lane envelope can
-  // broaden tolerance when a swing/trend position needs room to absorb
-  // retraces.
+  // Proposal #10 — per-lane TP envelope. Path A (2026-05-26) removed the SL
+  // envelope entirely (P5 alignment). Adverse exits now flow through
+  // shouldExit (Fisher-Rao disagreement) + shouldAutoFlatten (Pillar 1).
   const laneTp = laneParam(lane, 'tpPct');
-  const laneSl = laneParam(lane, 'slPct');
   const tpThr = Math.max(geometricTp, laneTp);
-  const slThr = Math.max(geometricSl, laneSl);
 
-  // Encode type as a bit (1=TP, -1=SL, 0=hold) to keep derivation map numeric.
+  // Encode type as a bit (1=TP, 0=hold) — SL bit (-1) removed by Path A.
   if (roiFrac >= tpThr) {
     return {
       value: true,
       reason: `take_profit[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x)`,
       derivation: {
         roiFrac, rawFrac, leverage: lev,
-        tpThr, slThr,
-        laneTpPct: laneTp, laneSlPct: laneSl,
+        tpThr,
+        laneTpPct: laneTp,
         exitTypeBit: 1,
-      },
-    };
-  }
-  if (roiFrac <= -slThr) {
-    return {
-      value: true,
-      reason: `stop_loss[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x)`,
-      derivation: {
-        roiFrac, rawFrac, leverage: lev,
-        tpThr, slThr,
-        laneTpPct: laneTp, laneSlPct: laneSl,
-        exitTypeBit: -1,
       },
     };
   }
   return {
     value: false,
-    reason: `scalp hold[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%] (lev=${lev.toFixed(0)}x)`,
+    reason: `scalp hold[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% < ${(tpThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x) [Path A: no SL gate]`,
     derivation: {
       roiFrac, rawFrac, leverage: lev,
-      tpThr, slThr,
-      laneTpPct: laneTp, laneSlPct: laneSl,
+      tpThr,
+      laneTpPct: laneTp,
     },
   };
 }

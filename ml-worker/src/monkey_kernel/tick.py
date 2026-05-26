@@ -1611,15 +1611,18 @@ def _decide_with_position(
     # fire before TP if both would trigger on the same tick (the user
     # explicitly chose continuous re-justification over harvest as the
     # primary exit channel).
+    # Path A (2026-05-26): should_scalp_exit is now TP-only. The SL leg
+    # (exit_type_bit=-1) was removed as a P5 violation — adverse exits
+    # flow through should_exit (Fisher-Rao disagreement) and
+    # should_auto_flatten (Pillar 1). The pre-rejustification SL check
+    # below was the Python mirror of the TS hard-SL pre-check; it is
+    # now a no-op because no SL bit is returned.
     scalp = should_scalp_exit(
         unrealized_pnl_usdt=unrealized_pnl,
         notional_usdt=position_notional,
         s=basin_state,
         mode=mode_enum,
         lane=position_lane,
-        # v0.8.6 — SL gate now reads ROI on margin, not raw price %.
-        # leverage_val is the live lev that justified entry; threading
-        # it lets the gate scale raw move into ROI correctly.
         leverage=float(leverage_val),
     )
     derivation["scalp"] = {
@@ -1628,8 +1631,9 @@ def _decide_with_position(
         "mark_price": last_price,
         "trade_id": trade_id,
     }
-    if scalp["value"] and scalp["derivation"].get("exit_type_bit") == -1:
-        return "scalp_exit", scalp["reason"], False, False
+    # Pre-Path-A: if scalp["derivation"]["exit_type_bit"] == -1 → SL exit.
+    # Post-Path-A: never fires. Block kept commented for historical clarity
+    # and removed entirely once the chemistry recalibration window closes.
 
     # ── Held-position re-justification (this PR) ──────────────────
     # Three internal exit checks. The regime check carries hysteresis

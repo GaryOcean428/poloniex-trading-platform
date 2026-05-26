@@ -112,34 +112,29 @@ _DEFAULT_NOTIONAL_CEILING_RATIO = 0.0
 # pair symmetric. The SQL migration script
 # scripts/recalibrate_lane_sl_tp_to_roi.sql writes the same values to
 # the parameter registry.
-_DEFAULT_LANE_SCALP_SL_PCT = 0.03
+# Path A (2026-05-26): sl_pct removed from lane params. Hard SL was a P5
+# violation — externally-imposed ROI threshold firing regardless of
+# kernel perception. Adverse exits now flow through should_exit
+# (Fisher-Rao disagreement) and should_auto_flatten (Pillar 1).
 _DEFAULT_LANE_SCALP_TP_PCT = 0.03
-# 2026-05-25 strip — per-lane budget caps lifted to 1.0 across all
-# position-bearing lanes. Each lane can claim full equity; chemistry-
-# driven sizing differentiates winners from losers naturally.
 _DEFAULT_LANE_SCALP_BUDGET_FRAC = 1.0
 
-_DEFAULT_LANE_SWING_SL_PCT = 0.15
 _DEFAULT_LANE_SWING_TP_PCT = 0.15
 _DEFAULT_LANE_SWING_BUDGET_FRAC = 1.0
 
-_DEFAULT_LANE_TREND_SL_PCT = 0.40
 _DEFAULT_LANE_TREND_TP_PCT = 0.40
 _DEFAULT_LANE_TREND_BUDGET_FRAC = 1.0
 
 _LANE_PARAMETER_DEFAULTS: dict[str, dict[str, float]] = {
     "scalp": {
-        "sl_pct": _DEFAULT_LANE_SCALP_SL_PCT,
         "tp_pct": _DEFAULT_LANE_SCALP_TP_PCT,
         "budget_frac": _DEFAULT_LANE_SCALP_BUDGET_FRAC,
     },
     "swing": {
-        "sl_pct": _DEFAULT_LANE_SWING_SL_PCT,
         "tp_pct": _DEFAULT_LANE_SWING_TP_PCT,
         "budget_frac": _DEFAULT_LANE_SWING_BUDGET_FRAC,
     },
     "trend": {
-        "sl_pct": _DEFAULT_LANE_TREND_SL_PCT,
         "tp_pct": _DEFAULT_LANE_TREND_TP_PCT,
         "budget_frac": _DEFAULT_LANE_TREND_BUDGET_FRAC,
     },
@@ -981,21 +976,13 @@ def should_scalp_exit(
         tp_min_floor,
         profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi,
     )
-    geometric_sl_raw = geometric_tp_raw * profile.sl_ratio
-    # Promote the geometric thresholds (raw) onto the ROI scale.
+    # Promote the geometric threshold (raw) onto the ROI scale.
     geometric_tp = geometric_tp_raw * lev
-    geometric_sl = geometric_sl_raw * lev
-    # Proposal #10: per-lane envelope. Lane SL/TP are stored on the ROI
-    # scale (post-v0.8.6 rescale). Take the *wider* of (geometric, lane)
-    # so the geometric Φ-derived floor is never breached but the lane
-    # envelope can broaden tolerance when configured to do so. At
-    # typical 15-20x live leverage the geometric (~10%) is wider than
-    # scalp (5%), making the geometric the binding constraint there;
-    # for swing/trend the lane envelope dominates.
+    # Path A (2026-05-26): lane SL removed. TP envelope still uses
+    # max(geometric_tp, lane_tp). Adverse exits flow through should_exit
+    # (Fisher-Rao disagreement) and should_auto_flatten (Pillar 1).
     lane_tp = lane_param(lane, "tp_pct")
-    lane_sl = lane_param(lane, "sl_pct")
     tp_thr = max(geometric_tp, lane_tp)
-    sl_thr = max(geometric_sl, lane_sl)
 
     if roi_frac >= tp_thr:
         return {
@@ -1007,37 +994,22 @@ def should_scalp_exit(
             "derivation": {
                 "roi_frac": roi_frac, "raw_frac": raw_frac,
                 "leverage": lev,
-                "tp_thr": tp_thr, "sl_thr": sl_thr,
-                "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
+                "tp_thr": tp_thr,
+                "lane": lane, "lane_tp_pct": lane_tp,
                 "exit_type_bit": 1,
-            },
-        }
-    if roi_frac <= -sl_thr:
-        return {
-            "value": True,
-            "reason": (
-                f"stop_loss[{lane}]: roi {roi_frac*100:.3f}% "
-                f"<= -{sl_thr*100:.3f}% (lev={lev:.0f}x)"
-            ),
-            "derivation": {
-                "roi_frac": roi_frac, "raw_frac": raw_frac,
-                "leverage": lev,
-                "tp_thr": tp_thr, "sl_thr": sl_thr,
-                "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
-                "exit_type_bit": -1,
             },
         }
     return {
         "value": False,
         "reason": (
-            f"scalp hold[{lane}]: roi {roi_frac*100:.3f}% in "
-            f"[-{sl_thr*100:.3f}%, {tp_thr*100:.3f}%] (lev={lev:.0f}x)"
+            f"scalp hold[{lane}]: roi {roi_frac*100:.3f}% < "
+            f"{tp_thr*100:.3f}% (lev={lev:.0f}x) [Path A: no SL gate]"
         ),
         "derivation": {
             "roi_frac": roi_frac, "raw_frac": raw_frac,
             "leverage": lev,
-            "tp_thr": tp_thr, "sl_thr": sl_thr,
-            "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
+            "tp_thr": tp_thr,
+            "lane": lane, "lane_tp_pct": lane_tp,
         },
     }
 

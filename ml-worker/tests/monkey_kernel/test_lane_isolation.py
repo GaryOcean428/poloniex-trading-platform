@@ -67,26 +67,13 @@ def _basin_state(*, phi: float = 0.5, kappa: float = 64.0) -> ExecBasinState:
 
 
 class TestLaneParameterEnvelope:
+    # Path A (2026-05-26): sl_pct removed from lane params. Only tp_pct
+    # + budget_frac remain. The TP-side ordering still holds.
     def test_scalp_envelope_tighter_than_swing(self) -> None:
-        assert lane_param("scalp", "sl_pct") < lane_param("swing", "sl_pct")
         assert lane_param("scalp", "tp_pct") < lane_param("swing", "tp_pct")
 
     def test_swing_envelope_tighter_than_trend(self) -> None:
-        assert lane_param("swing", "sl_pct") < lane_param("trend", "sl_pct")
         assert lane_param("swing", "tp_pct") < lane_param("trend", "tp_pct")
-
-    def test_scalp_sl_in_roi_band(self) -> None:
-        # v0.8.6 — sl_pct semantics are ROI-on-margin (was raw price).
-        # Scalp band: ~5% ROI.
-        assert 0.02 <= lane_param("scalp", "sl_pct") <= 0.10
-
-    def test_swing_sl_in_roi_band(self) -> None:
-        # v0.8.6 — swing band: ~15% ROI on margin.
-        assert 0.08 <= lane_param("swing", "sl_pct") <= 0.25
-
-    def test_trend_sl_in_roi_band(self) -> None:
-        # v0.8.6 — trend band: ~40% ROI on margin.
-        assert 0.25 <= lane_param("trend", "sl_pct") <= 0.60
 
     def test_scalp_swing_budget_post_strip_is_1_each(self) -> None:
         # 2026-05-25 strip: per-lane budget caps removed; each lane can
@@ -105,7 +92,12 @@ class TestLaneParameterEnvelope:
     def test_unknown_lane_falls_back_to_swing_param(self) -> None:
         # Defensive: unknown lane key returns the swing slot for the
         # given param name so callers never blow up on enum drift.
-        assert lane_param("nonsense", "sl_pct") == _LANE_PARAMETER_DEFAULTS["swing"]["sl_pct"]
+        assert lane_param("nonsense", "tp_pct") == _LANE_PARAMETER_DEFAULTS["swing"]["tp_pct"]
+
+    def test_sl_pct_removed_by_path_a(self) -> None:
+        # Path A invariant: sl_pct is gone from the registry defaults.
+        for lane in ("scalp", "swing", "trend"):
+            assert "sl_pct" not in _LANE_PARAMETER_DEFAULTS[lane]
 
 
 # ── 2. current_position_size lane-budget shrinkage ──────────────────
@@ -162,60 +154,25 @@ class TestPositionSizeLaneBudget:
 
 
 class TestScalpExitLaneEnvelope:
-    def test_scalp_sl_fires_when_roi_clears_envelope(self) -> None:
-        bs = _basin_state()
-        # Lev=15x, raw -1.0% → ROI -15%. Past scalp's binding SL
-        # (max(geometric_sl×lev≈9.45%, lane 5%) = 9.45%).
-        result = should_scalp_exit(
-            unrealized_pnl_usdt=-1.0,
-            notional_usdt=100.0,
-            s=bs, mode=MonkeyMode.INVESTIGATION, lane="scalp",
-            leverage=15.0,
-        )
-        assert result["value"] is True
-        assert "stop_loss[scalp]" in result["reason"]
+    # Path A (2026-05-26): SL leg removed from should_scalp_exit.
+    # Function is now TP-only. Adverse exits flow through should_exit
+    # (Fisher-Rao disagreement) and should_auto_flatten (P15).
 
-    def test_swing_lane_absorbs_loss_scalp_would_exit(self) -> None:
+    def test_does_not_fire_on_losses_across_lanes(self) -> None:
         bs = _basin_state()
-        # Lev=15x, raw -1.0% → ROI -15%. Past scalp's binding SL (~9.45%
-        # from geometric × lev) but exactly at swing's 15% lane SL.
-        # Use raw=-0.85 so ROI=-12.75% — past scalp 9.45%, inside swing 15%.
-        scalp = should_scalp_exit(
-            unrealized_pnl_usdt=-0.85,
-            notional_usdt=100.0,
-            s=bs, mode=MonkeyMode.INVESTIGATION, lane="scalp",
-            leverage=15.0,
-        )
-        swing = should_scalp_exit(
-            unrealized_pnl_usdt=-0.85,
-            notional_usdt=100.0,
-            s=bs, mode=MonkeyMode.INVESTIGATION, lane="swing",
-            leverage=15.0,
-        )
-        assert scalp["value"] is True
-        assert swing["value"] is False
-        assert "scalp hold[swing]" in swing["reason"]
+        # Pre-Path-A: -1.0 at lev=15x → ROI -15%, would have fired scalp SL.
+        # Post-Path-A: no lane fires SL on losses.
+        for lane in ("scalp", "swing", "trend"):
+            result = should_scalp_exit(
+                unrealized_pnl_usdt=-1.0,
+                notional_usdt=100.0,
+                s=bs, mode=MonkeyMode.INVESTIGATION, lane=lane,
+                leverage=15.0,
+            )
+            assert result["value"] is False, f"{lane} should not fire SL"
+            assert result["derivation"].get("exit_type_bit") != -1
 
-    def test_trend_lane_absorbs_loss_swing_would_exit(self) -> None:
-        bs = _basin_state()
-        # Lev=15x, raw -2.0% → ROI -30%. Past swing's 15% lane SL but
-        # inside trend's 40% lane SL.
-        swing = should_scalp_exit(
-            unrealized_pnl_usdt=-2.0,
-            notional_usdt=100.0,
-            s=bs, mode=MonkeyMode.INVESTIGATION, lane="swing",
-            leverage=15.0,
-        )
-        trend = should_scalp_exit(
-            unrealized_pnl_usdt=-2.0,
-            notional_usdt=100.0,
-            s=bs, mode=MonkeyMode.INVESTIGATION, lane="trend",
-            leverage=15.0,
-        )
-        assert swing["value"] is True
-        assert trend["value"] is False
-
-    def test_geometric_floor_never_breached(self) -> None:
+    def test_tp_still_fires_on_positive_roi(self) -> None:
         bs = _basin_state()
         # 50% raw gain at lev=1 = 50% ROI — trivially clears any lane/geom TP.
         result = should_scalp_exit(
@@ -225,10 +182,11 @@ class TestScalpExitLaneEnvelope:
             leverage=1.0,
         )
         assert result["value"] is True
+        assert result["derivation"]["exit_type_bit"] == 1
         derivation = result["derivation"]
         assert derivation["tp_thr"] >= derivation["lane_tp_pct"]
 
-    def test_lane_threaded_into_derivation(self) -> None:
+    def test_lane_threaded_into_derivation_tp_only(self) -> None:
         bs = _basin_state()
         result = should_scalp_exit(
             unrealized_pnl_usdt=0.05,
@@ -238,7 +196,9 @@ class TestScalpExitLaneEnvelope:
         )
         assert result["derivation"]["lane"] == "scalp"
         assert result["derivation"]["lane_tp_pct"] == lane_param("scalp", "tp_pct")
-        assert result["derivation"]["lane_sl_pct"] == lane_param("scalp", "sl_pct")
+        # Path A: lane_sl_pct no longer in derivation.
+        assert "lane_sl_pct" not in result["derivation"]
+        assert "sl_thr" not in result["derivation"]
         assert result["derivation"]["leverage"] == pytest.approx(10.0)
 
 
@@ -376,9 +336,9 @@ class TestCrossLaneNonInterference:
 
     def test_swing_long_envelope_independent_of_scalp_short_envelope(self) -> None:
         bs = _basin_state()
-        # v0.8.6: at lev=15x, raw -0.85% → ROI -12.75%. Past scalp's
-        # binding SL (max(geom×lev≈9.45%, lane 5%) = 9.45%), inside
-        # swing's 15% lane SL. Same input, different lane decisions.
+        # Path A (2026-05-26): SL leg removed — both lanes hold on a loss
+        # of ROI -12.75% (regardless of which lane). Adverse exits flow
+        # through should_exit + should_auto_flatten instead.
         swing_long = should_scalp_exit(
             unrealized_pnl_usdt=-0.85, notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="swing",
@@ -389,8 +349,8 @@ class TestCrossLaneNonInterference:
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="scalp",
             leverage=15.0,
         )
-        assert swing_long["value"] is False, "swing should hold its 12.75% ROI drawdown"
-        assert scalp_short["value"] is True, "scalp should fire SL on 12.75% ROI loss"
+        assert swing_long["value"] is False
+        assert scalp_short["value"] is False  # Path A: no SL leg fires on losses
 
     def test_lane_budgets_post_strip_each_at_1(self) -> None:
         # 2026-05-25 strip: per-lane caps removed; each at 1.0.

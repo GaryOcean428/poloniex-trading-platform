@@ -2983,37 +2983,16 @@ export class MonkeyKernel extends EventEmitter {
           positionLeverage,
         );
         derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
-        const SL_DEFER_TICKS = 2;
-        const isStopLoss = Number((scalp as any).derivation?.exitTypeBit) === -1;
-        const longSlWithHammer = (
-          isStopLoss
-          && heldSide === 'long'
-          && candleHammerDefer
-        );
-        if (scalp.value && isStopLoss) {
-          // Proposal #9 path 2: SL defer. If the latest tick prints a
-          // strong hammer/inverted-hammer AGAINST a long-position SL
-          // about to fire, defer the SL by SL_DEFER_TICKS to let the
-          // wick recover. Heuristic gate; documented impurity scoped
-          // to this branch only.
-          if (longSlWithHammer && state.slDeferRemainingTicks <= 0) {
-            state.slDeferRemainingTicks = SL_DEFER_TICKS;
-            (derivation as any).slDefer = {
-              opened: true,
-              ticksRemaining: state.slDeferRemainingTicks,
-              reason: 'hammer_against_long_sl',
-            };
-          } else if (state.slDeferRemainingTicks > 0 && heldSide === 'long') {
-            (derivation as any).slDefer = {
-              active: true,
-              ticksRemaining: state.slDeferRemainingTicks,
-            };
-          } else {
-            action = 'scalp_exit';
-            reason = scalp.reason;
-            exitFired = true;
-          }
-        }
+        // Path A (2026-05-26): hard-SL pre-check block REMOVED.
+        // shouldScalpExit is now TP-only — there is no SL exitTypeBit=-1 to
+        // intercept here. Adverse exits flow through:
+        //   - shouldExit (Fisher-Rao disagreement; kernel reads its own
+        //     perception drift) — see "Loop 2 debate" block below
+        //   - shouldAutoFlatten (Pillar 1 catastrophic backstop on entropy
+        //     collapse / fhealth degradation) — kernel-internal SAFETY_BOUND
+        // The SL_DEFER hammer-recovery heuristic was bundled with the hard
+        // SL and went with it. shouldExit's Fisher-Rao threshold is wider
+        // than a tick, so single-bar hammer recoveries don't need a deferer.
 
         // 2. Held-position re-justification — four internal exit
         // checks. Regime carries hysteresis (streak ≥ 3 + basin FR
@@ -3542,7 +3521,9 @@ export class MonkeyKernel extends EventEmitter {
         // Phase B2: skipped when bracketActive — the synthetic bracket
         // owns profit-taking. The scalp-SL branch (gate 1 above) is
         // unaffected — a price stop is always a safety bound.
-        if (!exitFired && !bracketActive && scalp.value && !isStopLoss) {
+        if (!exitFired && !bracketActive && scalp.value) {
+          // Path A: scalp.value is now TP-only (SL leg removed from
+          // shouldScalpExit). Simplified from `scalp.value && !isStopLoss`.
           action = 'scalp_exit';
           reason = scalp.reason;
           exitFired = true;
