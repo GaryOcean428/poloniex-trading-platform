@@ -1598,8 +1598,20 @@ export function shouldExtendBracket(args: {
     oceanTrailRetracementPct,
   } = args;
 
-  const convThreshold =
-    Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
+  // Phase 4 doctrine (2026-05-26): bracket-extend conviction threshold
+  // removed. Was MONKEY_BRACKET_EXTEND_CONV (default 0.5) — operator-
+  // prescribed minimum conviction before TP extension fires. Replaced
+  // by "extend on any positive conviction" — same pattern as Path A
+  // (#940) and the 2026-05-25 minTrailRoi strip just below.
+  //
+  // The 0.5 was filtering ~half of in-profit moments where conviction
+  // (phi × regimeConfidence) was below the operator's bar. The
+  // doctrine-clean shape: the kernel extends whenever in-profit + TP
+  // exists; chemistry learns via push_reward feedback whether
+  // aggressive extension protects (locks in upside) or over-tightens
+  // (gets shaken out by noise). No env knob between observable and
+  // action.
+  const convThreshold = 0;
   const inProfit = currentRoiFrac > 0;
   // 2026-05-25 strip — bracket trail minimums dropped to 0 per
   // operator autonomy doctrine. Trail activates on any positive

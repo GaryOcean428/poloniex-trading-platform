@@ -38,14 +38,18 @@ describe('shouldExtendBracket — TP extension (LONG)', () => {
     expect(r.newTp).toBeNull();
   });
 
-  it('does NOT extend TP below the conviction threshold', () => {
+  it('Phase 4 (2026-05-26) — extends TP on ANY positive conviction (threshold removed)', () => {
+    // Pre-Phase-4: conviction 0.3 < 0.5 default → no extension.
+    // Post-Phase-4: convThreshold = 0; kernel extends on any positive
+    // conviction. Chemistry learns via push_reward whether aggressive
+    // extension protects or over-tightens.
     const r = shouldExtendBracket({
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 20, freshSlDistance: 5,
-      conviction: 0.3, currentRoiFrac: 0.08, currentPnlUsdt: 0, // conv < 0.5 default
+      conviction: 0.3, currentRoiFrac: 0.08, currentPnlUsdt: 0,
     });
-    expect(r.newTp).toBeNull();
+    expect(r.newTp).toBe(120);  // entry 100 + freshTpDistance 20
   });
 
   it('does NOT extend TP on a losing position', () => {
@@ -111,15 +115,20 @@ describe('shouldExtendBracket — SHORT mirror', () => {
 });
 
 describe('shouldExtendBracket — env override + edge cases', () => {
-  it('honours MONKEY_BRACKET_EXTEND_CONV', () => {
+  it('Phase 4 (2026-05-26) — MONKEY_BRACKET_EXTEND_CONV env knob removed; no env override', () => {
+    // Pre-Phase-4: env override of 0.9 gated 0.8 conviction → no TP.
+    // Post-Phase-4: convThreshold = 0 unconditionally. The env knob is
+    // removed; setting it has no effect; kernel extends on any positive
+    // conviction.
     process.env.MONKEY_BRACKET_EXTEND_CONV = '0.9';
     const r = shouldExtendBracket({
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 20, freshSlDistance: 5,
-      conviction: 0.8, currentRoiFrac: 0.08, currentPnlUsdt: 0, // 0.8 < 0.9 → no TP
+      conviction: 0.8, currentRoiFrac: 0.08, currentPnlUsdt: 0,
     });
-    expect(r.newTp).toBeNull();
+    expect(r.newTp).toBe(120);  // env knob is dead; extension fires
+    delete process.env.MONKEY_BRACKET_EXTEND_CONV;
   });
 
   it('null currentTp → no TP extension attempted', () => {
