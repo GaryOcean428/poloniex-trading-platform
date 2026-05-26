@@ -7304,17 +7304,49 @@ export class MonkeyKernel extends EventEmitter {
         // and structurally vulnerable to caller-aggregate phantoms.
         for (const row of rows) {
           const rowQty = Math.abs(Number(row.quantity) || 0);
-          const updated = await pool.query<{ pnl: string }>(
+          const updated = await pool.query<{ pnl: string; entry_price: string; side: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
                     exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
               WHERE id = $4
-              RETURNING pnl`,
+              RETURNING pnl, entry_price, side`,
             [markPrice, exitReason, orderId, row.id, exitGate],
           );
-          const rowPnl = updated.rows[0]?.pnl
+          const rowPnlRaw = updated.rows[0]?.pnl
             ? Number(updated.rows[0].pnl)
             : pnlAtDecision * (rowQty / totalQty);
+          // Phantom-PnL guard (2026-05-26): verify the row's computed pnl
+          // against an independent client-side computation. Detects mixed-
+          // unit phantoms (the reconciler-stored-contracts bug fixed in
+          // PR after #951). On divergence > $5, log + clamp to the
+          // computed value so chemistry isn't fed a phantom. This wires
+          // verifyPnl into the close path — it was exported in #936 but
+          // never called.
+          let rowPnl = rowPnlRaw;
+          if (updated.rows[0]) {
+            const sideStr = String(updated.rows[0].side ?? '') as 'buy' | 'sell' | 'long' | 'short';
+            const verification = verifyPnl(
+              rowPnlRaw,
+              Number(updated.rows[0].entry_price),
+              markPrice,
+              rowQty,
+              sideStr,
+            );
+            if (verification.isPhantomCandidate) {
+              logger.warn('[Monkey] phantom-pnl candidate detected — chemistry feed clamped', {
+                tradeId: row.id,
+                symbol,
+                provided: verification.provided,
+                calculated: verification.calculated,
+                divergenceAbs: verification.divergenceAbs,
+                rowQty,
+                entryPrice: updated.rows[0].entry_price,
+                exitPrice: markPrice,
+                side: sideStr,
+              });
+              rowPnl = verification.calculated;
+            }
+          }
           // Tag-aware arbiter feedback. Pre-separation rows have
           // agent=NULL or 'K' (default from migration 039); those
           // attribute to K. T (Turtle classical TA) was added in the

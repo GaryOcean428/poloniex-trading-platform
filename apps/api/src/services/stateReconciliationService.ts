@@ -14,6 +14,7 @@ import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { BusEventType, getKernelBus } from './monkey/kernel_bus.js';
 import { inferLaneFromLeverage, kernelAdoptLive } from './laneFromLeverage.js';
+import { getPrecisions } from './marketCatalog.js';
 
 // Re-export so callers continue to import these from
 // stateReconciliationService for backward compat. Definitions live in
@@ -173,8 +174,29 @@ class StateReconciliationService {
       // ── 5. Orphan detection: on exchange but not in DB ───────────────────────
       for (const exPos of exchangePositions) {
         const symbol: string = exPos.symbol ?? exPos.instId ?? '';
-        const size: number = Math.abs(parseFloat(exPos.qty ?? exPos.availQty ?? '0'));
-        if (!symbol || size === 0) continue;
+        // PHANTOM-PNL FIX (2026-05-26): exPos.qty is in CONTRACTS (the
+        // Poloniex v3 API unit), but autonomous_trades.quantity stores
+        // base-asset units when kernel-direct INSERTs land at loop.ts:7871
+        // (formattedSize is base-asset per the BASE_ASSET comment at
+        // loop.ts:6940-6945). Storing contracts here mixed the units and
+        // SAFE_PNL_FROM_ROW (which assumes base-asset) inflated reconciler-
+        // adopted rows' pnl by 1/lotSize:
+        //   BTC: 1000× (lotSize 0.001 BTC/contract)
+        //   ETH: 100× (lotSize 0.01 ETH/contract)
+        // Result: chemistry trained on phantom wins for ~9h on 2026-05-26.
+        // Convert to base-asset at the storage boundary so all
+        // autonomous_trades rows are in one canonical unit.
+        const rawContracts: number = Math.abs(parseFloat(exPos.qty ?? exPos.availQty ?? '0'));
+        if (!symbol || rawContracts === 0) continue;
+        const precisions = await getPrecisions(symbol);
+        const lotSize = precisions.lotSize ?? null;
+        if (lotSize === null || lotSize <= 0) {
+          logger.warn('[RECONCILE] lotSize unavailable — skipping adoption to avoid mixed-unit row', {
+            symbol, rawContracts,
+          });
+          continue;
+        }
+        const size: number = rawContracts * lotSize;
 
         const side: 'long' | 'short' = resolveExchangeSide(exPos);
 
