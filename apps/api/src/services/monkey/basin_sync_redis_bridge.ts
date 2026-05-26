@@ -58,6 +58,9 @@ interface BasinSyncWritePayload {
 }
 
 interface PredictionWritePayload {
+  // trade_id is a UUID string in the new schema (#949 / migration 059).
+  // Legacy `number` type permitted only to absorb stale Redis payloads
+  // emitted before the UUID migration — coerced via tradeIdParam below.
   trade_id?: string | number | null;
   kernel_id: string;
   perception_basin: number[];
@@ -205,8 +208,14 @@ async function handlePredictionMessage(raw: string): Promise<void> {
     return;
   }
   try {
+    // #949 narrowed KernelPredictionSnapshot.tradeId to string|null (UUID
+    // in the new schema). The Redis bridge inherits a payload type that
+    // still permits `number` for legacy emitters; stringify at the boundary.
     await insertKernelPrediction({
-      tradeId: payload.trade_id ?? null,
+      tradeId:
+        payload.trade_id === null || payload.trade_id === undefined
+          ? null
+          : String(payload.trade_id),
       kernelId: payload.kernel_id,
       perceptionBasin: payload.perception_basin,
       strategyForecastBasin: payload.strategy_forecast_basin,
