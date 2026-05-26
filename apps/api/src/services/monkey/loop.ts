@@ -145,6 +145,7 @@ import {
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
 import { SAFE_PNL_FROM_ROW, verifyPnl } from './safePnlSql.js';
+import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { observeEquity, sizeDeflection } from './equity_gradient.js';
 import {
@@ -793,6 +794,8 @@ export function arbiterRoster(): Set<ArbiterAgentLabel> {
  */
 export class MonkeyKernel extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** #932 row-level pnl divergence scanner timer. Runs independent of tick(). */
+  private pnlScanTimer: ReturnType<typeof setInterval> | null = null;
   private tickMs: number;
   private readonly baseTickMs: number;
   private readonly symbols: string[];
@@ -1250,12 +1253,31 @@ export class MonkeyKernel extends EventEmitter {
     void this.tick();
     this.timer = setInterval(() => void this.tick(), this.tickMs);
     this.timer.unref?.();
+
+    // #932 row-level pnl divergence scanner. Runs every 60s, scans the
+    // last 15min of closed rows for phantom-class divergence. Alerts
+    // fire as ERROR-level logs with structured row context so paging
+    // wires can match on `[pnl_periodic_scan] NEW phantom detected`.
+    // Cheap query (LIMIT 200, indexed on exit_time); ignored failures
+    // are non-fatal to the main tick loop.
+    this.pnlScanTimer = setInterval(() => {
+      void runPeriodicPnlScan().catch((err) => {
+        logger.warn('[Monkey] pnl periodic scan failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }, 60_000);
+    this.pnlScanTimer.unref?.();
   }
 
   stop(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.pnlScanTimer) {
+      clearInterval(this.pnlScanTimer);
+      this.pnlScanTimer = null;
     }
     logger.info('[Monkey] kernel sleeping');
   }
