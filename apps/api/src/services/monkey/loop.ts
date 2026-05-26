@@ -101,6 +101,11 @@ import {
 import { frBracketDistances } from './fr_trade_params.js';
 import { applyConsensusOverride } from './consensus_arbiter.js';
 import {
+  writeKernelPrediction,
+  periodicCadenceSeconds,
+  type SnapshotReason,
+} from './kernel_predictions.js';
+import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
   CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
   chopSuppressEntry,
@@ -501,6 +506,11 @@ interface SymbolState {
   /** v0.6.2: most recent entry time for this position (initial or DCA add).
    *  Used for DCA cooldown gating. Null when flat. */
   lastEntryAtMs: number | null;
+  /** Issue #941: most recent periodic kernel_predictions snapshot time.
+   *  Null until first periodic capture; advanced only on snapshot_reason
+   *  === 'periodic' (state-transition snapshots don't reset the clock).
+   *  Drives the observer-derived cadence gate in tick(). */
+  lastPredictionPeriodicAtMs: number | null;
   /** v0.6.2: count of DCA adds on current position (0 = only initial entry). */
   dcaAddCount: number;
   /** Proposal #9: SL defer counter. When a hammer/inverted-hammer is
@@ -1558,6 +1568,7 @@ export class MonkeyKernel extends EventEmitter {
       peakPnlUsdt: null,
       peakTrackedTradeId: null,
       lastEntryAtMs: null,
+      lastPredictionPeriodicAtMs: null,
       dcaAddCount: 0,
       slDeferRemainingTicks: 0,
       tapeFlipStreak: 0,
@@ -5164,6 +5175,79 @@ export class MonkeyKernel extends EventEmitter {
       orderId: monkeyOrderId ?? undefined,
       reason,
     });
+
+    // Issue #941 — kernel predictions corpus capture (read-only telemetry).
+    //
+    // Doctrinal guarantees (per kernel_predictions.ts header):
+    //   - READ-ONLY: writeKernelPrediction never mutates kernel state.
+    //   - NO ENV KNOBS: snapshot decision is observer-derived (action +
+    //     basin_velocity gap); no operator-tunable thresholds in the
+    //     decision path.
+    //   - P15 FAIL-CLOSED: insert is try/catch wrapped inside the helper;
+    //     the `void` prefix here ensures we never await the result. A DB
+    //     outage degrades corpus growth, not the trading path.
+    //
+    // Capture policy:
+    //   - Always on entry / exit / explicit gate fires (state transitions)
+    //   - Throttled to periodicCadenceSeconds(bv) for periodic 'hold' ticks
+    {
+      const isEntry = action === 'enter_long' || action === 'enter_short';
+      const isExit = action === 'exit' || action === 'scalp_exit';
+      const isGateFire =
+        action !== 'hold' && action !== 'enter_long'
+        && action !== 'enter_short' && action !== 'exit'
+        && action !== 'scalp_exit';
+
+      let snapshotReason: SnapshotReason | null = null;
+      if (isEntry) snapshotReason = 'entry';
+      else if (isExit) snapshotReason = 'exit';
+      else if (isGateFire) snapshotReason = 'gate_fire';
+      else {
+        // Periodic — throttle by observer-derived cadence.
+        const cadenceS = periodicCadenceSeconds(bv);
+        const lastPeriodic = state.lastPredictionPeriodicAtMs ?? 0;
+        const gapMs = Date.now() - lastPeriodic;
+        if (gapMs >= cadenceS * 1000) {
+          snapshotReason = 'periodic';
+          state.lastPredictionPeriodicAtMs = Date.now();
+        }
+      }
+
+      if (snapshotReason !== null) {
+        void writeKernelPrediction({
+          tradeId: null, // Phase 2 reconciler joins via (kernel_id, snapshot_at)
+          kernelId: `${this.instanceId}|${symbol}`,
+          perceptionBasin: basin,
+          strategyForecastBasin: state.identityBasin,
+          basinVelocity: bv,
+          phi,
+          kappaEff: state.kappa,
+          predictedHorizonSeconds: null,
+          predictedTerminalPnlUsdt: null,
+          predictedPnlStddevUsdt: null,
+          predictedDirection:
+            sideCandidate === 'long' ? 1
+            : sideCandidate === 'short' ? -1
+            : 0,
+          predictedConfidence: phi * regimeReading.confidence,
+          dopamine: nc.dopamine,
+          serotonin: nc.serotonin,
+          norepinephrine: nc.norepinephrine,
+          gaba: nc.gaba,
+          endorphins: nc.endorphins,
+          acetylcholine: nc.acetylcholine,
+          regimeQuantum: regimeWeights.quantum,
+          regimeEfficient: regimeWeights.efficient,
+          regimeEquilibrium: regimeWeights.equilibrium,
+          mode,
+          lane: chosenLane,
+          snapshotReason,
+          triggeringGate: isGateFire ? action : null,
+          kernelVersion: 'monkey-0.9.0-i941',
+          sourcePath: 'loop.ts:tick',
+        });
+      }
+    }
 
     // Persist mode observation for later Loop-1 aggregation + UI.
     try {
