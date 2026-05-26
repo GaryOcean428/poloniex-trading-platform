@@ -1568,15 +1568,13 @@ export function shouldExtendBracket(args: {
   const convThreshold =
     Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
   const inProfit = currentRoiFrac > 0;
-  // 2026-05-25 strip — bracket trail minimums dropped to 0 per
-  // operator autonomy doctrine. Trail activates on any positive
-  // ROI; chemistry learns whether early trailing protects or
-  // over-tightens via push_reward feedback on close outcomes.
-  const minTrailRoi = 0;
-  const minTrailProfitUsdt = 0;
+  const minTrailRoi =
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI) || 0.10;
+  const minTrailProfitUsd =
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD) || 0.02;
   const meaningfulProfit =
     currentRoiFrac >= minTrailRoi
-    && currentPnlUsdt >= minTrailProfitUsdt;
+    && currentPnlUsdt >= minTrailProfitUsd;
   const long = heldSide === 'long';
 
   // ── TP extension ────────────────────────────────────────────────
