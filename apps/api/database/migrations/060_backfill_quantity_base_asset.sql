@@ -40,56 +40,67 @@ SET quantity_unit_normalized = TRUE
 WHERE quantity_unit_normalized = FALSE
   AND reason LIKE 'monkey|%';
 
--- Backfill BTC reconciler-adopted rows: contracts → base-asset (× 0.001).
+CREATE TEMP TABLE migration_060_lot_sizes (
+  symbol TEXT PRIMARY KEY,
+  lot_size NUMERIC NOT NULL
+) ON COMMIT DROP;
+
+INSERT INTO migration_060_lot_sizes (symbol, lot_size)
+VALUES
+  ('BTC_USDT_PERP', 0.001::numeric),
+  ('ETH_USDT_PERP', 0.01::numeric),
+  ('SOL_USDT_PERP', 0.1::numeric),
+  ('XRP_USDT_PERP', 10::numeric),
+  ('BCH_USDT_PERP', 0.01::numeric),
+  ('LTC_USDT_PERP', 0.1::numeric),
+  ('TRX_USDT_PERP', 100::numeric),
+  ('BNB_USDT_PERP', 0.01::numeric),
+  ('DOGE_USDT_PERP', 100::numeric),
+  ('AVAX_USDT_PERP', 0.1::numeric),
+  ('APT_USDT_PERP', 0.1::numeric),
+  ('LINK_USDT_PERP', 0.1::numeric),
+  ('UNI_USDT_PERP', 1::numeric),
+  ('XMR_USDT_PERP', 0.01::numeric),
+  ('1000PEPE_USDT_PERP', 1000::numeric),
+  ('1000SHIB_USDT_PERP', 1000::numeric);
+
+-- Backfill reconciler-adopted rows for every symbol in the canonical
+-- Poloniex Futures v3 catalog: contracts → base-asset (× lotSize).
 DO $$
 DECLARE
-  btc_lot CONSTANT NUMERIC := 0.001;  -- BTCUSDTPERP: 1 contract = 0.001 BTC
-  eth_lot CONSTANT NUMERIC := 0.01;   -- ETHUSDTPERP: 1 contract = 0.01 ETH
-  btc_count BIGINT;
-  eth_count BIGINT;
+  converted_count BIGINT;
 BEGIN
-  -- BTC: convert reconciler-adopted rows.
-  UPDATE autonomous_trades
-  SET quantity = quantity * btc_lot,
+  UPDATE autonomous_trades t
+  SET quantity = t.quantity * lots.lot_size,
       quantity_unit_normalized = TRUE
-  WHERE quantity_unit_normalized = FALSE
-    AND symbol = 'BTC_USDT_PERP'
+  FROM migration_060_lot_sizes lots
+  WHERE t.quantity_unit_normalized = FALSE
+    AND t.symbol = lots.symbol
     AND (
-      reason LIKE 'kernel_adopted|%'
-      OR reason LIKE 'manual_open_user|%'
-      OR reason LIKE '%|src=reconciler'
+      t.reason LIKE 'kernel_adopted|%'
+      OR t.reason LIKE 'manual_open_user|%'
+      OR t.reason LIKE '%|src=reconciler'
     );
-  GET DIAGNOSTICS btc_count = ROW_COUNT;
+  GET DIAGNOSTICS converted_count = ROW_COUNT;
 
-  -- ETH: convert reconciler-adopted rows.
-  UPDATE autonomous_trades
-  SET quantity = quantity * eth_lot,
-      quantity_unit_normalized = TRUE
-  WHERE quantity_unit_normalized = FALSE
-    AND symbol = 'ETH_USDT_PERP'
-    AND (
-      reason LIKE 'kernel_adopted|%'
-      OR reason LIKE 'manual_open_user|%'
-      OR reason LIKE '%|src=reconciler'
-    );
-  GET DIAGNOSTICS eth_count = ROW_COUNT;
-
-  RAISE NOTICE 'Phantom-PnL backfill: converted % BTC rows + % ETH rows from contracts to base-asset', btc_count, eth_count;
+  RAISE NOTICE 'Phantom-PnL backfill: converted % reconciler rows from contracts to base-asset', converted_count;
 
   -- Recompute pnl for already-closed rows that we just re-unit'd. The
   -- closed rows hold a stale pnl from the broken formula; recompute via
   -- SAFE_PNL_FROM_ROW shape inline (only for rows we just normalized).
-  UPDATE autonomous_trades
-  SET pnl = quantity * (exit_price - entry_price) *
-            CASE WHEN side IN ('buy', 'long') THEN 1::numeric ELSE -1::numeric END
-  WHERE quantity_unit_normalized = TRUE
-    AND status = 'closed'
-    AND exit_price IS NOT NULL
-    AND entry_price IS NOT NULL
+  UPDATE autonomous_trades t
+  SET pnl = t.quantity * (t.exit_price - t.entry_price) *
+            CASE WHEN t.side IN ('buy', 'long') THEN 1::numeric ELSE -1::numeric END
+  FROM migration_060_lot_sizes lots
+  WHERE t.quantity_unit_normalized = TRUE
+    AND t.symbol = lots.symbol
+    AND t.status = 'closed'
+    AND t.exit_price IS NOT NULL
+    AND t.entry_price IS NOT NULL
     AND (
-      reason LIKE 'kernel_adopted|%'
-      OR reason LIKE 'manual_open_user|%'
-      OR reason LIKE '%|src=reconciler'
+      t.reason LIKE 'kernel_adopted|%'
+      OR t.reason LIKE 'manual_open_user|%'
+      OR t.reason LIKE '%|src=reconciler'
     );
 END $$;
 

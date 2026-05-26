@@ -7327,18 +7327,41 @@ export class MonkeyKernel extends EventEmitter {
         // the kernel's weightedEntry — wrong when DCA adds had different entries,
         // and structurally vulnerable to caller-aggregate phantoms.
         for (const row of rows) {
-          const rowQty = Math.abs(Number(row.quantity) || 0);
-          const updated = await pool.query<{ pnl: string; entry_price: string; side: string }>(
+          const updated = await pool.query<{ pnl: string; entry_price: string; side: string; quantity: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
                     exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
               WHERE id = $4
-              RETURNING pnl, entry_price, side`,
+              RETURNING pnl, entry_price, side, quantity`,
             [markPrice, exitReason, orderId, row.id, exitGate],
           );
-          const rowPnlRaw = updated.rows[0]?.pnl
-            ? Number(updated.rows[0].pnl)
-            : pnlAtDecision * (rowQty / totalQty);
+          const returned = updated.rows[0];
+          if (!returned) {
+            logger.warn('[Monkey] close row update returned no row; skipping row reward accounting', {
+              tradeId: row.id,
+              symbol,
+              exitReason,
+            });
+            continue;
+          }
+          const rowQty = Math.abs(Number(returned.quantity) || 0);
+          const sideStr = String(returned.side ?? '');
+          if (sideStr !== 'buy' && sideStr !== 'sell' && sideStr !== 'long' && sideStr !== 'short') {
+            logger.warn('[Monkey] close row returned invalid side; skipping row reward accounting', {
+              tradeId: row.id,
+              symbol,
+              side: returned.side,
+              exitReason,
+            });
+            continue;
+          }
+          const entryPrice = Number(returned.entry_price);
+          const sideSign = sideStr === 'buy' || sideStr === 'long' ? 1 : -1;
+          const rowPnlRaw = returned.pnl
+            ? Number(returned.pnl)
+            : Number.isFinite(entryPrice)
+              ? rowQty * (markPrice - entryPrice) * sideSign
+              : pnlAtDecision * (rowQty / totalQty);
           // Phantom-PnL guard (2026-05-26): verify the row's computed pnl
           // against an independent client-side computation. Detects mixed-
           // unit phantoms (the reconciler-stored-contracts bug fixed in
@@ -7347,11 +7370,10 @@ export class MonkeyKernel extends EventEmitter {
           // verifyPnl into the close path — it was exported in #936 but
           // never called.
           let rowPnl = rowPnlRaw;
-          if (updated.rows[0]) {
-            const sideStr = String(updated.rows[0].side ?? '') as 'buy' | 'sell' | 'long' | 'short';
+          if (returned) {
             const verification = verifyPnl(
               rowPnlRaw,
-              Number(updated.rows[0].entry_price),
+              entryPrice,
               markPrice,
               rowQty,
               sideStr,
@@ -7364,7 +7386,7 @@ export class MonkeyKernel extends EventEmitter {
                 calculated: verification.calculated,
                 divergenceAbs: verification.divergenceAbs,
                 rowQty,
-                entryPrice: updated.rows[0].entry_price,
+                entryPrice: returned.entry_price,
                 exitPrice: markPrice,
                 side: sideStr,
               });
