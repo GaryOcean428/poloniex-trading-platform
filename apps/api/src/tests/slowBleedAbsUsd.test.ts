@@ -139,61 +139,75 @@ describe('shouldSlowBleedExit — absolute-USD arm', () => {
   });
 });
 
-describe('shouldAggregateBleedExit', () => {
-  const ORIGINAL_ENV = { ...process.env };
+describe('shouldAggregateBleedExit (Phase 3 — chemistry-derived, 2026-05-26)', () => {
+  // Phase 3 strip: MONKEY_SLOW_BLEED_ABS_USD + MONKEY_SLOW_BLEED_MIN_MIN
+  // removed. Bleed-exit fires when in-loss + adverse-tape + gaba > serotonin
+  // (kernel inhibition exceeds reassurance). Both thresholds become
+  // chemistry-derived; no fixed dollars, no fixed minutes.
 
-  beforeEach(() => {
-    delete process.env.MONKEY_SLOW_BLEED_ABS_USD;
-    delete process.env.MONKEY_SLOW_BLEED_MIN_MIN;
-  });
-  afterEach(() => {
-    process.env = { ...ORIGINAL_ENV };
-  });
+  function stubBasinState(gaba: number, serotonin: number): any {
+    return {
+      neurochemistry: {
+        acetylcholine: 0.5, dopamine: 0.5, serotonin,
+        norepinephrine: 0.5, gaba, endorphins: 0.0,
+      },
+    };
+  }
 
   it('returns false when aggregate inputs are null (FAT not observing)', () => {
-    expect(shouldAggregateBleedExit(null, 90 * 60_000, 0.5, 'short').value)
+    const bs = stubBasinState(0.7, 0.3);
+    expect(shouldAggregateBleedExit(null, 90 * 60_000, 0.5, 'short', bs).value)
       .toBe(false);
-    expect(shouldAggregateBleedExit(-5, null, 0.5, 'short').value)
+    expect(shouldAggregateBleedExit(-5, null, 0.5, 'short', bs).value)
       .toBe(false);
   });
 
-  it('fires on aggregate −$3+ held >60min with adverse tape', () => {
+  it('fires when in-loss + adverse-tape + gaba > serotonin', () => {
+    const bs = stubBasinState(0.7, 0.3);  // kernel anxious
     const r = shouldAggregateBleedExit(
-      -3.50, 90 * 60_000, 0.5, 'short',
+      -3.50, 90 * 60_000, 0.5, 'short', bs,
     );
     expect(r.value).toBe(true);
     expect(r.reason).toContain('aggregate_bleed_exit');
   });
 
-  it('does NOT fire under the 60-min floor', () => {
-    const r = shouldAggregateBleedExit(-10.0, 45 * 60_000, 0.5, 'short');
+  it('does NOT fire when kernel chemistry is unbothered (gaba <= serotonin)', () => {
+    const bs = stubBasinState(0.3, 0.6);  // reassurance > inhibition
+    const r = shouldAggregateBleedExit(-10.0, 90 * 60_000, 0.5, 'short', bs);
     expect(r.value).toBe(false);
-    expect(r.reason).toContain('under_60min');
+    expect(r.reason).toContain('kernel_unbothered');
   });
 
-  it('does NOT fire when aggregate loss is under $3', () => {
-    const r = shouldAggregateBleedExit(-2.0, 90 * 60_000, 0.5, 'short');
-    expect(r.value).toBe(false);
-    expect(r.reason).toContain('under_abs_bleed');
+  it('fires on small losses too — no dollar floor', () => {
+    // Pre-Phase-3: $2 loss was below the $3 floor → no fire.
+    // Post-Phase-3: chemistry decides; if gaba > ser, the kernel exits
+    // regardless of dollar magnitude.
+    const bs = stubBasinState(0.8, 0.2);
+    const r = shouldAggregateBleedExit(-2.0, 90 * 60_000, 0.5, 'short', bs);
+    expect(r.value).toBe(true);
   });
 
   it('does NOT fire when aggregate is in profit', () => {
-    const r = shouldAggregateBleedExit(5.0, 90 * 60_000, 0.5, 'short');
+    const bs = stubBasinState(0.7, 0.3);
+    const r = shouldAggregateBleedExit(5.0, 90 * 60_000, 0.5, 'short', bs);
     expect(r.value).toBe(false);
+    expect(r.reason).toContain('not_in_loss');
   });
 
   it('does NOT fire when tape is aligned with the held side', () => {
+    const bs = stubBasinState(0.8, 0.2);
     // long held, positive tape = aligned
-    const r = shouldAggregateBleedExit(-5.0, 90 * 60_000, 0.5, 'long');
+    const r = shouldAggregateBleedExit(-5.0, 90 * 60_000, 0.5, 'long', bs);
     expect(r.value).toBe(false);
     expect(r.reason).toBe('tape_neutral_or_aligned');
   });
 
-  it('honours MONKEY_SLOW_BLEED_MIN_MIN override', () => {
-    process.env.MONKEY_SLOW_BLEED_MIN_MIN = '120';
-    const r = shouldAggregateBleedExit(-5.0, 90 * 60_000, 0.5, 'short');
-    // 90min < 120min override → no fire
-    expect(r.value).toBe(false);
-    expect(r.reason).toContain('under_120min');
+  it('fires regardless of position age when chemistry signals exit', () => {
+    // Pre-Phase-3: 45min was below the 60min floor → no fire.
+    // Post-Phase-3: age is logged for telemetry but does not gate.
+    // The kernel's chemistry decides whether time has mattered.
+    const bs = stubBasinState(0.8, 0.2);
+    const r = shouldAggregateBleedExit(-10.0, 45 * 60_000, 0.5, 'short', bs);
+    expect(r.value).toBe(true);
   });
 });

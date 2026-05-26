@@ -3594,7 +3594,7 @@ export class MonkeyKernel extends EventEmitter {
           const aggBleedPnl = aggregatePeakTracker.getLastPnl(symbol, heldSide);
           const aggBleedAge = aggregatePeakTracker.getAgeMs(symbol, heldSide);
           const aggBleed = shouldAggregateBleedExit(
-            aggBleedPnl, aggBleedAge, tapeTrend, heldSide,
+            aggBleedPnl, aggBleedAge, tapeTrend, heldSide, basinState,
           );
           derivation.aggBleedExit = {
             ...aggBleed.derivation,

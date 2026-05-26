@@ -1047,6 +1047,7 @@ export function shouldAggregateBleedExit(
   aggregateAgeMs: number | null,
   tapeTrend: number,
   heldSide: 'long' | 'short',
+  s: BasinState,
 ): ExecutiveDecision<boolean> {
   if (aggregateCurrentPnlUsdt === null || aggregateAgeMs === null) {
     return {
@@ -1055,35 +1056,55 @@ export function shouldAggregateBleedExit(
       derivation: {},
     };
   }
-  const absBleedUsd = Number(process.env.MONKEY_SLOW_BLEED_ABS_USD) || 3.0;
-  const minHeldMin = Number(process.env.MONKEY_SLOW_BLEED_MIN_MIN) || 60;
+  // Phase 3 doctrine (2026-05-26): bleed-exit is chemistry-derived,
+  // not fixed-dollars + fixed-minutes. Removes:
+  //   MONKEY_SLOW_BLEED_ABS_USD (was 3.0)
+  //   MONKEY_SLOW_BLEED_MIN_MIN (was 60)
+  //
+  // Gate semantics:
+  //   - In a loss (pnl < 0)
+  //   - Tape adverse to held side (alignment < -0.2)
+  //   - Kernel inhibition exceeds reassurance: gaba > serotonin
+  //
+  // The gaba > serotonin comparison IS the doctrine-clean threshold:
+  // both are kernel-internal observables, and their crossing point is
+  // structural (no operator-picked constant between them). When
+  // inhibition exceeds reassurance, the kernel itself signals "I'm
+  // anxious about this position." Combined with adverse tape and
+  // realised loss, the kernel exits its own bleed.
+  //
+  // Position age is logged for telemetry but does NOT gate firing —
+  // the kernel decides via its own chemistry whether the age has
+  // mattered.
   const ageMin = aggregateAgeMs / 60_000;
-
-  if (ageMin < minHeldMin) {
+  if (aggregateCurrentPnlUsdt >= 0) {
     return {
-      value: false, reason: `under_${minHeldMin}min (age ${ageMin.toFixed(0)}min)`,
-      derivation: { ageMin, minHeldMin },
-    };
-  }
-  if (aggregateCurrentPnlUsdt > -absBleedUsd) {
-    return {
-      value: false, reason: `under_abs_bleed ($${aggregateCurrentPnlUsdt.toFixed(2)} > -$${absBleedUsd.toFixed(2)})`,
-      derivation: { aggregateCurrentPnlUsdt, absBleedUsd, ageMin },
+      value: false, reason: `not_in_loss (pnl=$${aggregateCurrentPnlUsdt.toFixed(2)})`,
+      derivation: { aggregateCurrentPnlUsdt, ageMin },
     };
   }
   const alignment = heldSide === 'long' ? tapeTrend : -tapeTrend;
   if (alignment > -0.2) {
     return {
       value: false, reason: 'tape_neutral_or_aligned',
-      derivation: { alignment, tapeTrend, aggregateCurrentPnlUsdt },
+      derivation: { alignment, tapeTrend, aggregateCurrentPnlUsdt, ageMin },
+    };
+  }
+  const gaba = s.neurochemistry.gaba;
+  const serotonin = s.neurochemistry.serotonin;
+  if (gaba <= serotonin) {
+    return {
+      value: false,
+      reason: `kernel_unbothered (gaba=${gaba.toFixed(3)} <= ser=${serotonin.toFixed(3)})`,
+      derivation: { gaba, serotonin, aggregateCurrentPnlUsdt, ageMin, alignment },
     };
   }
   return {
     value: true,
-    reason: `aggregate_bleed_exit: ${ageMin.toFixed(0)}min, aggregate pnl=$${aggregateCurrentPnlUsdt.toFixed(2)} ≤ -$${absBleedUsd.toFixed(2)}, tape adverse (align=${alignment.toFixed(2)})`,
+    reason: `aggregate_bleed_exit: pnl=$${aggregateCurrentPnlUsdt.toFixed(2)}, gaba=${gaba.toFixed(3)} > ser=${serotonin.toFixed(3)}, tape adverse (align=${alignment.toFixed(2)}), age=${ageMin.toFixed(0)}min`,
     derivation: {
-      aggregateCurrentPnlUsdt, absBleedUsd, ageMin, minHeldMin,
-      alignment, tapeTrend,
+      aggregateCurrentPnlUsdt, ageMin, alignment, tapeTrend,
+      gaba, serotonin,
       exitTypeBit: 10,  // AGGREGATE_BLEED_EXIT
     },
   };
