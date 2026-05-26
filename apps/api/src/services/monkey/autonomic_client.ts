@@ -140,6 +140,50 @@ export async function callAutonomicReward(req: RewardPush): Promise<void> {
   }
 }
 
+/**
+ * #941 Phase 3 parity client. Pushes the latest prediction-error
+ * chemistry deltas to the Python autonomic kernel so its NC
+ * derivation sees the same prediction-feedback signal the TS NC sees.
+ *
+ * Fire-and-forget: failure is non-fatal — Python NC simply lacks the
+ * prediction channel until the next refresh succeeds.
+ */
+export async function callAutonomicPredictionReward(req: {
+  instanceId: string;
+  dopamineDelta: number;
+  serotoninDelta: number;
+  n: number;
+}): Promise<void> {
+  const body = JSON.stringify({
+    instance_id: req.instanceId,
+    dopamine_delta: req.dopamineDelta,
+    serotonin_delta: req.serotoninDelta,
+    n: req.n,
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/monkey/autonomic/prediction_reward`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      logger.warn('[autonomic_client] prediction_reward push failed', {
+        status: res.status,
+        body: await res.text(),
+      });
+    }
+  } catch (err) {
+    logger.warn('[autonomic_client] prediction_reward push threw', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Feature-flag helper. */
 export function isPythonKernelEnabled(): boolean {
   return process.env.MONKEY_KERNEL_PY === 'true';

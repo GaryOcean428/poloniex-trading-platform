@@ -55,7 +55,11 @@ import {
   velocity,
   type Basin,
 } from './basin.js';
-import { callAutonomicTick, callAutonomicReward } from './autonomic_client.js';
+import {
+  callAutonomicTick,
+  callAutonomicReward,
+  callAutonomicPredictionReward,
+} from './autonomic_client.js';
 import { aggregatePeakTracker } from './aggregate_peak.js';
 import { wsPositionCache } from './ws_position_cache.js';
 import { marketIntelCache } from './market_intel.js';
@@ -158,6 +162,11 @@ import {
 import { planCloseChunks } from './closeChunker.js';
 import { SAFE_PNL_FROM_ROW, verifyPnl } from './safePnlSql.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
+import { startPredictionResidualJob } from './predictionResidualJob.js';
+import {
+  computePredictionChemistry,
+  type PredictionChemistryDeltas,
+} from './predictionRewardEmitter.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { observeEquity, sizeDeflection } from './equity_gradient.js';
 import {
@@ -837,6 +846,15 @@ export class MonkeyKernel extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | null = null;
   /** #932 row-level pnl divergence scanner timer. Runs independent of tick(). */
   private pnlScanTimer: ReturnType<typeof setInterval> | null = null;
+  /** #941 Phase 2 prediction-residual scanner timer. Runs independent of tick(). */
+  private residualScanTimer: ReturnType<typeof setInterval> | null = null;
+  /** #941 Phase 3 prediction-reward emitter timer. Refreshes the cached
+   *  prediction-error chemistry deltas every 30s; the tick loop reads
+   *  the cache and adds the deltas into computeNeurochemicals inputs. */
+  private predictionEmitterTimer: ReturnType<typeof setInterval> | null = null;
+  /** Cached prediction-error chemistry deltas, refreshed by
+   *  predictionEmitterTimer. Null until the first emitter pass. */
+  private cachedPredictionChemistry: PredictionChemistryDeltas | null = null;
   private tickMs: number;
   private readonly baseTickMs: number;
   private readonly symbols: string[];
@@ -1312,6 +1330,44 @@ export class MonkeyKernel extends EventEmitter {
       });
     }, 60_000);
     this.pnlScanTimer.unref?.();
+
+    // #941 Phase 2: prediction-residual job. Scans elapsed predictions every
+    // 60s, computes residuals at the actual elapsed horizon, writes
+    // kernel_outcome_residuals rows. Backfills final_residual_* on closed
+    // trades. P15-safe: try/catch per row, never blocks the tick loop.
+    // Cadence is structural (matches kernel tick × 2).
+    this.residualScanTimer = startPredictionResidualJob();
+    this.residualScanTimer.unref?.();
+
+    // #941 Phase 3: prediction-reward emitter. Refreshes the cached
+    // chemistry delta from residual rows every 30s (half the residual
+    // scan cadence, so the cache is never older than ~90s end-to-end).
+    // Cadence is structural — it bounds how quickly prediction-error
+    // chemistry catches up after a regime shift. Fire once immediately
+    // on start so the cache isn't null for the first 30s. Also mirror
+    // the deltas to the Python autonomic kernel so its NC sees the
+    // same prediction-feedback signal (#941 Step 6 parity).
+    const refreshPredictionCache = async (): Promise<void> => {
+      try {
+        const next = await computePredictionChemistry();
+        this.cachedPredictionChemistry = next;
+        void callAutonomicPredictionReward({
+          instanceId: this.instanceId,
+          dopamineDelta: next.dopamineDelta,
+          serotoninDelta: next.serotoninDelta,
+          n: next.summary.n,
+        });
+      } catch (err) {
+        logger.warn('[Monkey] prediction-chemistry refresh failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
+    void refreshPredictionCache();
+    this.predictionEmitterTimer = setInterval(() => {
+      void refreshPredictionCache();
+    }, 30_000);
+    this.predictionEmitterTimer.unref?.();
   }
 
   stop(): void {
@@ -1322,6 +1378,14 @@ export class MonkeyKernel extends EventEmitter {
     if (this.pnlScanTimer) {
       clearInterval(this.pnlScanTimer);
       this.pnlScanTimer = null;
+    }
+    if (this.residualScanTimer) {
+      clearInterval(this.residualScanTimer);
+      this.residualScanTimer = null;
+    }
+    if (this.predictionEmitterTimer) {
+      clearInterval(this.predictionEmitterTimer);
+      this.predictionEmitterTimer = null;
     }
     logger.info('[Monkey] kernel sleeping');
   }
@@ -2238,6 +2302,15 @@ export class MonkeyKernel extends EventEmitter {
     // and bump their capital share, but K's dopamine is K's only.
     const rewardDeltas = this.decayedRewardSums(Date.now(), 'K');
 
+    // #941 Phase 3: fold prediction-error chemistry into the same
+    // reward-delta channel. The emitter timer (every 30s) writes a
+    // pre-computed aggregate to cachedPredictionChemistry; tick reads
+    // the cache and adds the deltas additively. Null = first tick
+    // before emitter fired, or sustained DB error — treat as zero.
+    const predChem = this.cachedPredictionChemistry;
+    const predDop = predChem?.dopamineDelta ?? 0;
+    const predSer = predChem?.serotoninDelta ?? 0;
+
     // 2026-05-16 (#715/#716/#717 derivation refactor): build the
     // BasinObservables block from the basin's OWN per-tick history.
     // Every chemical's per-tick scale is set by what's typical FOR
@@ -2257,8 +2330,8 @@ export class MonkeyKernel extends EventEmitter {
       quantumWeight: regimeWeights.quantum,
       kappa: state.kappa,
       externalCoupling: couplingHealth,
-      rewardDopamineDelta: rewardDeltas.dopamine,
-      rewardSerotoninDelta: rewardDeltas.serotonin,
+      rewardDopamineDelta: rewardDeltas.dopamine + predDop,
+      rewardSerotoninDelta: rewardDeltas.serotonin + predSer,
       rewardEndorphinDelta: rewardDeltas.endorphin,
       observables: {
         phiHistory: state.phiHistory,
@@ -5509,6 +5582,14 @@ export class MonkeyKernel extends EventEmitter {
       cooldown,  // REGIME-3 postclose cooldown remaining (per side)
       orderId: monkeyOrderId ?? undefined,
       reason,
+      // #941 Phase 3: prediction-error chemistry surface. predN is the
+      // residual sample count in the last 5min window; predDop/predSer
+      // are the deltas being added into rewardDopamineDelta/
+      // rewardSerotoninDelta this tick. Zero before the emitter fires
+      // for the first time and during DB outage (see P15).
+      predN: predChem?.summary.n ?? 0,
+      predDop: predDop.toFixed(3),
+      predSer: predSer.toFixed(3),
     });
 
     // Persist mode observation for later Loop-1 aggregation + UI.

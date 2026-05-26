@@ -198,6 +198,16 @@ class AutonomicKernel:
         self.label = label
         self._persistence = persistence
         self._pending_rewards: deque[ActivityReward] = deque(maxlen=REWARD_QUEUE_MAX)
+        # #941 Phase 3 prediction-error chemistry cache. Populated by the
+        # TS-side emitter via push_prediction_chemistry() and folded
+        # additively into reward_sums on each tick(). Cleared on wake.
+        # P14: kept SEPARATE from the trade-outcome reward queue — a
+        # perfect forecaster with no trades still earns this dopamine.
+        self._cached_prediction_chemistry: dict[str, float] = {
+            "dopamine_delta": 0.0,
+            "serotonin_delta": 0.0,
+            "n": 0.0,
+        }
         # Restore decay-aware reward queue from Redis if available.
         # The persistence layer drops entries whose decay < 0.01 so
         # we don't restore zero-contribution rewards.
@@ -306,6 +316,31 @@ class AutonomicKernel:
             endo,
         )
         return reward
+
+    # ────────── prediction-error chemistry (issue #941 Phase 3) ──────────
+
+    def push_prediction_chemistry(
+        self,
+        *,
+        dopamine_delta: float,
+        serotonin_delta: float,
+        n: int,
+    ) -> None:
+        """Replace the cached prediction-error chemistry delta.
+
+        Mirrors the TS-side emitter (predictionRewardEmitter.ts).
+        Caller passes pre-computed deltas (computed against the
+        kernel_outcome_residuals table). This method REPLACES — does
+        not append — so each refresh cycle's signal contributes once
+        per tick, not compounding across the refresh interval.
+
+        n is carried for telemetry / parity check only.
+        """
+        self._cached_prediction_chemistry = {
+            "dopamine_delta": float(dopamine_delta),
+            "serotonin_delta": float(serotonin_delta),
+            "n": float(n),
+        }
 
     # ─────────────────────── decayed reward sums ───────────────────────
 
@@ -448,13 +483,29 @@ class AutonomicKernel:
               inputs.woke from Ocean)
         """
         reward_sums = self._decayed_reward_sums(inputs.now_ms)
-        nc = self._compute_nc(inputs, reward_sums, inputs.is_awake)
+        # #941 Phase 3: fold cached prediction-error chemistry deltas
+        # into the same reward channel. Additive — same shape as the
+        # TS-side wiring in loop.ts tick() (cf. predDop / predSer).
+        pred = self._cached_prediction_chemistry
+        reward_sums_combined = {
+            "dopamine": reward_sums["dopamine"] + pred["dopamine_delta"],
+            "serotonin": reward_sums["serotonin"] + pred["serotonin_delta"],
+            "endorphin": reward_sums["endorphin"],
+        }
+        nc = self._compute_nc(inputs, reward_sums_combined, inputs.is_awake)
 
-        # Fresh mood on wake — clear stale reward events.
+        # Fresh mood on wake — clear stale reward events AND prediction
+        # cache (the residual rows underlying the cached delta are now
+        # stale relative to the new wake-state regime).
         if inputs.woke:
             self._pending_rewards.clear()
+            self._cached_prediction_chemistry = {
+                "dopamine_delta": 0.0,
+                "serotonin_delta": 0.0,
+                "n": 0.0,
+            }
 
-        return AutonomicTickResult(nc=nc, reward_sums=reward_sums)
+        return AutonomicTickResult(nc=nc, reward_sums=reward_sums_combined)
 
     # ───────────────────────── telemetry ─────────────────────────
 

@@ -1426,6 +1426,33 @@ async def monkey_autonomic_reward(request: Request):
     }
 
 
+@app.post("/monkey/autonomic/prediction_reward")
+async def monkey_autonomic_prediction_reward(request: Request):
+    """Push the latest prediction-error chemistry deltas (#941 Phase 3).
+
+    Replaces (does not append) the kernel's cached prediction-error
+    chemistry. Folded additively into reward_sums on each tick(), then
+    cleared on wake. P14: kept separate from trade-outcome rewards.
+
+    Request body:
+      { instance_id, dopamine_delta, serotonin_delta, n }
+
+    Response: the cached deltas after replacement (for parity check).
+    """
+    payload = await request.json()
+    instance_id = payload.get("instance_id", "monkey-primary")
+    kernel = _get_autonomic(instance_id)
+    kernel.push_prediction_chemistry(
+        dopamine_delta=float(payload.get("dopamine_delta", 0.0)),
+        serotonin_delta=float(payload.get("serotonin_delta", 0.0)),
+        n=int(payload.get("n", 0)),
+    )
+    return {
+        "cached": kernel._cached_prediction_chemistry,
+        "snapshot": kernel.snapshot(),
+    }
+
+
 @app.get("/monkey/autonomic/snapshot/{instance_id}")
 async def monkey_autonomic_snapshot(instance_id: str):
     """Telemetry snapshot — sleep phase, pending reward count, decayed sums."""
