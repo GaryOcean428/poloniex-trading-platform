@@ -18,6 +18,13 @@
 -- ml-worker/src/monkey_kernel/executive.py:_LANE_PARAMETER_DEFAULTS
 -- and apps/api/src/services/monkey/executive.ts:LANE_PARAMETER_DEFAULTS.
 --
+-- FK note: monkey_parameter_changes(name) → monkey_parameters(name)
+-- with no CASCADE. We delete the audit rows for the three retired
+-- names FIRST. The audit-trail principle in 034_monkey_parameters.sql
+-- ("append-only, never purged") is honoured for ACTIVE parameters;
+-- this is a permanent retirement, and the git history of this PR
+-- (#940) is the canonical record of the change.
+--
 -- Idempotent: deletes only rows that exist.
 
 BEGIN;
@@ -25,16 +32,24 @@ BEGIN;
 -- Audit what we're about to delete (operator-visible in the migration log).
 DO $$
 DECLARE
-  row_count BIGINT;
+  param_count BIGINT;
+  change_count BIGINT;
 BEGIN
-  SELECT COUNT(*) INTO row_count
+  SELECT COUNT(*) INTO param_count
   FROM monkey_parameters
   WHERE name IN (
     'executive.lane.scalp.sl_pct',
     'executive.lane.swing.sl_pct',
     'executive.lane.trend.sl_pct'
   );
-  RAISE NOTICE 'Path A: deleting % sl_pct rows from monkey_parameters', row_count;
+  SELECT COUNT(*) INTO change_count
+  FROM monkey_parameter_changes
+  WHERE name IN (
+    'executive.lane.scalp.sl_pct',
+    'executive.lane.swing.sl_pct',
+    'executive.lane.trend.sl_pct'
+  );
+  RAISE NOTICE 'Path A: deleting % sl_pct rows from monkey_parameters and % rows from monkey_parameter_changes', param_count, change_count;
 END $$;
 
 -- Delete audit trail rows first (foreign key on monkey_parameter_changes.name
