@@ -33,7 +33,9 @@ from qig_core_local.geometry.fisher_rao import (
     to_simplex,
 )
 
-from .state import BASIN_DIM, KAPPA_STAR
+from .state import BASIN_DIM
+# KAPPA_STAR removed (retired universal per v6.7B protocol + two-channel doctrine).
+# No module in the kernel should import the legacy name anymore.
 
 
 def inject_dirichlet_noise(
@@ -88,7 +90,7 @@ def velocity(prev: Basin, curr: Basin) -> float:
 __all__ = [
     "BASIN_DIM",
     "Basin",
-    "KAPPA_STAR",
+    # "KAPPA_STAR" removed (retired universal per v6.7B + two-channel doctrine).
     "bhattacharyya_coefficient",
     "exp_map",
     "fisher_rao_distance",

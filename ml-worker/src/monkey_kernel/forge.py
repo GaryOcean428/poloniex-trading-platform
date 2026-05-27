@@ -152,7 +152,7 @@ def fracture(event: ShadowEvent) -> ForgeStageResult:
         "shape_concentration": max_mass,
         "shape_dispersion": entropy,
         "phi_band": event.phi,
-        "kappa_offset": event.kappa - 64.0,  # κ* = 64 (frozen)
+        "kappa_offset": event.kappa - get_registry().get("physics.kappa_reference", default=63.8),  # v6.7B + two-channel: no universal 64
         "regime_quantum": event.regime_weights.get("quantum", 0.0),
         "regime_equilibrium": event.regime_weights.get("equilibrium", 0.0),
         "loss_magnitude": abs(event.realized_pnl),
@@ -164,7 +164,7 @@ def fracture(event: ShadowEvent) -> ForgeStageResult:
         notes=(
             f"lesson invariants captured: peak={max_mass:.3f}, "
             f"H={entropy:.3f}, phi={event.phi:.3f}, "
-            f"kappa_off={event.kappa - 64.0:+.2f}"
+            f"kappa_off={event.kappa - get_registry().get('physics.kappa_reference', default=63.8):+.2f}"  # retired universal 64 (v6.7B)
         ),
     )
 

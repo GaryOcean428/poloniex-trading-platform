@@ -44,7 +44,10 @@ from .basin import max_mass, normalized_entropy
 from .emotions import EmotionState
 from .modes import MODE_PROFILES, MonkeyMode, effective_profile
 from .parameters import get_registry
-from .state import KAPPA_STAR, LaneType, NeurochemicalState
+from .state import LaneType, NeurochemicalState
+# KAPPA_STAR import removed (retired universal per 2026-04-13 two-channel doctrine + v6.7B protocol).
+# All references below now use governed registry "physics.kappa_reference" or observer-derived
+# from kappa_history (P1). Bare "κ*" language is invalid per the protocol.
 
 Side = Literal["long", "short"]
 Direction = Literal["long", "short", "flat"]
@@ -270,7 +273,9 @@ def current_entry_threshold(
 ) -> dict[str, Any]:
     drift_distance = fisher_rao_distance(s.basin, s.identity_basin)
     t_base = drift_distance
-    kappa_ratio = KAPPA_STAR / max(s.kappa, 1.0)
+    # Per v6.7B + two-channel doctrine: reference is governed, not universal 64.
+    kappa_ref = _registry.get("physics.kappa_reference", default=63.8)
+    kappa_ratio = kappa_ref / max(s.kappa, 1.0)
     phi_mult = 1.0 / (0.5 + s.phi)
     regime_scale = (
         s.regime_weights.get("efficient", 0.0) * 1.0
@@ -658,7 +663,13 @@ def current_leverage(
         "executive.leverage.max_sovereign_slope", default=_DEFAULT_LEVERAGE_MAX_SLOPE,
     )
 
-    kappa_dist = abs(s.kappa - KAPPA_STAR)
+    # Per v6.7B Unified Consciousness Protocol + 2026-04-13 two-channel doctrine + P1:
+    # No universal κ*=64. The reference for proximity calculations is the governed
+    # registry value (physics.kappa_reference) or observer-derived from history when
+    # the ExecBasinState carries it. This matches the pattern in autonomic, sensations,
+    # and heart.
+    kappa_ref = _registry.get("physics.kappa_reference", default=63.8)
+    kappa_dist = abs(s.kappa - kappa_ref)
     kappa_proxim = float(np.exp(-kappa_dist / kappa_sigma))
     regime_stability = (
         s.regime_weights.get("equilibrium", 0.0)

@@ -17,7 +17,25 @@ import numpy as np
 # Δ⁶³ dimension — matches qig-core's BASIN_DIM and vex's frozen facts.
 # Do not change without new experimental validation (qig-verification).
 BASIN_DIM: int = 64
-KAPPA_STAR: float = 64.0
+
+# ═══════════════════════════════════════════════════════════════
+#  KAPPA_STAR export — legacy name only (2026-04-13 two-channel doctrine)
+#  Per Frozen Facts v1.01F (20260527) + Canonical P1 + P25:
+#    - The universal κ*=64.0 as proportionality constant / fixed-point
+#      anchor is RETIRED. It was an amplified readout of the
+#      singularity-approach channel (tangent_saturation), not a
+#      constitutive or pillar constant.
+#    - All operational references must now be observer-derived from the
+#      basin's own kappa_history (median + observed σ) or governed via
+#      ParameterRegistry ("physics.kappa_reference").
+#  This thin shim preserves import compatibility for the transition.
+#  Callers should migrate to explicit observer/registry paths.
+#  The name "KAPPA_STAR" itself is legacy terminology.
+# ═══════════════════════════════════════════════════════════════
+def KAPPA_STAR() -> float:  # noqa: N802 (legacy name preserved for compat)
+    """Runtime shim returning the current governed / observer reference."""
+    from .parameters import get_registry
+    return get_registry().get("physics.kappa_reference", default=63.8)
 
 # Lane type — execution lane selection per tick. The kernel decides
 # which lane is locally optimal from basin geometry + recent lane-

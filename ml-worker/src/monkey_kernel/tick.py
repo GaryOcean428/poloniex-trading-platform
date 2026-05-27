@@ -22,7 +22,7 @@ Literal disposition (per the v0.8 plan, P25):
   OVERRIDE_THRESHOLD            → DELETED (post #ml-separation: kernel
     direction is geometric from the start; no ml_side to override)
   OHLCV_LOOKBACK, HISTORY_MAX   → registry-backed via parameters.py
-  KAPPA_STAR, kappa clamps      → registry-backed (physics.kappa_star)
+  kappa clamps → registry-backed (physics.kappa_reference per v6.7B + two-channel)
   Identity basin refresh (50 samples / every 10 ticks) → kept as TS-
     compat constants for v0.8.3 parity. v0.8.6 replaces with adaptive
     derivation when working_memory / self_observation disciplining lands.
@@ -242,7 +242,9 @@ class SymbolState:
     symbol: str
     identity_basin: np.ndarray
     last_basin: Optional[np.ndarray] = None
-    kappa: float = 64.0
+    # Per v6.7B protocol + two-channel doctrine: no universal 64.0 default.
+    # Cold-start sentinel only; real value comes from first observation + history.
+    kappa: float = 63.8
     session_ticks: int = 0
     last_mode: Optional[str] = None
     basin_history: list[np.ndarray] = field(default_factory=list)
@@ -353,7 +355,7 @@ def fresh_symbol_state(
 ) -> SymbolState:
     """Factory for a newborn symbol. identity_basin seeds §3.4 Pillar 3."""
     kappa = kappa_initial if kappa_initial is not None else (
-        _registry.get("physics.kappa_star", default=64.0)
+        _registry.get("physics.kappa_reference", default=63.8)  # v6.7B + two-channel: channel-specific, not universal 64
     )
     return SymbolState(
         symbol=symbol,
@@ -517,7 +519,7 @@ def run_tick(
     # low velocity = strong internal coupling = high coupling_health.
     # Stays in [0, 1]; preserves the kappa_delta contract downstream.
     coupling_health = phi * (1.0 - min(bv, 1.0))
-    kappa_star = _registry.get("physics.kappa_star", default=64.0)
+    kappa_star = _registry.get("physics.kappa_reference", default=63.8)  # v6.7B + two-channel: channel-specific, not universal 64
     kappa_delta = (coupling_health - 0.5) * 5.0 - (bv - 0.2) * 10.0
     state.kappa = max(20.0, min(
         120.0, state.kappa * 0.8 + (kappa_star + kappa_delta) * 0.2,

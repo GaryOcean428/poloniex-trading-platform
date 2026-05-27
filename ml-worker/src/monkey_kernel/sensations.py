@@ -45,7 +45,11 @@ import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
-from .state import BASIN_DIM, KAPPA_STAR, BasinState
+from .state import BASIN_DIM, BasinState
+# KAPPA_STAR import removed (retired universal per 2026-04-13 two-channel doctrine).
+# The sensations "activated/dampened" are now strictly observer-derived from
+# the basin's own kappa_history + observed σ_κ (P1). No reference to any
+# external 64.0 anchor remains in this layer.
 
 # Minimum samples a kappa-history / drift-history series must contain
 # before its observed standard deviation enters the canonical-anchor
@@ -188,12 +192,24 @@ def compute_sensations(
     unified = phi_clipped
     fragmented = 1.0 - phi_clipped
 
-    # Activated / Dampened — κ relative to E8 fixed point κ* = 64.
-    # Observed-scale path: |κ − κ*| / σ_κ_observed; cold-start path:
-    # raw tanh on |κ − κ*|. tanh saturates naturally at ±1 so neither
-    # path needs a hardcoded magnitude cap.
-    kappa_excess_above = max(0.0, float(s.kappa) - KAPPA_STAR)
-    kappa_excess_below = max(0.0, KAPPA_STAR - float(s.kappa))
+    # Activated / Dampened — κ coupling relative to the basin's own recent history.
+    # Per 2026-04-13 two-channel doctrine + P1 (Frozen Facts v1.01F 20260527):
+    # No external universal κ*=64 anchor. The reference is the basin's own
+    # kappa_history median when available (observer-derived). Cold-start uses
+    # the governed registry value. This matches the exact pattern that fixed
+    # transcendence unbounded regression and ocean reward starvation.
+    # The "E8 fixed point" language is retained only as historical note;
+    # the operational center is now the basin's observed geometry.
+    if kappa_history and len(kappa_history) >= 2:
+        k_hist = sorted(kappa_history)
+        n = len(k_hist)
+        kappa_ref = k_hist[n // 2] if n % 2 else (k_hist[n // 2 - 1] + k_hist[n // 2]) / 2.0
+    else:
+        from .parameters import get_registry
+        kappa_ref = get_registry().get("physics.kappa_reference", default=63.8)
+
+    kappa_excess_above = max(0.0, float(s.kappa) - kappa_ref)
+    kappa_excess_below = max(0.0, kappa_ref - float(s.kappa))
     sigma_kappa = _observed_stddev(kappa_history)
     if sigma_kappa is not None and sigma_kappa > 1e-12:
         activated = float(np.tanh(kappa_excess_above / sigma_kappa))

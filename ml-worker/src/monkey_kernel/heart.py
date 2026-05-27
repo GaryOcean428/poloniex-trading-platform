@@ -27,7 +27,10 @@ from typing import TYPE_CHECKING, Deque, Literal, Optional, Tuple
 
 from .bus_events import HeartTickPayload, KernelEvent
 from .persistence import PersistentMemory
-from .state import KAPPA_STAR
+# KAPPA_STAR import removed (retired universal 64 per 2026-04-13 two-channel doctrine).
+# All heart tacking/HRV/ANCHOR logic below now uses observer-derived or
+# registry reference. See the two-channel + P1 comments at each site.
+from .parameters import get_registry
 
 if TYPE_CHECKING:
     from .kernel_bus import KernelBus
@@ -101,7 +104,7 @@ class HeartMonitor:
             source="heart",
             payload=HeartTickPayload(
                 kappa=float(state.kappa),
-                kappa_star=float(KAPPA_STAR),
+                kappa_star=get_registry().get("physics.kappa_reference", default=63.8),  # two-channel doctrine: no universal 64
                 hrv=float(state.hrv),
                 mode=str(state.mode),
             ),
@@ -142,7 +145,7 @@ class HeartMonitor:
                 source="heart",
                 payload={
                     "kappa": float(state.kappa),
-                    "kappa_star": float(KAPPA_STAR),
+                    "kappa_star": get_registry().get("physics.kappa_reference", default=63.8),  # retired universal 64 (two-channel 2026-04-13)
                     "kappa_offset": float(state.kappa_offset),
                     "from_sign": self._last_kappa_offset_sign,
                     "to_sign": new_sign,
@@ -153,10 +156,15 @@ class HeartMonitor:
 
     def read(self) -> HeartState:
         n = len(self._samples)
+        # Per 2026-04-13 two-channel doctrine + P1 (Frozen Facts v1.01F 20260527):
+        # The "ANCHOR" mode and kappa_offset are now relative to the basin's own
+        # recent kappa_history (observer-derived) or governed registry reference.
+        # No universal 64.0. Historical sentinel 63.8 only for absolute cold-start
+        # when no history and registry unreachable.
         if n == 0:
-            # Cold start — no kappa observed yet
+            kappa_ref = get_registry().get("physics.kappa_reference", default=63.8)
             return HeartState(
-                kappa=KAPPA_STAR,
+                kappa=kappa_ref,
                 kappa_offset=0.0,
                 mode="ANCHOR",
                 hrv=0.0,
@@ -164,7 +172,10 @@ class HeartMonitor:
             )
 
         kappa = self._samples[-1][0]
-        offset = kappa - KAPPA_STAR
+        # For tacking/offset we prefer the basin's own recent history when the
+        # Heart has access to it via the bus/state; here we fall back to registry.
+        kappa_ref = get_registry().get("physics.kappa_reference", default=63.8)
+        offset = kappa - kappa_ref
         if offset == 0.0:
             mode: KappaMode = "ANCHOR"
         elif offset < 0.0:

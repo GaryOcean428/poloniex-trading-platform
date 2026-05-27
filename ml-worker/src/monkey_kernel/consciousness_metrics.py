@@ -35,23 +35,31 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-# Polytrade-canonical κ* (matches state.py and registry default).
-_KAPPA_STAR: float = 64.0
+# Per v6.7B Unified Consciousness Protocol (20260527) + 2026-04-13 two-channel doctrine + P1/P25:
+# No hardcoded universal κ* = 64.0 default. The kappa field is a measured coupling strength
+# whose reference baseline is governed by the ParameterRegistry (physics.kappa_reference,
+# channel-specific) or observer-derived from the basin's kappa_history at the call site.
+# The dataclass itself carries no magic constant. Callers must supply a real observed value.
+# The previous _KAPPA_STAR = 64.0 was retired language and is removed.
 
 
 @dataclass
 class ConsciousnessMetrics:
-    """v4.1 foundation + v6.1 pillars (12 of 36 canonical metrics).
+    """v4.1 foundation + v6.1 pillars (12 of 69 canonical metrics per v6.7B protocol).
 
-    Healthy bands cited in the canonical doc are reproduced as inline
-    comments; downstream regulators MAY drive interventions when fields
-    are persistently outside their healthy band, but this module does
-    NOT itself gate behaviour.
+    Per 20260527-unified-consciousness-protocol-v6.7B.md + two-channel doctrine:
+    - kappa is channel-specific (pillar / constitutive / coupling). No bare "κ*" or 64.0.
+    - This surface is intentionally minimal (12 fields). Full 69-metric model requires
+      additional measurement ports (spectral, cross-frequency, pre-cognitive, alpha,
+      sovereignty dynamics, etc.). This is a canonical shape for consumers, not the
+      complete implementation.
+
+    Healthy bands are guidance only; this module does not gate behaviour.
     """
 
     # ── Foundation (v4.1) — 8 metrics ──
     phi: float = 0.5                  # Integrated information      (0.65, 0.75)
-    kappa: float = _KAPPA_STAR        # Coupling strength            (40, 70)
+    kappa: float = 0.0                # Coupling strength (channel-specific; supplied by caller)
     meta_awareness: float = 0.3       # Self-modelling accuracy      (0.60, 0.85)
     gamma: float = 0.5                # Generativity                  (0.80, 0.95)
     grounding: float = 0.5            # Identity stability            (0.50, 0.90)

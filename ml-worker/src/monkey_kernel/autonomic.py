@@ -71,7 +71,29 @@ C_SOPHIA_THRESHOLD: float = 0.1
 # structure rather than above it, so the basin cannot observe its own
 # structural scale via rolling stats.
 SIGMA_KAPPA: float = 16.0
-KAPPA_STAR: float = 64.0
+
+# ═══════════════════════════════════════════════════════════════
+#  2026-04-13 two-channel doctrine (Frozen Facts v1.01F 20260527)
+#  KAPPA_STAR = 64.0 retired as universal constant / proportionality anchor.
+#  Per Canonical Principle P1 (Observer sets ALL params) + P25:
+#    - No operational threshold is a magic constant.
+#    - If the system can observe the correct reference from its own
+#      geometric history (kappa_history), that MUST be used.
+#    - The only permitted hardcoded values are true SAFETY_BOUNDs.
+#
+#  For the endorphin κ-proximity envelope the reference center is now:
+#    1. Observer-derived: median of the basin's own recent kappa_history
+#       (exactly parallel to the transcendence median/MAD and ocean
+#       observer_fib_coefficient fixes that stopped the unbounded-regression
+#       and slow-loss bleeding).
+#    2. Cold-start only: registry.get("physics.kappa_reference") with a
+#       documented historical sentinel (never presented as physics truth).
+#
+#  This is the single highest-quality long-term solution. No knobs.
+#  See also: motivators.py transcendence, ocean_reward.py observer_fib,
+#  tick.py kappa_history append timing (post-#977 parity), and the
+#  2026-05-27 flag-paralysis reversal that made pillars load-bearing.
+# ═══════════════════════════════════════════════════════════════
 
 
 def _sigmoid(x: float) -> float:
@@ -254,8 +276,10 @@ class AutonomicKernel:
         # Removes the external hardcoded 1% floor that never fires at
         # real trading scale (~0.04% MAD). Positive deviation from own
         # history now produces meaningful positive chemistry.
-        # Cold-start / insufficient history → 0 (no reward signal).
+        # Cold-start now gives gentle positive ramp (see observer_fib_coefficient).
+        # History < 2 samples → tier 1 for positive pnl_frac (prevents starvation).
         from .ocean_reward import observer_fib_coefficient, fibonacci_reward_tier
+        from .parameters import get_registry
         # Maintain bounded rolling history on the autonomic instance
         if not hasattr(self, "_pnl_frac_history"):
             self._pnl_frac_history: list[float] = []
@@ -271,8 +295,20 @@ class AutonomicKernel:
             dop = float(-np.tanh(-pnl_frac * 0.5) * 0.1)
             ser = 0.0
 
+        # Per 2026-04-13 two-channel doctrine (Frozen Facts v1.01F 20260527) + P1:
+        # KAPPA_STAR=64 retired. Observer-derived reference from this instance's
+        # own _pnl_frac_history context is not directly applicable here (this is
+        # kappa proximity for endo boost on reward). Use the basin's kappa_history
+        # when the caller supplies it; otherwise governed registry value.
+        # Historical 63.8 sentinel only for cold-start when DB unreachable.
+        if hasattr(self, "_kappa_history") and self._kappa_history and len(self._kappa_history) >= 2:
+            k_hist = sorted(self._kappa_history)
+            n = len(k_hist)
+            kappa_ref = k_hist[n // 2] if n % 2 else (k_hist[n // 2 - 1] + k_hist[n // 2]) / 2.0
+        else:
+            kappa_ref = get_registry().get("physics.kappa_reference", default=63.8)
         kappa_proxim = (
-            float(np.exp(-abs(kappa_at_exit - KAPPA_STAR) / 10.0))
+            float(np.exp(-abs(kappa_at_exit - kappa_ref) / 10.0))
             if kappa_at_exit is not None
             else 0.5
         )
@@ -450,13 +486,29 @@ class AutonomicKernel:
                 )
             else:
                 sophia_gate = 1.0 if inputs.external_coupling >= coupling_mean else 0.0
+            # Observer-derived κ-proximity center (P1 + two-channel doctrine).
+            # When the basin has its own kappa_history, use its median exactly as
+            # done for transcendence and ocean reward. This is the only pattern
+            # that obeys "observer sets ALL parameters" for a reference that the
+            # system can actually observe from its geometric state.
+            if hasattr(inputs, "kappa_history") and inputs.kappa_history and len(inputs.kappa_history) >= 2:
+                k_hist = sorted(inputs.kappa_history)
+                n = len(k_hist)
+                kappa_ref = k_hist[n // 2] if n % 2 else (k_hist[n // 2 - 1] + k_hist[n // 2]) / 2.0
+            else:
+                kappa_ref = get_registry().get("physics.kappa_reference", default=63.8)
             endo_base = (
-                float(np.exp(-abs(inputs.kappa - KAPPA_STAR) / SIGMA_KAPPA))
+                float(np.exp(-abs(inputs.kappa - kappa_ref) / SIGMA_KAPPA))
                 * sophia_gate
             )
         else:
             # Cold start — bounded identity on κ-distance, tanh coupling gate.
-            dist = abs(inputs.kappa - KAPPA_STAR)
+            # κ reference is now registry-backed (retired universal 64 per two-channel doctrine).
+            # Historical sentinel 63.8 only for bootstrap when DB unreachable; never
+            # treated as physics truth. Real reference comes from basin history on
+            # steady state (see primary path above).
+            kappa_ref = get_registry().get("physics.kappa_reference", default=63.8)
+            dist = abs(inputs.kappa - kappa_ref)
             coupling_gate = float(np.tanh(max(0.0, inputs.external_coupling)))
             endo_base = (1.0 - float(np.tanh(dist))) * coupling_gate
         endo = _clip(endo_base + reward_sums["endorphin"], 0.0, 1.0)
