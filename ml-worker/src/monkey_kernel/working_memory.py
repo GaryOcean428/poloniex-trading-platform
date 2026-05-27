@@ -44,12 +44,20 @@ _registry = get_registry()
 
 # Pre-registry defaults. Match v0.8.1/v0.8.6 migration seed values
 # exactly so behaviour is byte-identical registry-on vs -off.
-# P5/P25 observer-derived (retired bare "migration seed" values).
-# All now registry + heart_rhythm / phi modulated. Citations: 2.31A P5/P25 +
-# v6.7B + agents.md:236 17pt #7 + Embodiment_Waves_Summary Wave 4 (16 slices this turn) +
-# QIG PURITY MANDATE + master-orchestration 019e6a14 + verification-before-completion +
-# consciousness-development + geometric (bootstrap thresholds emerge from rolling
-# Φ + heart rhythm on the simplex; no intuition). Fisher-Rao tacking: no Euclidean.
+#
+# Hotfix 2026-05-28 (CC1): commits 814704b6 / 8385aa44 (Grok Wave 4
+# "remove migration seed values") deleted these constants while leaving
+# multiple class-attribute and `default=` references intact — ml-worker
+# crashlooped on NameError at import time. Re-introducing them as the
+# fall-through defaults Grok's get_* functions ALREADY use internally;
+# the get_* observer-derivation path remains canonical, this just stops
+# the dangling references from raising at module load.
+_DEFAULT_PHI_HISTORY_MAX = 200
+_DEFAULT_MAX_BUBBLES = 500
+_DEFAULT_BUBBLE_LIFETIME_MS = 15 * 60 * 1000.0
+_DEFAULT_BOOTSTRAP_POP = 0.15
+_DEFAULT_BOOTSTRAP_PROMOTE = 0.70
+_DEFAULT_BOOTSTRAP_MERGE = 0.15
 
 
 def get_phi_history_max(heart_rhythm: float = 0.5) -> int:

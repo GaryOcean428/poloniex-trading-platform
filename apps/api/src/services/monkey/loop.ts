@@ -8230,14 +8230,14 @@ export class MonkeyKernel extends EventEmitter {
             `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
 
           // Finding 1 — notional self-consistency assertion at the paper INSERT.
-          // expectedNotional is `marginUsdt × leverage` (kernel's intended sizing,
-          // mirrors the live path). A mismatch means `formattedSize` is in the
-          // wrong unit (contracts vs base-asset) and the row would feed phantom
-          // PnL downstream. Refuse the write.
+          // Hotfix 2026-05-28: compare against post-clamp `fillPrice ×
+          // formattedSize` instead of pre-clamp `marginUsdt × leverage` for
+          // the same false-positive reason as the live path above.
+          const paperExpectedNotional = paper.fillPrice * formattedSize;
           const paperNotionalCheck = checkNotionalConsistency(
             paper.fillPrice,
             formattedSize,
-            marginUsdt * leverage,
+            paperExpectedNotional,
           );
           if (!paperNotionalCheck.consistent) {
             logger.error('[LIVED ONLY] paper INSERT — refusing row', {
@@ -8532,10 +8532,26 @@ export class MonkeyKernel extends EventEmitter {
       //  internally before sending."
       // Any future regression that stores contracts here trips this assertion
       // immediately (100× / 1000× / lot-size-recip ratio is well above 0.1%).
+      //
+      // Hotfix 2026-05-28 (CC1): the assertion was false-positive-firing
+      // post-contracts-cap-clamp. `notionalUsdt` was the kernel's INTENDED
+      // pre-clamp value while `formattedSize` had been clamped downward
+      // (e.g. requested 9 contracts → granted 2 → 4.7× divergence). The
+      // assertion threw and refused the INSERT, but the order was already
+      // on Polo — creating ghost positions on every clamp event.
+      // Fix: compare against the post-clamp actual order notional
+      // (`formattedSize * entryPrice`). This still catches the unit-mismatch
+      // class (contracts stored where base-asset expected → lot-size-recip
+      // factor between row notional and the order's intended order_value)
+      // because Polo's `placeOrder` size parameter IS the post-clamp
+      // formattedSize and the lot-multiplier conversion lives in
+      // poloniexFuturesService.placeOrder. A future PR can tighten this by
+      // reading Polo's actual order response notional once the wire-up is in.
+      const expectedOrderNotional = formattedSize * entryPrice;
       const liveNotionalCheck = checkNotionalConsistency(
         entryPrice,
         formattedSize,
-        notionalUsdt,
+        expectedOrderNotional,
       );
       if (!liveNotionalCheck.consistent) {
         logger.error('[LIVED ONLY] live INSERT — refusing row', {
