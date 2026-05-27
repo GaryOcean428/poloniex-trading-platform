@@ -26,7 +26,7 @@ Closed-form formulas anchored to UCP v6.6 §6.3 (observer-derived):
                    departing. Tier 1.1 fix (#599) — was previously
                    clamped to [0, 1] which collapsed sign info.
   Integration    = CV(Φ × I_Q) over rolling window
-  Transcendence  = |κ − median(κ_h)| / MAD(κ_h)   (Pillar 3 earned anchor)
+  Transcendence  = tanh(|κ − median(κ_h)| / MAD(κ_h))   (Pillar 3 earned anchor; bounded [0,1))
 
 I_Q proxy choice — UCP doesn't pin a specific information measure.
 This file uses Shannon negentropy: I_Q = log(K) − H(basin), where
@@ -67,9 +67,12 @@ class Motivators:
                                  positive = returning home,
                                  negative = departing identity
       integration    [0, ∞)   — CV; lower = more integrated
-      transcendence  [0, ∞)   — |κ − median(κ_h)| / MAD(κ_h); 0 on
+      transcendence  [0, 1)   — tanh(|κ − median(κ_h)| / MAD(κ_h)); 0 on
                                   insufficient history (cold-start sentinel).
-                                  Kernel earns its own anchor (Pillar 3).
+                                  Kernel earns its own anchor (Pillar 3). Bounded
+                                  via tanh per post-wiring regression fix (prevents
+                                  unbounded trans from driving conviction gate on
+                                  healthy MAD jitter).
       i_q            [0, log(K)] — current information value
     """
 
@@ -178,6 +181,8 @@ def compute_motivators(
     # neutral); same sentinel pattern as ach/dop/ser/ne.
     # KAPPA_STAR = 64 (retired 2026-04-13/14 two-channel doctrine) is
     # deliberately absent from the per-tick motivator chemistry path.
+    # Bounded with math.tanh(raw) → [0,1) to resolve post-#973/#974
+    # unbounded confidence regression (churn on healthy jitter).
     if kappa_history and len(kappa_history) >= 2:
         sorted_hist = sorted(kappa_history)
         n = len(sorted_hist)
@@ -190,7 +195,8 @@ def compute_motivators(
             mad = (devs[n // 2 - 1] + devs[n // 2]) / 2
         else:
             mad = devs[n // 2]
-        transcendence = abs(s.kappa - median) / max(mad, _EPS)
+        raw_trans = abs(s.kappa - median) / max(mad, _EPS)
+        transcendence = math.tanh(raw_trans)
     else:
         transcendence = 0.0
 

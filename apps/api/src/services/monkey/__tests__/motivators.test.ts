@@ -201,9 +201,9 @@ describe('Transcendence (Pillar 3 earned anchor)', () => {
   it('shared fixture parity value (exact numbers for py cross-test #940)', () => {
     // This fixture must produce identical numeric transcendence on both
     // TS and Python sides. Median=64.0, devs=[0.2,0,0.2] → sorted [0,0.2,0.2],
-    // n=3 odd → mad=0.2; |66-64|/0.2 = 10
+    // n=3 odd → mad=0.2; raw=|66-64|/0.2=10; bounded tanh(10) ~0.9999999958776927
     const hist = [63.8, 64.0, 64.2];
     const m = computeMotivators(makeState({ kappa: 66.0 }), { kappaHistory: hist });
-    expect(m.transcendence).toBeCloseTo(10, 12);
+    expect(m.transcendence).toBeCloseTo(Math.tanh(10), 12);
   });
 });

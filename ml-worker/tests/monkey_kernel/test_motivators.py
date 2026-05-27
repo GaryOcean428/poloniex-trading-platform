@@ -224,10 +224,11 @@ class TestTranscendence:
     def test_shared_fixture_cross_parity_940(self) -> None:
         # Exact fixture for TS <-> Python parity (#940 lesson).
         # Median=64.0; devs sorted [0, 0.2, 0.2]; n=3 odd → mad=0.2
-        # |66-64| / 0.2 = 10.0
+        # raw = |66-64| / 0.2 = 10.0; now bounded: tanh(10) → ~0.9999999958776927
+        import math
         hist = [63.8, 64.0, 64.2]
         m = compute_motivators(_make_state(kappa=66.0), kappa_history=hist)
-        assert m.transcendence == pytest.approx(10.0, abs=1e-12)
+        assert m.transcendence == pytest.approx(math.tanh(10.0), abs=1e-12)
 
 
 if __name__ == "__main__":
