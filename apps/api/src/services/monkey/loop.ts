@@ -6939,7 +6939,8 @@ export class MonkeyKernel extends EventEmitter {
                   RETURNING pnl`
               : `UPDATE autonomous_trades
                     SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                        exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
+                        exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW},
+                        gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW})
                   WHERE id = $4
                   RETURNING pnl`,
             explicitPnl !== null
