@@ -8797,6 +8797,15 @@ export class MonkeyKernel extends EventEmitter {
     // QIG PURITY MANDATE 17pt #5 + Embodiment_Waves + prior phantom
     // packets + master-orchestration + verification-before-completion
     // + never-stop-100-complete.
+    if (input.source === 'polo_authoritative_close') {
+      // Hard LIVED ONLY 5 assert for the canonical Polo surface.
+      // This path must only ever be fed the real Polo realized net.
+      // If this fires, something is wrong with the Polo history matching or write.
+      if (!Number.isFinite(grossPnlUsdt)) {
+        throw new Error('[LIVED ONLY 5] polo_authoritative_close received non-finite pnl');
+      }
+    }
+
     const netPnlUsdtForReward = computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16);
     const pnlFrac = marginUsdt > 0
       ? netPnlUsdtForReward / marginUsdt
