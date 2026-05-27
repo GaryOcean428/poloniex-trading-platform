@@ -140,7 +140,7 @@ def detect_hammer(candles: Sequence) -> PatternReading:
     if lower_ratio < hammer_lower or upper_ratio > hammer_upper:
         return PatternReading("hammer", 0.0, 0)
     # Strength: combination of long lower wick + small upper wick.
-    # Use lower_ratio (in [hammer_lower, 1.0]) mapped to [0, 1].
+    # Use lower_ratio (in [hammer_lower, 1.0]) mapped to [0, 1] (observer-derived).
     strength = float(np.clip((lower_ratio - hammer_lower) / (1.0 - hammer_lower), 0.0, 1.0))
     # Bias up if a prior downtrend preceded — examine prior 5 closes.
     if len(candles) >= 6:
