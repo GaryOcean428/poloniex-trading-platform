@@ -8629,6 +8629,7 @@ export class MonkeyKernel extends EventEmitter {
     symbol: string,
     markPrice: number,
     totals: Record<AgentLabel, { pnl: number; qty: number }>,
+    tradeId?: string,   // preparation for canonical Polo surface (authoritative reward)
   ): void {
     const symState = this.symbolStates.get(symbol);
     try {
