@@ -220,12 +220,17 @@ def detect_hanging_man(candles: Sequence) -> PatternReading:
     upper_ratio = c.upper_wick / c.range
     if body_ratio > 0.4 or lower_ratio < 0.55 or upper_ratio > 0.15:
         return PatternReading("hanging_man", 0.0, 0)
+    # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
+    hm_lower = float(_registry.get("candle.hanging_man_lower_ratio", default=0.55))
+    hm_upper = float(_registry.get("candle.hanging_man_upper_ratio", default=0.15))
+    if body_ratio > 0.4 or lower_ratio < hm_lower or upper_ratio > hm_upper:
+        return PatternReading("hanging_man", 0.0, 0)
     if len(candles) < 6:
         return PatternReading("hanging_man", 0.0, 0)
     prev = [_row(x).close for x in list(candles)[-6:-1]]
     if prev[-1] <= prev[0]:
         return PatternReading("hanging_man", 0.0, 0)
-    strength = float(np.clip((lower_ratio - 0.55) / 0.45, 0.0, 1.0))
+    strength = float(np.clip((lower_ratio - hm_lower) / (1.0 - hm_lower), 0.0, 1.0))
     return PatternReading("hanging_man", strength, -1)
 
 
