@@ -8474,6 +8474,18 @@ export class MonkeyKernel extends EventEmitter {
       // Centralized via checkNotionalConsistency in safePnlSql.ts so the
       // tolerance + diagnostic format are identical across all three INSERT
       // sites (live / paper / reconciler).
+      //
+      // Commit 5 (Cascade brief 2026-05-27) — kernel-direct unit invariant.
+      // `formattedSize` at this point is BASE ASSET (BTC, ETH, ...) and
+      // `entryPrice` is USDT per unit base-asset; their product is USDT
+      // notional, directly comparable to the kernel's intended notionalUsdt.
+      // The contracts/base-asset boundary lives in poloniexFuturesService —
+      // see the chunker doc at L7189 for the explicit rule:
+      // "formattedSize and symbolLotSize are in BASE ASSET units. The
+      //  poloniexFuturesService.placeOrder converts size/lotSize → contracts
+      //  internally before sending."
+      // Any future regression that stores contracts here trips this assertion
+      // immediately (100× / 1000× / lot-size-recip ratio is well above 0.1%).
       const liveNotionalCheck = checkNotionalConsistency(
         entryPrice,
         formattedSize,
