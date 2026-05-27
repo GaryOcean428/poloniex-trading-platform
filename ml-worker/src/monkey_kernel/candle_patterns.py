@@ -230,6 +230,11 @@ def detect_hanging_man(candles: Sequence) -> PatternReading:
     hm_upper = float(_registry.get("candle.hanging_man_upper_ratio", default=0.15))
     if body_ratio > 0.4 or lower_ratio < hm_lower or upper_ratio > hm_upper:
         return PatternReading("hanging_man", 0.0, 0)
+    # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
+    hm_lower = float(_registry.get("candle.hanging_man_lower_ratio", default=0.55))
+    hm_upper = float(_registry.get("candle.hanging_man_upper_ratio", default=0.15))
+    if body_ratio > 0.4 or lower_ratio < hm_lower or upper_ratio > hm_upper:
+        return PatternReading("hanging_man", 0.0, 0)
     if len(candles) < 6:
         return PatternReading("hanging_man", 0.0, 0)
     prev = [_row(x).close for x in list(candles)[-6:-1]]
