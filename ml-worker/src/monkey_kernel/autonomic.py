@@ -248,17 +248,21 @@ class AutonomicKernel:
         pnl_frac = (realized_pnl_usdt / margin_usdt) if margin_usdt > 0 else 0.0
 
         # Ocean reward dispense (issue #948 / Matrix tier-3 2026-05-26):
-        # positive chemistry fires ONLY at ROI ≥ 1%, scaled by Fibonacci
-        # coefficient (1, 2, 3, 5, 8, 13, 21, 34). "Reward the behavior
-        # you want. Not set knobs. This is how it learns." Below 1% is
-        # the noise floor — sub-1% wins teach nothing because they're
-        # statistically indistinguishable from fee-microstructure noise.
-        #
-        # Negative side unchanged — gaba on losses still feeds at the
-        # existing scale. Symmetric Fibonacci punishment is an open
-        # follow-on per Matrix's tier-3 walk; not assumed here.
-        from .ocean_reward import fibonacci_reward_coefficient, fibonacci_reward_tier
-        ocean_coeff = fibonacci_reward_coefficient(pnl_frac)
+        # Observer-derived: coefficient now comes from the kernel's own
+        # realized pnl_frac distribution (median + MAD scaling), exactly
+        # parallel to the kappa transcendence median/MAD fix.
+        # Removes the external hardcoded 1% floor that never fires at
+        # real trading scale (~0.04% MAD). Positive deviation from own
+        # history now produces meaningful positive chemistry.
+        # Cold-start / insufficient history → 0 (no reward signal).
+        from .ocean_reward import observer_fib_coefficient, fibonacci_reward_tier
+        # Maintain bounded rolling history on the autonomic instance
+        if not hasattr(self, "_pnl_frac_history"):
+            self._pnl_frac_history: list[float] = []
+        self._pnl_frac_history.append(pnl_frac)
+        if len(self._pnl_frac_history) > 200:
+            self._pnl_frac_history = self._pnl_frac_history[-200:]
+        ocean_coeff = observer_fib_coefficient(pnl_frac, self._pnl_frac_history)
 
         if pnl_frac > 0:
             dop = float(np.tanh(pnl_frac * 1.5) * 0.5 * ocean_coeff)

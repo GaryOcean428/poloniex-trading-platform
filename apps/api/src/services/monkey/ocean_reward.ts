@@ -86,6 +86,45 @@ export function fibonacciRewardTier(roiFrac: number): number {
 }
 
 /**
+ * Observer-derived ocean reward coefficient (P1, post flag-reversal).
+ *
+ * Replaces the external hardcoded 1% Fib floor (never fired at real
+ * kernel scale ~0.04% MAD). Uses own realized pnlFrac distribution
+ * (exact median + MAD mirror of the motivators.ts transcendence block).
+ * Positive deviation from own history now yields positive chemistry.
+ * Cold-start or non-positive deviation → 0. Structural (no knob).
+ */
+export function observerFibCoefficient(pnlFrac: number, history: number[]): number {
+  if (!history || history.length < 2) return 0;
+  if (!Number.isFinite(pnlFrac)) return 0;
+
+  const sorted = [...history].sort((a, b) => a - b);
+  const n = sorted.length;
+  const median = n % 2 === 0
+    ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
+    : sorted[Math.floor(n / 2)];
+
+  const devs = sorted.map(x => Math.abs(x - median)).sort((a, b) => a - b);
+  const mad = n % 2 === 0
+    ? (devs[n / 2 - 1] + devs[n / 2]) / 2
+    : devs[Math.floor(n / 2)];
+
+  if (mad < 1e-12) return 0;
+  const z = (pnlFrac - median) / mad;
+  if (z <= 0) return 0;
+
+  // Structural mapping (positive z-deviation → Fib tiers)
+  if (z < 0.5) return 1;
+  if (z < 1.0) return 2;
+  if (z < 1.5) return 3;
+  if (z < 2.0) return 5;
+  if (z < 3.0) return 8;
+  if (z < 4.0) return 13;
+  if (z < 5.0) return 21;
+  return 34;
+}
+
+/**
  * Ocean's trail/SL retracement tier as a function of the kernel's
  * coherence streak — Matrix tier-3 doctrine extension (2026-05-26).
  *

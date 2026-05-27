@@ -257,6 +257,11 @@ class SymbolState:
     # present for autonomic/sensations (dop/ser). Populated every tick
     # after the kappa update; capped with other histories.
     kappa_history: list[float] = field(default_factory=list)
+    # Rolling realized pnl_frac on closes — observer-derived input for
+    # ocean reward shaping (replaces the external hardcoded 1% Fib floor).
+    # Exactly parallel to kappa_history median/MAD pattern. Cold-start 0
+    # until enough samples. Bounded + persisted like other histories.
+    pnl_frac_history: list[float] = field(default_factory=list)
     # Pre-#10 scalar bookkeeping — preserved as the "default lane"
     # (swing) view so existing tests + back-compat callers keep working.
     dca_add_count: int = 0

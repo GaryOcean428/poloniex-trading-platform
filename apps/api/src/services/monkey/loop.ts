@@ -115,6 +115,7 @@ import {
   fibonacciRewardTier,
   oceanTrailRetracement,
   oceanTrailTierIndex,
+  observerFibCoefficient,
 } from './ocean_reward.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
@@ -8513,7 +8514,13 @@ export class MonkeyKernel extends EventEmitter {
     // Negative side unchanged — gaba on losses still feeds at the
     // existing scale. Symmetric Fibonacci punishment is an open
     // follow-on per Matrix's tier-3 walk; not assumed here.
-    const oceanCoeff = fibonacciRewardCoefficient(pnlFrac);
+    // Observer-derived ocean reward (P1 post-reversal): use own pnlFracHistory
+    // (median + MAD) instead of hardcoded 1% external floor. History
+    // maintained on state (bounded). Cold-start 0. Matches Py parity.
+    if (!state.pnlFracHistory) (state as any).pnlFracHistory = [] as number[];
+    (state as any).pnlFracHistory.push(pnlFrac);
+    if ((state as any).pnlFracHistory.length > 200) (state as any).pnlFracHistory.length = 200;
+    const oceanCoeff = observerFibCoefficient(pnlFrac, (state as any).pnlFracHistory);
     const dop = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.5 * oceanCoeff
       : -Math.tanh(-pnlFracNormalized) * 0.1;
