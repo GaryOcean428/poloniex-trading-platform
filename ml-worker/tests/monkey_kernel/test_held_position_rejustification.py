@@ -381,15 +381,31 @@ class TestPhiCheckFires:
 
 class TestConvictionCheckFires:
     def test_conviction_failed_exits_with_correct_reason(self) -> None:
+        """Commit 4 (Cascade brief 2026-05-27): conviction_failed now
+        requires an observer-derived consecutive-tick streak (floor=2).
+        First tick of `confidence < anxiety + confusion` does NOT fire;
+        the second tick (still satisfying the condition) does.
+        """
         state = _state_with_anchor(
             regime_at_open=MonkeyMode.INVESTIGATION.value,
             phi_at_open=0.27,
         )
         # confidence (0.4) < anxiety (0.3) + confusion (0.2) = 0.5
         emo = _Emotions(confidence=0.4, anxiety=0.3, confusion=0.2)
+
+        # Tick 1: condition true, streak=1, does NOT fire (floor=2).
+        action1, _, _, _, _ = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.INVESTIGATION.value,
+            emotions=emo,
+        )
+        assert action1 != "scalp_exit"
+
+        # Tick 2: condition still true, streak=2 ≥ floor → fires.
         action, reason, _, _, derivation = _call_decide(
             state=state,
-            phi=0.25,  # above floor
+            phi=0.25,
             mode_value=MonkeyMode.INVESTIGATION.value,
             emotions=emo,
         )

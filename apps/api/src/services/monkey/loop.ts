@@ -384,6 +384,34 @@ export function laneMultiplierFromTickPeriod(
   return Math.max(2, Math.round(periodMs / tickPeriodMs));
 }
 
+/** Commit 4 (Cascade brief 2026-05-27) — observer-derived conviction
+ *  streak requirement. Mirrors the Py side
+ *  `_observer_conviction_streak_required` exactly. Floor 2, cap 12.
+ *  Inputs: rolling history of (anxiety + confusion - confidence) on
+ *  this lane over the last 20 ticks. High sign-flip rate → require
+ *  more ticks; low flip rate → fire at floor. */
+export const CONVICTION_STREAK_FLOOR = 2;
+export const CONVICTION_HESITATION_WINDOW = 20;
+export const CONVICTION_STREAK_CAP = 12;
+
+export function observerConvictionStreakRequired(
+  hesitationHistory: number[],
+): number {
+  if (hesitationHistory.length < CONVICTION_STREAK_FLOOR) {
+    return CONVICTION_STREAK_FLOOR;
+  }
+  let flips = 0;
+  for (let i = 1; i < hesitationHistory.length; i++) {
+    const prev = hesitationHistory[i - 1]!;
+    const curr = hesitationHistory[i]!;
+    if ((prev > 0 && curr < 0) || (prev < 0 && curr > 0)) flips++;
+  }
+  const flipRate = flips / Math.max(1, hesitationHistory.length - 1);
+  const scaled = CONVICTION_STREAK_FLOOR
+    + Math.round(flipRate * (CONVICTION_STREAK_CAP - CONVICTION_STREAK_FLOOR) * 2);
+  return Math.max(CONVICTION_STREAK_FLOOR, Math.min(CONVICTION_STREAK_CAP, scaled));
+}
+
 /**
  * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
  * entry-order placement only. Exit orders (scalp_exit, auto_flatten,
@@ -624,6 +652,11 @@ interface SymbolState {
    *  2026-05-17 CSV analysis showed single-tick conviction noise was
    *  driving 60% of losses in chop-zone scalping. */
   convictionFailedStreakByLane: Record<string, number>;
+  /** Commit 4 (Cascade brief 2026-05-27) — per-lane hesitation history
+   *  (anxiety + confusion - confidence) over the last 20 ticks. Drives
+   *  the observer-derived conviction streak requirement: high sign-flip
+   *  rate → require more ticks; monotonic collapse → fire at floor. */
+  hesitationHistoryByLane: Record<string, number[]>;
   /** CALIB-3 (2026-05-17): consecutive-tick counter for "current tick's
    *  preferred side disagrees with held side" per-lane. Drives the
    *  directional_disagreement exit. Increments on disagreement, resets
@@ -1819,6 +1852,7 @@ export class MonkeyKernel extends EventEmitter {
       basinAtOpenByLane: {},
       regimeChangeStreakByLane: {},
       convictionFailedStreakByLane: {},
+      hesitationHistoryByLane: {},
       directionalDisagreementStreakByLane: {},
       heldSideByLane: {},
       entryTimeMsByLane: {},
@@ -3348,8 +3382,19 @@ export class MonkeyKernel extends EventEmitter {
         // the streak gate: the same lane fires after the same wall-
         // clock duration regardless of which tick cadence is active.
         const laneMultiplier = laneMultiplierFromTickPeriod(heldLane, state.currentTickMs);
-        const convictionFailedTicksRequired = baseStabilityTicks * laneMultiplier;
         const directionalDisagreementTicksRequired = baseStabilityTicks * laneMultiplier;
+
+        // Commit 4 (2026-05-27): conviction streak observer-derived from
+        // per-lane hesitation history (anxiety+confusion - confidence
+        // sign-flip rate). Maintain the rolling ring at the gate site
+        // so it stays in sync with the streak counter.
+        const hesitation = emotions.anxiety + emotions.confusion - emotions.confidence;
+        const hesitationHistory = (state.hesitationHistoryByLane[heldLane] ??= []);
+        hesitationHistory.push(hesitation);
+        if (hesitationHistory.length > CONVICTION_HESITATION_WINDOW) {
+          hesitationHistory.shift();
+        }
+        const convictionFailedTicksRequired = observerConvictionStreakRequired(hesitationHistory);
         // Commit 3 (2026-05-27): detect adopted-position origin from the
         // open row's reason. Reconciler-adopted rows carry `|adopted|` in
         // their reason after the ownership rewrite; kernel-entered rows
