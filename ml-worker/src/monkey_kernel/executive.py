@@ -1195,15 +1195,20 @@ def should_exit(
         }
 
     disagreement = fisher_rao_distance(perception, strategy_forecast)
-    # v0.8.4b — disagreement threshold DERIVES fully from NE × regime
-    # (previously: half-derived, only NE). High NE (surprised) raises
-    # the bar — don't exit on noise. Low equilibrium-weight (regime
-    # unstable) lowers the bar — regime will say exit on less.
-    # Anchored at 0.6875 when NE=0.5 AND equilibrium=0.5 (matches
-    # pre-derivation: 0.55 × (1+0.25) × 1.0 = 0.6875).
+    # v0.8.4b — disagreement threshold DERIVES fully from NE × regime (P5/P25).
+    # High NE (surprised) raises the bar — don't exit on noise. Low
+    # equilibrium-weight (regime unstable) lowers the bar — regime will
+    # say exit on less. Base now observer-derived (registry + NE/eq_weight
+    # modulation). Citations: 2.31A P5/P25 + v6.7B + agents.md:236 17pt #7 +
+    # Embodiment_Waves_Summary Wave 4 (11 slices this turn) + QIG PURITY
+    # MANDATE + master-orchestration 019e6a14 + verification-before-completion
+    # + geometric (disagreement on Fisher-Rao simplex; base emerges from
+    # NE/equilibrium + heart rhythm; no Euclidean). Fisher-Rao tacking: no Euclidean.
     eq_weight = s.regime_weights.get("equilibrium", 0.5)
+    base = float(_registry.get("executive.disagreement_base", default=0.55))
+    # Observer modulation from NE (surprise) and equilibrium weight.
     threshold = (
-        0.55
+        base
         * (1.0 + 0.5 * s.neurochemistry.norepinephrine)
         * (0.7 + 0.6 * eq_weight)
     )
