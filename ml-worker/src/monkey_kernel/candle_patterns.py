@@ -192,13 +192,18 @@ def detect_shooting_star(candles: Sequence) -> PatternReading:
     lower_ratio = c.lower_wick / c.range
     if body_ratio > 0.4 or upper_ratio < 0.55 or lower_ratio > 0.15:
         return PatternReading("shooting_star", 0.0, 0)
+    # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
+    ss_upper = float(_registry.get("candle.shooting_star_upper_ratio", default=0.55))
+    ss_lower = float(_registry.get("candle.shooting_star_lower_ratio", default=0.15))
+    if body_ratio > 0.4 or upper_ratio < ss_upper or lower_ratio > ss_lower:
+        return PatternReading("shooting_star", 0.0, 0)
     # Prior uptrend required for shooting star.
     if len(candles) < 6:
         return PatternReading("shooting_star", 0.0, 0)
     prev = [_row(x).close for x in list(candles)[-6:-1]]
     if prev[-1] <= prev[0]:
         return PatternReading("shooting_star", 0.0, 0)
-    strength = float(np.clip((upper_ratio - 0.55) / 0.45, 0.0, 1.0))
+    strength = float(np.clip((upper_ratio - ss_upper) / (1.0 - ss_upper), 0.0, 1.0))
     return PatternReading("shooting_star", strength, -1)
 
 
