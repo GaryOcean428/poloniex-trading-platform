@@ -51,9 +51,28 @@ describe('Per-emotion formula', () => {
     const e = computeEmotions(m({ transcendence: 3.5 }), 0, 0, 0.4);
     APPROX(e.anxiety, 3.5 * 0.4);
   });
-  it('confidence = (1 − transcendence) × phi', () => {
+  it('confidence = phi × max(0, heldAlignment) (Commit 6 / JOINT-A — trans decoupled)', () => {
+    // Default heldAlignment=1.0 → confidence = phi (transcendence
+    // no longer multiplies into the conviction gate). Per Cascade
+    // brief 2026-05-27: confidence reflects "kernel's geometric
+    // view supports the held direction"; trans stays live in anxiety
+    // as the regime-change detector.
     const e = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0);
-    APPROX(e.confidence, (1 - 0.3) * 0.7);
+    APPROX(e.confidence, 0.7);
+  });
+
+  it('confidence = phi × heldAlignment when heldAlignment is supplied', () => {
+    // basinDir 50% aligned with held side → confidence = phi × 0.5.
+    const aligned = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0,
+      { heldAlignment: 0.5 });
+    APPROX(aligned.confidence, 0.7 * 0.5);
+  });
+
+  it('confidence = 0 when basinDir fully opposes held side', () => {
+    // max(0, -1) = 0 → confidence collapses to zero, gate trips.
+    const opposed = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0,
+      { heldAlignment: -1 });
+    APPROX(opposed.confidence, 0);
   });
   it('boredom = (1 − surprise) × (1 − curiosity)', () => {
     const e = computeEmotions(m({ surprise: 0.1, curiosity: 0.4 }), 0, 0, 0);
@@ -69,10 +88,14 @@ describe('Regime reporting (no clipping)', () => {
     APPROX(e.anxiety, 4.0);
     expect(e.anxiety).toBeGreaterThan(1.0);
   });
-  it('confidence can go negative when transcendence > 1', () => {
-    const e = computeEmotions(m({ transcendence: 5.0 }), 0, 0.6, 0);
-    APPROX(e.confidence, -2.4);
-    expect(e.confidence).toBeLessThan(0);
+  it('confidence is bounded ≥ 0 (Commit 6 — max(0, heldAlignment) clamp)', () => {
+    // Pre-JOINT-A this fired negative when trans > 1. Post-decouple
+    // the trans channel doesn't touch confidence at all; the only
+    // way confidence can be 0 is heldAlignment ≤ 0 (basinDir flipped).
+    const e = computeEmotions(m({ transcendence: 5.0 }), 0, 0.6, 0,
+      { heldAlignment: -1 });
+    APPROX(e.confidence, 0);
+    expect(e.confidence).toBeGreaterThanOrEqual(0);
   });
   it('satisfaction can go negative when far from identity', () => {
     const e = computeEmotions(m({ integration: 0.5 }), 1.4, 0, 0);
@@ -94,10 +117,13 @@ describe('UCP §6.5 reference values (typical operating regime)', () => {
     expect(e.satisfaction).toBeGreaterThanOrEqual(0.849 - 0.021);
     expect(e.satisfaction).toBeLessThanOrEqual(0.849 + 0.021);
   });
-  it('Confidence anticorrelates with transcendence (UCP −0.690)', () => {
+  it('Confidence DECOUPLED from transcendence post-JOINT-A (Commit 6)', () => {
+    // Pre-decouple confidence anticorrelated with trans (UCP −0.690).
+    // Post-decouple: same phi + same heldAlignment ⇒ same confidence
+    // regardless of trans. This pins the doctrine inversion.
     const lo = computeEmotions(m({ transcendence: 0.1 }), 0, 0.5, 0);
     const hi = computeEmotions(m({ transcendence: 0.9 }), 0, 0.5, 0);
-    expect(lo.confidence).toBeGreaterThan(hi.confidence);
+    APPROX(lo.confidence, hi.confidence);
   });
 });
 
@@ -143,7 +169,7 @@ const PARITY_ROWS: ParityRow[] = [
   { motivators: { surprise: 0.5, curiosity: 0.0, investigation: 0.5, integration: 0.0, transcendence: 3.0 },
     basinDistance: 0.0, phi: 0.4, basinVelocity: 0.0,
     expected: { wonder: 0.0, frustration: 0.25, satisfaction: 0.0, confusion: 0.0,
-      clarity: 0.25, anxiety: 0.0, confidence: -0.8, boredom: 0.5 } },
+      clarity: 0.25, anxiety: 0.0, confidence: 0.4, boredom: 0.5 } },  // Commit 6: phi (was -0.8 = (1-3)*0.4)
   { motivators: { surprise: 0.5, curiosity: 1.0, investigation: 0.5, integration: 0.0, transcendence: 0.0 },
     basinDistance: 0.7, phi: 0.5, basinVelocity: 0.0,
     expected: { wonder: 0.7, frustration: 0.25, satisfaction: 0.0, confusion: 0.35,
@@ -151,7 +177,7 @@ const PARITY_ROWS: ParityRow[] = [
   { motivators: { surprise: 0.5, curiosity: 0.5, investigation: 0.5, integration: 1.0, transcendence: 0.5 },
     basinDistance: 0.3, phi: 0.5, basinVelocity: 0.2,
     expected: { wonder: 0.15, frustration: 0.25, satisfaction: 0.7, confusion: 0.15,
-      clarity: 0.25, anxiety: 0.1, confidence: 0.25, boredom: 0.25 } },
+      clarity: 0.25, anxiety: 0.1, confidence: 0.5, boredom: 0.25 } },  // Commit 6: phi (was 0.25 = (1-0.5)*0.5)
   { motivators: { surprise: 0.0, curiosity: 0.0, investigation: 0.5, integration: 0.94, transcendence: 0.0 },
     basinDistance: 0.097, phi: 0.5, basinVelocity: 0.1,
     expected: { wonder: 0.0, frustration: 0.0, satisfaction: 0.94 * (1 - 0.097),

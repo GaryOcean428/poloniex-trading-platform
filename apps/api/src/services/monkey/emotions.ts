@@ -78,6 +78,14 @@ export interface ComputeEmotionsArgs {
    *  Per P14: BOUNDARY → STATE input crossing into anxiety at perception time.
    */
   fundingDrag?: number;
+  /** Commit 6 / JOINT-A (Cascade brief 2026-05-27). Projection of the
+   *  basin's current directional read onto the held-side sign (long=+1,
+   *  short=−1). Range [-1, +1]. The clamped-positive part [0, 1] scales
+   *  `confidence = phi × max(0, heldAlignment)`, replacing the legacy
+   *  `(1 − transcendence) × phi` formula that collapsed confidence on
+   *  healthy κ MAD jitter in stable regimes. Default 1.0 preserves
+   *  "no position held / fully aligned" semantics. */
+  heldAlignment?: number;
 }
 
 /** Compute funding drag — real carry cost accumulated against the held
@@ -144,7 +152,17 @@ export function computeEmotions(
   }
   const flow = curiosityOptimal * motivators.investigation;
 
-  let confidence = (1 - motivators.transcendence) * stability;
+  // Commit 6 / JOINT-A (Cascade brief 2026-05-27) — confidence decoupled
+  // from κ-transcendence. Previously `confidence = (1 − trans) × phi`
+  // multiplied regime-change-detection (trans saturates on κ MAD jitter
+  // in stable regimes) into position-conviction, collapsing confidence
+  // on noise. The canonical reframe: confidence reflects "kernel's
+  // geometric view still supports the held direction, scaled by overall
+  // coherence." Anxiety still reads the trans-driven regime-change
+  // signal so the "something is changing" channel stays live.
+  const heldAlignment = args.heldAlignment ?? 1.0;
+  const heldAlignmentPositive = Math.max(0, heldAlignment);
+  let confidence = stability * heldAlignmentPositive;
   let anxiety = motivators.transcendence * instability;
 
   // Funding drag — dimensionless cost-on-margin ratio.
