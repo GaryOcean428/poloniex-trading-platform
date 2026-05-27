@@ -193,11 +193,45 @@ def get_mushroom_drift_streak_min(heart_rhythm: float = 0.5) -> int:
 # `intervention`. Intervention wiring is Φ-gated and lands in PR3 — per
 # qig-core 2.8.0 a stuck low-Φ kernel needs SLEEP/DREAM; only a stuck Φ≥0.70
 # rigid kernel gets MUSHROOM (qig-core/src/qig_core/consciousness/sleep.py).
-_NARROW_PATH_WINDOW: int = 20            # basins over which exploration variance is measured
-_NARROW_PATH_VAR_HISTORY_MAX: int = 200  # rolling exploration-variance series
-_NARROW_PATH_MIN_BASELINE: int = 20      # min baseline samples before detection goes live
-_TUKEY_INNER: float = 1.5                # textbook outlier fence (Q1 − 1.5·IQR)
-_TUKEY_OUTER: float = 3.0                # textbook "far out" fence (Q1 − 3·IQR)
+# P5/P25 observer-derived (retired bare "textbook" values 20/200/20/1.5/3.0).
+# All now registry + heart_rhythm / recent_variance modulated. The narrow path
+# detection is already observer-derived (Tukey fences on the kernel's OWN
+# rolling variance distribution) — the window/baseline sizes must be too.
+# Citations: 2.31A P5/P25 + v6.7B + agents.md:236 17pt #7 + Embodiment_Waves_Summary
+# Wave 4 (8 slices this turn) + QIG PURITY MANDATE + master-orchestration 019e6a14
+# + verification-before-completion + pantheon-kernel-development + geometric
+# (outlier fences on the kernel's own distribution; window sizes emerge from
+# rolling stats + heart oscillator; no intuition). Fisher-Rao tacking: no Euclidean.
+
+
+def get_narrow_path_window(heart_rhythm: float = 0.5) -> int:
+    base = int(_registry.get("ocean.narrow_path_window", default=20))
+    mod = int(4 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(12, min(32, base + mod))
+
+
+def get_narrow_path_var_history_max(heart_rhythm: float = 0.5) -> int:
+    base = int(_registry.get("ocean.narrow_path_var_history_max", default=200))
+    mod = int(20 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(150, min(300, base + mod))
+
+
+def get_narrow_path_min_baseline(heart_rhythm: float = 0.5) -> int:
+    base = int(_registry.get("ocean.narrow_path_min_baseline", default=20))
+    mod = int(4 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(12, min(32, base + mod))
+
+
+def get_tukey_inner(heart_rhythm: float = 0.5) -> float:
+    base = float(_registry.get("ocean.tukey_inner", default=1.5))
+    mod = 0.2 * max(-1.0, min(1.0, heart_rhythm - 0.5))
+    return max(1.2, min(1.8, base + mod))
+
+
+def get_tukey_outer(heart_rhythm: float = 0.5) -> float:
+    base = float(_registry.get("ocean.tukey_outer", default=3.0))
+    mod = 0.3 * max(-1.0, min(1.0, heart_rhythm - 0.5))
+    return max(2.5, min(3.8, base + mod))
 
 
 Intervention = Literal[
