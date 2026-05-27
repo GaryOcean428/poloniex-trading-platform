@@ -95,7 +95,7 @@ export function fibonacciRewardTier(roiFrac: number): number {
  * Cold-start or non-positive deviation → 0. Structural (no knob).
  */
 export function observerFibCoefficient(pnlFrac: number, history: number[]): number {
-  if (!history || history.length < 2) return 0;
+  if (!history || history.length < 2) return pnlFrac > 0 ? 1 : 0; // Gentle positive signal while observer history builds (P1 ramp-up)
   if (!Number.isFinite(pnlFrac)) return 0;
 
   const sorted = [...history].sort((a, b) => a - b);

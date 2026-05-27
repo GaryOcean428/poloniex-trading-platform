@@ -128,7 +128,7 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
     import math
     _EPS = 1e-12
     if not history or len(history) < 2:
-        return 0
+        return 1 if pnl_frac > 0 else 0  # Gentle positive signal while observer history builds (P1 ramp-up)
     if not isinstance(pnl_frac, (int, float)) or not math.isfinite(pnl_frac):
         return 0
 
