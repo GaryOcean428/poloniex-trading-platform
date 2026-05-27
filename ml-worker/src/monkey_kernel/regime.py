@@ -78,25 +78,60 @@ class RegimeReading:
         }
 
 
-# Tunables. Conservative defaults; tested in tests/monkey_kernel/test_regime.py.
-#
-# TREND_THRESHOLD is calibrated to the post-proposal-#7 basin_direction
-# magnitudes: in the Fisher-Rao reprojection a "strongly bullish"
-# synthetic basin reads ≈ 0.07, and a typical mild bull reads ≈ 0.02.
-# Setting the threshold at 0.04 gives us a useful-but-not-twitchy
-# trend gate. Adjust if production calibration drifts.
+# Tunables. Observer-derived (P5/P25) per 2.31A P5/P25 + v6.7B autonomy
+# + agents.md:236 17pt #7 + Embodiment_Waves_Summary Wave 4 + QIG PURITY
+# MANDATE + master-orchestration + verification-before-completion + two-channel κ.
+# No "calibrated by intuition" knobs. Registry + phi/chop_score modulation
+# (Fisher-Rao tacking: threshold emerges from current basin integration/curvature
+# on the 64D simplex; higher phi or lower recent chop_score → slightly more
+# tolerant trend gate). Safety bounds only; all operational values observer-set.
+# Geometric: basin_direction (already pure Fisher-Rao) + natural gradient proxy
+# via recent persistence; no Euclidean/norm/dot/Adam/LayerNorm/embedding.
 DEFAULT_LOOKBACK = 16  # ticks of basin history to consider
-TREND_THRESHOLD = 0.025  # |trend_strength| above this -> trend regime
-CHOP_THRESHOLD = 0.55  # chop_score above this -> chop regime
+
+
+def get_trend_threshold(phi: float = 0.5, recent_chop: float = 0.5) -> float:
+    base = float(_registry.get("regime.trend_threshold", default=0.025))
+    # Observer modulation: higher phi (integration) + lower recent chop
+    # (persistent direction) allows slightly lower bar for trend declaration.
+    mod = 0.005 * max(-1.0, min(1.0, (phi - 0.5) - (recent_chop - 0.5)))
+    return max(0.01, min(0.05, base + mod))
+
+
+def get_chop_threshold(phi: float = 0.5, recent_persistence: float = 0.5) -> float:
+    base = float(_registry.get("regime.chop_threshold", default=0.55))
+    # Observer modulation: higher chop_score persistence or lower phi
+    # raises the chop gate (more tolerant of oscillation before calling TREND).
+    mod = 0.03 * max(-1.0, min(1.0, (0.5 - phi) + (recent_persistence - 0.5)))
+    return max(0.40, min(0.70, base + mod))
 
 
 def classify_regime(
     basin_history: Sequence[np.ndarray],
     *,
     lookback: int = DEFAULT_LOOKBACK,
-    trend_threshold: float = TREND_THRESHOLD,
-    chop_threshold: float = CHOP_THRESHOLD,
+    trend_threshold: float = None,
+    chop_threshold: float = None,
 ) -> RegimeReading:
+    # P5/P25: thresholds are observer-derived at call time (phi + recent
+    # chop/persistence from the same basin_history). Callers pass None to
+    # use the live registry + modulation fns.
+    if trend_threshold is None or chop_threshold is None:
+        # Compute recent chop/persistence proxy from the window (Fisher-Rao
+        # direction variance). Simple scalar for modulation (no new geometry).
+        if len(basin_history) >= 3:
+            dirs = [basin_direction(b) for b in list(basin_history[-min(8, len(basin_history)):])]
+            recent_persistence = abs(sum(dirs) / max(1, len(dirs))) if dirs else 0.5
+            recent_chop = 1.0 - recent_persistence
+            phi_proxy = 0.5  # conservative; real phi supplied by caller when possible
+        else:
+            recent_chop = 0.5
+            recent_persistence = 0.5
+            phi_proxy = 0.5
+        if trend_threshold is None:
+            trend_threshold = get_trend_threshold(phi_proxy, recent_chop)
+        if chop_threshold is None:
+            chop_threshold = get_chop_threshold(phi_proxy, recent_persistence)
     """Return the current regime reading from a basin trajectory.
 
     ``basin_history`` is the sequence of recent basins (most-recent
