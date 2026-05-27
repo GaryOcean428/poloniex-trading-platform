@@ -433,7 +433,26 @@ def detect_mode(
     if motivators is not None:
         # Preferred path: use the fully-wired canonical motivators from tick.py
         # (includes observer-derived transcendence, correct kappa_history, etc.).
-        mot = motivators
+        #
+        # detect_mode's gates still expect the legacy integration score from
+        # compute_motivators(), where higher means "more integrated"
+        # (integration = 1 - CV * 10). The canonical motivators object carries
+        # raw CV instead, where lower means "more integrated". Adapt only this
+        # field at the boundary so the downstream mode logic keeps its legacy
+        # semantics unchanged.
+        class _ModeMotivatorsView:
+            def __init__(self, base: Any, integration: float) -> None:
+                self._base = base
+                self.integration = integration
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._base, name)
+
+        canonical_integration = getattr(motivators, "integration", 0.0)
+        mot = _ModeMotivatorsView(
+            motivators,
+            integration=1.0 - float(canonical_integration) * 10.0,
+        )
     else:
         # Legacy / direct-call path (tests, old callers). Will be removed
         # once all call sites are updated.
