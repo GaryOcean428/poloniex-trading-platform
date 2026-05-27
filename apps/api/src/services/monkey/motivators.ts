@@ -19,7 +19,7 @@
  *   Investigation  = − d(basin) / dt as Fisher-Rao distance-to-identity
  *                    shrink-rate (Tier 1.1 fix #599 — was clamped)
  *   Integration    = CV(Φ × I_Q) over rolling window
- *   Transcendence  = |κ − median(κ_h)| / MAD(κ_h)   (Pillar 3 earned anchor)
+ *   Transcendence  = tanh(|κ − median(κ_h)| / MAD(κ_h))   (Pillar 3 earned anchor; bounded [0,1))
  *
  * I_Q proxy = Shannon negentropy: log(K) − H(basin). Other valid
  * choices live in the docstring of motivators.py — keep this file in
@@ -53,8 +53,10 @@ export interface Motivators {
   investigation: number;
   /** [0, ∞) — CV; lower = more integrated. */
   integration: number;
-  /** [0, ∞) — |κ − median(κHistory)| / MAD(κHistory); 0 on insufficient
-   *  history (cold-start sentinel). Kernel earns its own anchor (Pillar 3). */
+  /** [0, 1) — tanh(|κ − median(κHistory)| / MAD(κHistory)); 0 on insufficient
+   *  history (cold-start sentinel). Kernel earns its own anchor (Pillar 3).
+   *  Bounded via Math.tanh(raw) per post-wiring regression fix (prevents
+   *  unbounded trans driving conviction gate on healthy MAD jitter). */
   transcendence: number;
   /** [0, log(K)] — Shannon negentropy of the current basin. */
   iQ: number;
@@ -145,6 +147,8 @@ export function computeMotivators(
   // sentinel pattern as ach/dop/ser/ne.
   // KAPPA_STAR = 64 (retired 2026-04-13/14 two-channel doctrine) is
   // deliberately absent from the per-tick motivator chemistry path.
+  // Bounded with Math.tanh(raw) → [0,1) to resolve post-#973/#974
+  // unbounded confidence regression (churn on healthy jitter).
   const kHist = kappaHistory;
   let transcendence = 0;
   if (kHist && kHist.length >= HISTORY_MIN_SAMPLES) {
@@ -156,7 +160,8 @@ export function computeMotivators(
     const mad = devs.length % 2 === 0
       ? (devs[devs.length / 2 - 1] + devs[devs.length / 2]) / 2
       : devs[Math.floor(devs.length / 2)];
-    transcendence = Math.abs(s.kappa - median) / Math.max(mad, EPS);
+    const rawTrans = Math.abs(s.kappa - median) / Math.max(mad, EPS);
+    transcendence = Math.tanh(rawTrans);
   }
 
   return {

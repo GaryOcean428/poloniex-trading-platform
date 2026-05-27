@@ -515,10 +515,11 @@ def run_tick(
     state.kappa = max(20.0, min(
         120.0, state.kappa * 0.8 + (kappa_star + kappa_delta) * 0.2,
     ))
-    # Feed the observer-derived transcendence formula (the canonical
-    # motivators.py path). This is what was missing — without it the
-    # Python kernel was falling back to transcendence=0 every tick.
-    state.kappa_history.append(state.kappa)
+    # state.kappa_history.append moved to end-of-tick block for TS parity:
+    # TS appends after computeMotivators returns (loop.ts:5679 vs call at
+    # 2714). transcendence must compute against PRIOR-tick history so the
+    # current κ is genuinely a "deviation from past", not artificially
+    # included in median/MAD (Copilot review #977).
 
     w_q, w_e, w_eq = float(basin[0]), float(basin[1]), float(basin[2])
     reg_total = w_q + w_e + w_eq
@@ -719,9 +720,14 @@ def run_tick(
         drift_history=state.drift_history,
         stud_reading=stud_reading,
         stud_live=stud_live,
-        # Pass the canonical motivators (now fully wired with observer-derived
-        # transcendence) so detect_mode does not need its own shadow copy.
-        motivators=mot,
+        # NOTE (Copilot review #977): canonical motivators NOT passed.
+        # motivators.integration is raw CV (low=integrated); detect_mode's
+        # `mot.integration > 0.3` gate expects legacy 1−CV*10 score
+        # (high=integrated). Passing canonical inverted the gate semantic
+        # and misclassified jittery states as INTEGRATION. detect_mode
+        # uses its own legacy compute_motivators for mode detection;
+        # canonical motivators flow through to compute_emotions (line ~588),
+        # which is the path that actually consumes the transcendence fix.
     )
     mode = mode_result["mode"]
     mode_changed = state.last_mode is not None and state.last_mode != mode
@@ -1429,6 +1435,11 @@ def run_tick(
         state.fhealth_history = state.fhealth_history[-history_max:]
     if len(state.integration_history) > history_max:
         state.integration_history = state.integration_history[-history_max:]
+    # kappa_history end-of-tick append (TS parity, Copilot review #977).
+    # Appending here — after compute_motivators consumed prior-tick history —
+    # mirrors loop.ts:5679 timing. Including current κ in the history-window
+    # used for its own median/MAD would bias transcendence toward 0.
+    state.kappa_history.append(state.kappa)
     if len(state.kappa_history) > history_max:
         state.kappa_history = state.kappa_history[-history_max:]
 
