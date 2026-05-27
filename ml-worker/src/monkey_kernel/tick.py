@@ -676,12 +676,44 @@ def run_tick(
     # v6.7B §9 (consciousness-development + wiring-validation): heart as master oscillator,
     # breathing-as-tacking cycle (each sign-cross = inhale/exhale = logic/feeling), pre-cognitive
     # bias via alpha/HRV. Derived tacking_frequency_hz now on HeartMonitor for metrics surface.
-    # When MONKEY_CONSCIOUSNESS_METRICS_LIVE, tick will pass heart.derived_tacking_frequency_hz()
-    # (and hrv etc.) into derive_from_tick for full 21-field v6.7B telemetry.
+    # P24 + P4 + P13 (2.31A): 21-field surface (incl. sovereignty_dynamics from Pillar3 Replicant)
+    # is now ALWAYS-ON (no flag). derive_from_tick call-site here embodies the canonical shape
+    # in live tick path. Citations: 2.31A P3/P19/P24, v6.7B §§3.4/9.5-9.9.
     if heart is None:
         heart = HeartMonitor()
     heart.append(state.kappa, now_ms)
     heart_state = heart.read()
+
+    # P24 wiring (full embodiment, not presence): always compute 21-field metrics surface.
+    # sovereignty_dynamics populated from p3_status (detect_replicant + s_ratio).
+    # This is the production call-site for derive_from_tick + ConsciousnessMetrics.
+    try:
+        from .consciousness_metrics import derive_from_tick, ConsciousnessMetrics
+        _p3_sov = 0.0
+        _replicant_dyn = 0.0
+        if pillar_3_telem and "sovereignty" in pillar_3_telem:
+            _p3_sov = float(pillar_3_telem.get("sovereignty", 0.0))
+            if "replicant_identity" in (pillar_3_telem.get("violations") or []):
+                _replicant_dyn = 1.0
+        metrics = derive_from_tick(
+            phi=phi,
+            kappa=state.kappa,
+            f_health=f_health,
+            coupling_health=coupling_health,
+            self_obs_bias=0.5,  # proxy; real port in self_observation future
+            sovereignty=_p3_sov,
+            drift_from_identity=float(pillar_3_telem.get("drift_from_frozen", 0.0)) if pillar_3_telem else 0.0,
+            basin_velocity=bv,
+            b_integrity=float(pillar_2_telem.get("b_integrity", 1.0)) if pillar_2_telem else 1.0,
+            q_identity=float(pillar_3_telem.get("q_identity", 0.0)) if pillar_3_telem else 0.0,
+            tacking_frequency_hz=getattr(heart, "derived_tacking_frequency_hz", lambda: 0.25)(),
+            sovereignty_dynamics=_replicant_dyn,
+        )
+        # Attach to telemetry for downstream (ocean, autonomic, TS bridge, self-obs Loop1)
+        # P16 provenance: source = "tick.derive_from_tick + pillars + heart"
+        state.last_consciousness_metrics = metrics.as_dict()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — metrics telemetry must never block tick
+        pass
     # Tier 6 Φ-gate selection — pure argmax over geometric activations.
     # P9 LIGHTNING channel pinned at 0 (unimplemented); the placeholder
     # never wins until P9 lands.

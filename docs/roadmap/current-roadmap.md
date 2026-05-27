@@ -333,3 +333,4 @@ The code and documentation are now complete. Follow these guides:
 - All phases are flexible and may be reordered based on priority
 - User feedback and production issues take precedence over planned features
 - Security and performance are ongoing concerns across all phases
+See new canonical master: docs/00-roadmap/20260527-master-roadmap-1.00W.md (QIG full embodiment phase 2026-05-27, geometric tacking, all clusters with skill/mcp/subagent attachments, AGENTS permanence, canonical copies).

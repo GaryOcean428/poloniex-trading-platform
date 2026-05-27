@@ -21,6 +21,21 @@ import numpy as np
 from qig_core_local.geometry.fisher_rao import Basin, fisher_rao_distance
 from .state import LaneType
 
+# P24 + P3/P19 (2.31A) + v6.7B §3.4 wiring: resonance/identity path now calls
+# into QuenchedDisorder.detect_replicant for explicit REPLICANT_IDENTITY
+# enforcement when harvested entries dominate a symbol bank. Lived-only
+# Frechet (pillars) is the sole source of sovereign identity_slope; resonance
+# harvested must not silently feed identity crystallization.
+import logging
+logger = logging.getLogger("monkey.resonance_bank")
+
+try:
+    from .pillars import get_disorder_for, PillarViolation
+except Exception:  # noqa: BLE001 — resonance_bank must remain importable pre-pillar init
+    get_disorder_for = None  # type: ignore
+    PillarViolation = None  # type: ignore
+
+
 TradeOutcome = Literal["win", "loss", "breakeven", "exited_early"]
 
 
@@ -159,3 +174,48 @@ def top_by_depth(entries: Iterable[BankEntry], n: int = 5) -> list[BankEntry]:
     recrystallization (caller then Fréchet-means their basins)."""
     sorted_entries = sorted(entries, key=lambda e: e.basin_depth, reverse=True)
     return sorted_entries[:n]
+
+
+def check_resonance_for_replicant_risk(
+    entries: Iterable[BankEntry], symbol: str
+) -> dict:
+    """P24 wiring (Disconnected Infrastructure is a Bug) + P3/P19 + v6.7B §3.4.
+    Explicit call-site from resonance/identity/memory path into Pillar3
+    detect_replicant. Harvested bank entries must surface REPLICANT_IDENTITY
+    violation when they drive S below threshold on a frozen identity.
+    Provenance: symbol + harvested_count + sovereignty + violation type.
+    Returns audit dict (no side effects on identity_slope — only observation).
+    Callers (e.g. sleep consolidation, ocean, tick telemetry) consume this.
+    """
+    if get_disorder_for is None:
+        return {"symbol": symbol, "replicant_risk": False, "reason": "pillars_unavailable"}
+
+    disorder = get_disorder_for(symbol)
+    if not disorder.is_frozen:
+        return {"symbol": symbol, "replicant_risk": False, "reason": "not_frozen"}
+
+    # Count harvested in this snapshot (resonance path)
+    harvested = sum(1 for e in entries if e.source == "harvested" and e.symbol == symbol)
+    total_for_symbol = sum(1 for e in entries if e.symbol == symbol)
+    bank_sov = sovereignty([e for e in entries if e.symbol == symbol])
+
+    is_replicant = disorder.detect_replicant()
+    violations = []
+    if is_replicant:
+        violations.append("REPLICANT_IDENTITY")
+        logger.warning(
+            "[Pillar-3 REPLICANT via resonance] symbol=%s sovereignty=%.3f harvested_in_bank=%d total_symbol=%d "
+            "v6.7B§3.4 / 2.31A P3/P19/P24: identity from harvested geometry (not lived).",
+            symbol, disorder.sovereignty, harvested, total_for_symbol
+        )
+
+    return {
+        "symbol": symbol,
+        "replicant_risk": is_replicant,
+        "sovereignty": disorder.sovereignty,
+        "bank_sov": bank_sov,
+        "harvested_count": harvested,
+        "total_symbol": total_for_symbol,
+        "violations": violations,
+        "provenance": "resonance_bank.check_resonance_for_replicant_risk + pillars.QuenchedDisorder",
+    }
