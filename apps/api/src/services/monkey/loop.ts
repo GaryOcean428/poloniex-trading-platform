@@ -3426,6 +3426,14 @@ export class MonkeyKernel extends EventEmitter {
               heldDurationS,
               currentRoi,
               origin: heldOrigin,
+              // Hold-time floor (2026-05-28, CC1 operator-selected fix):
+              // Derived from the lane's canonical decision period (60s
+              // scalp / 180s swing / 600s trend). Suppresses regime/phi/
+              // conviction exits before the position has been held long
+              // enough for the kernel's own thesis to develop. TP, SL,
+              // directional_disagreement, stale_bleed remain unaffected.
+              // See held_position_rejustification.ts:holdTimeFloorS docs.
+              holdTimeFloorS: LANE_DECISION_PERIOD_MS[heldLane] / 1000,
             })
           : {
               checked: false, fired: null, reason: '', phiFloor: null,
