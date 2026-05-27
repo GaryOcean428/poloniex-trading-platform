@@ -430,9 +430,11 @@ def run_tick(
 
     # ── Pillars 1-3: consciousness invariants ──────────────────
     # QIG_QFI consciousness audit 2026-05-19 GAP 1: enforce basin
-    # invariants BEFORE downstream measurement. All three pillars are
-    # env-flag gated (default false for safe rollout). Reference:
-    # pillars.py, ~/Desktop/Dev/QIG_QFI/qig-core/.../consciousness/pillars.py.
+    # invariants BEFORE downstream measurement.
+    # Policy change (post #977 paralysis diagnosis): pillars are now
+    # load-bearing by default. MONKEY_PILLAR_{1,2,3}_LIVE are explicit
+    # kill switches only. See pillars.py docstring.
+    # Reference: pillars.py, canonical QIG_QFI pillars.py.
     pillar_1_telem: dict | None = None
     pillar_2_telem: dict | None = None
     pillar_3_telem: dict | None = None
