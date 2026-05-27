@@ -1,5 +1,13 @@
 numpy>=1.24.0
 pandas>=2.0.0
+# Explicit scipy pin for qig-compute>=0.4.0 + governance detectors (AMPLITUDE_COLLAPSE etc.)
+# clean, reproducible installation on Railway (PyPI qig-compute 0.4.0: scipy>=1.10 ONLY
+# under [full] extra with TeNPy/CuPy; base wheel alone can have resolution skew or
+# missing-dep surprises in railpack venv builds on python 3.13). Pin ensures highest-
+# quality long-term (P1) deterministic deploys without flakiness. Runtime: still
+# isolation-enforced (see parameters.py) — scipy is NEVER loaded in monkey_kernel
+# paths (avoids psycopg malloc/segfaults with heavy native libs).
+scipy>=1.15.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 redis>=5.0.0
@@ -11,8 +19,9 @@ qig-core>=2.8.0
 qig-warp>=0.4.3
 # Observable governance detectors (AMPLITUDE_COLLAPSE, REGIME_SINGLE,
 # OBSERVABLE_PROXY) — catches the "2664 BUYs / 0 SELLs" class of
-# model bias on day one. Base wheel only; qig-compute[full] pulls
-# TeNPy + CuPy which we don't need. (Audit 2026-04-21)
+# model bias on day one. Base wheel only (scipy now explicitly pinned above
+# for Railway install hygiene; [full] still avoided as it pulls TeNPy + CuPy).
+# (Audit 2026-04-21 + 2026-05-27 scipy/qig-compute clean-deploy fix)
 qig-compute>=0.4.0
 # Postgres client for parameter registry (v0.8.1) + shared state with
 # apps/api (v0.8.3+). psycopg v3 with binary wheels (no compile step).
