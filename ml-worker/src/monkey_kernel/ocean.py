@@ -500,11 +500,11 @@ class Ocean:
         """Observer-derived rigid-attractor detector (PR1 — Ocean-as-kernel).
 
         Measures the basin's exploration variance over the most recent
-        ``_NARROW_PATH_WINDOW`` basins (mean per-dimension variance across
-        time) and tests it against the Tukey inner/outer fences of the
-        kernel's OWN rolling exploration-variance distribution. The baseline
-        excludes the most recent ``_NARROW_PATH_WINDOW`` samples so a
-        collapse cannot define its own "normal".
+        ``get_narrow_path_window()`` basins (mean per-dimension variance across
+        time) and tests it against the Tukey inner/outer fences (observer-derived
+        via get_tukey_inner/outer) of the kernel's OWN rolling exploration-variance
+        distribution. The baseline excludes the most recent ``get_narrow_path_window()``
+        samples so a collapse cannot define its own "normal".
 
         Returns ``(is_narrow, severity, exploration_variance)`` where
         ``severity`` ∈ {"none", "moderate", "severe"}: past the inner fence
