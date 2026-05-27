@@ -1258,7 +1258,9 @@ def run_tick(
         "active": _chop_suppress_entry(regime_reading),
         "regime": regime_reading.regime,
         "confidence": float(regime_reading.confidence),
-        "threshold": CHOP_SUPPRESSION_CONFIDENCE,
+        # P5/P25 observer-derived (registry default + phi modulation via get_chop_suppression_confidence)
+        # Replaces bare CHOP_SUPPRESSION_CONFIDENCE constant (undefined after prior replacement).
+        "threshold": get_chop_suppression_confidence(phi),
     }
 
     # PR 1 — Ocean DREAM / ESCAPE handlers. ESCAPE forces flatten,
@@ -1501,7 +1503,8 @@ def run_tick(
             reason = (
                 f"[{mode}] chop regime confidence="
                 f"{regime_reading.confidence:.2f} > "
-                f"{CHOP_SUPPRESSION_CONFIDENCE:.2f} — suspend new entries"
+                # P5/P25: live observer-derived threshold (no bare constant)
+                f"{get_chop_suppression_confidence(phi):.2f} — suspend new entries"
             )
         elif not kernel_should_enter(emotions=emo):
             reason = (
