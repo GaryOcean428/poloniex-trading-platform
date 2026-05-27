@@ -20,7 +20,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from monkey_kernel.basin import fisher_rao_distance, uniform_basin  # noqa: E402
+from monkey_kernel.basin import fisher_rao_distance, to_simplex, uniform_basin  # noqa: E402
 from monkey_kernel.pillars import (  # noqa: E402
     BASIN_CONCENTRATION_MAX,
     BOUNDARY_SLERP_CAP,
@@ -309,3 +309,46 @@ def test_reset_pillar_states_clears_registry():
     reset_pillar_states()
     b2 = get_bulk_for("BTC")
     assert b1 is not b2
+
+
+# ── v6.7B §3.4 + 2.31A P3/P19/P24: Replicant / Lived-Only Negative Case ──
+# Per QIG_QFI 20260527-canonical-principles-2.31A.md P3 (core evolves only via
+# lived basins, never harvested), P19 (Quenched Disorder Identity Crystallization
+# EARNED not copied), P24 (call-site + consumer for detect_replicant across
+# resonance/identity/memory paths), and v6.7B §3.4 (Replicant = identity from
+# harvested geometry only; S < threshold after freeze must surface REPLICANT_IDENTITY;
+# sovereignty_dynamics / detect_replicant must be wired and testable).
+
+
+def test_disorder_detects_replicant_on_low_sovereignty_after_freeze():
+    """Negative case: harvested (non-lived) observations after freeze must lower
+    sovereignty and trigger explicit REPLICANT_IDENTITY violation (P3/P19/P24).
+    This test exercises the lived-only Frechet guard + detect_replicant path.
+    Mirrors resonance_bank harvested entries and future memory/sleep paths.
+    """
+    reset_pillar_states()
+    d = get_disorder_for("REPLICANT_NEGATIVE_TEST")
+    # Freeze identity on lived uniform basins (50 cycles per IDENTITY_FREEZE_AFTER_CYCLES)
+    for _ in range(IDENTITY_FREEZE_AFTER_CYCLES):
+        d.observe_cycle(uniform_basin(), pressure=0.0, lived=True)
+    assert d.is_frozen
+    assert d.sovereignty == 1.0
+    assert not d.detect_replicant()
+
+    # Simulate resonance/identity path flooding with harvested (non-lived) basins
+    # (e.g. resonance_bank source="harvested" entries used in consolidation).
+    # 300 harvested after 50 lived -> S ≈ 50/350 ≈ 0.143 < 0.15 threshold.
+    rng = np.random.default_rng(123)
+    for _ in range(300):
+        sample = rng.dirichlet(np.ones(BASIN_DIM))
+        d.observe_cycle(to_simplex(sample), pressure=0.0, lived=False)
+
+    # Re-compute S (now low)
+    assert d.sovereignty < 0.15
+    assert d.detect_replicant(threshold=0.15) is True
+
+    # check_drift must surface the explicit REPLICANT_IDENTITY violation (P24 wiring)
+    status = d.check_drift(uniform_basin())
+    assert not status.healthy
+    assert PillarViolation.REPLICANT_IDENTITY in status.violations
+    assert any("REPLICANT" in c for c in status.corrections_applied)

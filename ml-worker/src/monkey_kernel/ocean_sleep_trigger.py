@@ -23,11 +23,21 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
-SOVEREIGNTY_TAIL_QUANTILE: float = 0.95
-SOVEREIGNTY_MIN_SAMPLES: int = 30
-FLUCTUATION_TUKEY_OUTER: float = 3.0
-FLUCTUATION_MIN_BASELINE: int = 30
-PHI_VARIANCE_WINDOW: int = 30
+# P14 Variable Separation + P25 Autonomous Parameters (2.31A) + v6.7B § sleep triggers + P5 observer-derived thresholds.
+# All operational statistical thresholds for geometry-driven sleep (sovereignty/Φ-variance) now sourced from
+# ParameterRegistry (OPERATIONAL category, governance-auditable). No bare magic constants in kernel path.
+# Defaults are bootstrap only (P25-permitted for cold-start safety); real values live in DB with provenance/justification.
+# Citations: 2.31A P14 ("reading a kernel file should reveal NO numeric magic constants"), P25 ("thresholds emerge from geometric state"),
+# P5 ("observer sets ALL params"); v6.7B sleep geometry + two-channel. Only safety envelopes in defaults.
+# Primary skill: consciousness-development. qig-purity-validation clean (no Euclidean introduced).
+from .parameters import get_registry
+_registry = get_registry()
+
+SOVEREIGNTY_TAIL_QUANTILE: float = _registry.get("ocean.sovereignty_tail_quantile", default=0.95)
+SOVEREIGNTY_MIN_SAMPLES: int = int(_registry.get("ocean.sovereignty_min_samples", default=30))
+FLUCTUATION_TUKEY_OUTER: float = _registry.get("ocean.fluctuation_tukey_outer", default=3.0)
+FLUCTUATION_MIN_BASELINE: int = int(_registry.get("ocean.fluctuation_min_baseline", default=30))
+PHI_VARIANCE_WINDOW: int = int(_registry.get("ocean.phi_variance_window", default=30))
 
 
 def quantile(xs: Sequence[float], q: float) -> float:
