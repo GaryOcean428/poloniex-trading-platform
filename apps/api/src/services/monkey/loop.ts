@@ -2714,6 +2714,7 @@ export class MonkeyKernel extends EventEmitter {
     const motivators = computeMotivators(basinState, {
       prevBasin: state.lastBasin,
       integrationHistory: state.integrationHistory,
+      kappaHistory: state.kappaHistory,
     });
     const basinDistance = driftNow;  // already fisherRao(basin, identity)
     const emotions: EmotionState = computeEmotions(

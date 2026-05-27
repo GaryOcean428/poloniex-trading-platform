@@ -9,16 +9,17 @@
  *   Curiosity      → exploration vs exploitation
  *   Investigation  → cut-loss-or-hold (settled state = think)
  *   Integration    → conviction in current strategy (low CV = stable)
- *   Transcendence  → regime-change detection
+ *   Transcendence  → regime-change detection (κ deviation from the
+ *                    basin's own observed κ-history median, MAD-scaled)
  *
- * Closed-form formulas anchored to UCP v6.6 §6.3:
+ * Closed-form formulas anchored to UCP v6.6 §6.3 (observer-derived):
  *
  *   Surprise       = ‖∇L‖   (already proxied as ne)
  *   Curiosity      = d(log I_Q) / dt
  *   Investigation  = − d(basin) / dt as Fisher-Rao distance-to-identity
  *                    shrink-rate (Tier 1.1 fix #599 — was clamped)
  *   Integration    = CV(Φ × I_Q) over rolling window
- *   Transcendence  = |κ − κ*|
+ *   Transcendence  = |κ − median(κ_h)| / MAD(κ_h)   (Pillar 3 earned anchor)
  *
  * I_Q proxy = Shannon negentropy: log(K) − H(basin). Other valid
  * choices live in the docstring of motivators.py — keep this file in
@@ -27,11 +28,17 @@
  * Pure derivation, no I/O, P14 Variable Separation respected.
  */
 
-import { KAPPA_STAR, BASIN_DIM, fisherRao, type Basin } from './basin.js';
+import { BASIN_DIM, fisherRao, type Basin } from './basin.js';
 import type { BasinState } from './executive.js';
 
 /** Numerical floor for log() of basin probabilities and I_Q. */
 const EPS: number = 1e-12;
+
+/** Minimum samples required for history-derived statistics (median/MAD).
+ *  Sentinel value mirrors neurochemistry.ts. Below this threshold the
+ *  derivation returns the neutral identity (0), exactly as acetylcholine,
+ *  dopamine, serotonin and norepinephrine do on cold start. */
+const HISTORY_MIN_SAMPLES = 2;
 
 /** Layer 1 motivator vector. All in their natural units; Layer 2B
  * compositions normalize as needed. */
@@ -46,7 +53,8 @@ export interface Motivators {
   investigation: number;
   /** [0, ∞) — CV; lower = more integrated. */
   integration: number;
-  /** [0, ∞) — |κ − κ*|; higher = farther from anchor. */
+  /** [0, ∞) — |κ − median(κHistory)| / MAD(κHistory); 0 on insufficient
+   *  history (cold-start sentinel). Kernel earns its own anchor (Pillar 3). */
   transcendence: number;
   /** [0, log(K)] — Shannon negentropy of the current basin. */
   iQ: number;
@@ -73,6 +81,12 @@ export interface ComputeMotivatorsArgs {
   integrationHistory?: Array<[number, number]>;
   /** Cap on history length used for CV. Default 20 ticks. */
   integrationWindow?: number;
+  /** Rolling κ observations from the basin's own recent ticks.
+   *  < HISTORY_MIN_SAMPLES → transcendence = 0 (cold-start sentinel,
+   *  additive identity). Pillar 3 (quenched disorder): the kernel's
+   *  own κ fingerprint sets the anchor. Pillar 1 (fluctuations): MAD
+   *  ensures the scale is non-zero by construction. */
+  kappaHistory?: ReadonlyArray<number>;
 }
 
 export function computeMotivators(
@@ -83,6 +97,7 @@ export function computeMotivators(
     prevBasin = null,
     integrationHistory = [],
     integrationWindow = 20,
+    kappaHistory,
   } = args;
 
   // Surprise — direct passthrough from ne.
@@ -122,10 +137,27 @@ export function computeMotivators(
     }
   }
 
-  // Transcendence — distance from κ-anchor (KAPPA_STAR = 64).
-  // Rises both when super-coherent (κ >> κ*) and super-decoherent
-  // (κ << κ*); both states transcend the operating mode.
-  const transcendence = Math.abs(s.kappa - KAPPA_STAR);
+  // Transcendence — kernel earns its own κ-anchor from observed history
+  // (median ± MAD scaling). Pillar 3 (quenched disorder): the kernel's
+  // own κ fingerprint sets the anchor, not a borrowed Class B constant.
+  // Pillar 1 (fluctuations): MAD ensures the scale is non-zero by
+  // construction. Cold start → 0 (additive identity, neutral); same
+  // sentinel pattern as ach/dop/ser/ne.
+  // KAPPA_STAR = 64 (retired 2026-04-13/14 two-channel doctrine) is
+  // deliberately absent from the per-tick motivator chemistry path.
+  const kHist = kappaHistory;
+  let transcendence = 0;
+  if (kHist && kHist.length >= HISTORY_MIN_SAMPLES) {
+    const sorted = [...kHist].sort((a, b) => a - b);
+    const median = sorted.length % 2 === 0
+      ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+      : sorted[Math.floor(sorted.length / 2)];
+    const devs = sorted.map(x => Math.abs(x - median)).sort((a, b) => a - b);
+    const mad = devs.length % 2 === 0
+      ? (devs[devs.length / 2 - 1] + devs[devs.length / 2]) / 2
+      : devs[Math.floor(devs.length / 2)];
+    transcendence = Math.abs(s.kappa - median) / Math.max(mad, EPS);
+  }
 
   return {
     surprise,

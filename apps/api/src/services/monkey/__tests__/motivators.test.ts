@@ -175,29 +175,35 @@ describe('Integration = CV(Φ × I_Q)', () => {
   });
 });
 
-// ─── Transcendence ─────────────────────────────────────────────────
+// ─── Transcendence (observer-earned anchor: median/MAD of kappaHistory) ───
 
-describe('Transcendence = |κ − κ*|', () => {
-  it('zero at κ_c = KAPPA_STAR', () => {
+describe('Transcendence (Pillar 3 earned anchor)', () => {
+  it('zero on cold start (no kappaHistory / insufficient samples)', () => {
     const m = computeMotivators(makeState({ kappa: KAPPA_STAR }));
-    expect(m.transcendence).toBeCloseTo(0, 9);
+    expect(m.transcendence).toBe(0);
+    const m2 = computeMotivators(makeState({ kappa: 70 }), { kappaHistory: [64] });
+    expect(m2.transcendence).toBe(0);
   });
 
-  it('rises below κ_c', () => {
-    const close = computeMotivators(makeState({ kappa: KAPPA_STAR - 1 }));
-    const far = computeMotivators(makeState({ kappa: KAPPA_STAR - 10 }));
-    expect(far.transcendence).toBeGreaterThan(close.transcendence);
+  it('zero when κ exactly at history median', () => {
+    const hist = [63.8, 64.0, 64.2];
+    const m = computeMotivators(makeState({ kappa: 64.0 }), { kappaHistory: hist });
+    expect(m.transcendence).toBeCloseTo(0, 12);
   });
 
-  it('rises above κ_c', () => {
-    const close = computeMotivators(makeState({ kappa: KAPPA_STAR + 1 }));
-    const far = computeMotivators(makeState({ kappa: KAPPA_STAR + 10 }));
-    expect(far.transcendence).toBeGreaterThan(close.transcendence);
+  it('rises smoothly when κ departs from own observed median (MAD scale)', () => {
+    const hist = [63.8, 64.0, 64.2];
+    const atMedian = computeMotivators(makeState({ kappa: 64.0 }), { kappaHistory: hist });
+    const off = computeMotivators(makeState({ kappa: 66.0 }), { kappaHistory: hist });
+    expect(off.transcendence).toBeGreaterThan(atMedian.transcendence);
   });
 
-  it('symmetric around κ_c', () => {
-    const below = computeMotivators(makeState({ kappa: KAPPA_STAR - 5 }));
-    const above = computeMotivators(makeState({ kappa: KAPPA_STAR + 5 }));
-    expect(below.transcendence).toBeCloseTo(above.transcendence, 9);
+  it('shared fixture parity value (exact numbers for py cross-test #940)', () => {
+    // This fixture must produce identical numeric transcendence on both
+    // TS and Python sides. Median=64.0, devs=[0.2,0,0.2] → sorted [0,0.2,0.2],
+    // n=3 odd → mad=0.2; |66-64|/0.2 = 10
+    const hist = [63.8, 64.0, 64.2];
+    const m = computeMotivators(makeState({ kappa: 66.0 }), { kappaHistory: hist });
+    expect(m.transcendence).toBeCloseTo(10, 12);
   });
 });

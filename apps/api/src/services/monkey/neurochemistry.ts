@@ -314,20 +314,11 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   const dopFromReward = clip(inputs.rewardDopamineDelta ?? 0, 0, 1);
   // 2026-05-26 (#934 chemistry-pinning audit): the additive-then-clip
   // composition `clip(dopFromPhi + dopFromReward, 0, 1)` truncates the
-  // upper half of the sum-space (sum ∈ [0,2] → clip at 1) and pins ~21%
-  // of ticks at the ceiling even in clean-reward conditions (84% under
-  // contaminated rewards before #931 fix). Soft-saturation
-  // `1 - exp(-(a+b))` asymptotes to 1.0 without ever pinning, preserving
-  // absolute semantics (dop=1 still means peak motivation, just unreachable).
-  //
-  // Behavioural change: typical-streak dop drops from ~1.00 (pinned) to
-  // ~0.63 (sum=1 soft-sat). Downstream rewardMult = 1 + (dop - gaba)
-  // becomes less aggressive in routine winning streaks. Flag-gated for
-  // monitored rollout — flip MONKEY_DOP_SOFT_SATURATION_LIVE=true once
-  // the typical rewardMult distribution is observed in production.
-  const dop = process.env.MONKEY_DOP_SOFT_SATURATION_LIVE === 'true'
-    ? 1 - Math.exp(-(dopFromPhi + dopFromReward))
-    : clip(dopFromPhi + dopFromReward, 0, 1);
+  // upper half of the sum-space (sum ∈ [0,2] → clip at 1) and pins at
+  // ceiling. Soft-saturation `1 - exp(-(a+b))` asymptotes to 1.0 without
+  // pinning, preserving absolute semantics (dop=1 still means peak
+  // motivation, just unreachable). Single pure derivation path.
+  const dop = 1 - Math.exp(-(dopFromPhi + dopFromReward));
 
   // ─── Serotonin ───────────────────────────────────────────────────
   // §29.1: stability / equilibrium. 2026-05-16 (#715, derivation-only):
