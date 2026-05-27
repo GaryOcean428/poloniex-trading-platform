@@ -51,28 +51,28 @@ describe('per-agent neurochemistry reward isolation', () => {
     // produces an identical dopamine delta — that way per-agent sums are
     // easy to reason about (each = the single-event delta).
     kernel.pushReward({
-      source: 'test_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: 1.0,    // 10 % win on 10 USDT margin
       marginUsdt: 10,
       agent: 'K',
     });
     kernel.pushReward({
-      source: 'test_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: 1.0,
       marginUsdt: 10,
       agent: 'M',
     });
     kernel.pushReward({
-      source: 'test_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: 1.0,
       marginUsdt: 10,
       agent: 'T',
     });
     kernel.pushReward({
-      source: 'test_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: 1.0,
       marginUsdt: 10,
@@ -124,7 +124,7 @@ describe('per-agent neurochemistry reward isolation', () => {
     });
 
     kernel.pushReward({
-      source: 'test_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: 2.0,
       marginUsdt: 10,
@@ -156,7 +156,7 @@ describe('per-agent neurochemistry reward isolation', () => {
     // pre-2026-05-16 deploys that race a fresh build see no behaviour
     // regression on K.
     kernel.pushReward({
-      source: 'legacy_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: 1.5,
       marginUsdt: 10,
@@ -180,14 +180,14 @@ describe('per-agent neurochemistry reward isolation', () => {
     // T loses, K wins — verify the T-only window shows the negative
     // mood dip and K's window shows the positive lift, neither bleeds.
     kernel.pushReward({
-      source: 'test_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: -1.0,
       marginUsdt: 10,
       agent: 'T',
     });
     kernel.pushReward({
-      source: 'test_close',
+      source: 'polo_authoritative_close',
       symbol: 'BTC_USDT_PERP',
       realizedPnlUsdt: 1.0,
       marginUsdt: 10,

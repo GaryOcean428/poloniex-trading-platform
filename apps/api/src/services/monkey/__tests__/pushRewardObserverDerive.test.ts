@@ -69,7 +69,7 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     // kernel builds enough samples to z-score against its own
     // distribution). The legacy hardcoded 1% floor → Fibonacci tier
     // mapping was retired with the deletion of fibonacciRewardCoefficient.
-    k.pushReward({ source: 'test', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.pnlFraction).toBeCloseTo(0.10, 6);
     // Cold start: dopamine = tanh(pnlFracNormalized) × 0.5 × 1
@@ -80,11 +80,11 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
   it('after several wins, dopamine z-normalizes against rolling stddev', () => {
     // Seed history with 10 wins of ~5% ROI
     for (let i = 0; i < 10; i++) {
-      k.pushReward({ source: 'seed', realizedPnlUsdt: 0.05, marginUsdt: 1, agent: 'K' });
+      k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.05, marginUsdt: 1, agent: 'K' });
     }
     // Now a 10% win — should be "above average" relative to the
     // kernel's own observed distribution → higher dopamine.
-    k.pushReward({ source: 'bigger', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
     const big = lastReward();
     // Big win produces higher dopamine than the seeded "typical" win
     expect(big.dopamineDelta).toBeGreaterThan(Math.tanh(0.05) * 0.5);
@@ -98,7 +98,7 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     const history: number[] = [];
     for (let i = 0; i < 8; i++) history.push(0.003 + (i % 5) * 0.001);
     seedSymbolHistory(k, symbol, history);
-    k.pushReward({ source: 'huge', symbol, realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', symbol, realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.dopamineDelta).toBeGreaterThan(0.5);
     expect(r.dopamineDelta).toBeLessThanOrEqual(0.5 * 34);
@@ -109,7 +109,7 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     const history: number[] = [];
     for (let i = 0; i < 8; i++) history.push(0.003 + (i % 5) * 0.001);
     seedSymbolHistory(k, symbol, history);
-    k.pushReward({ source: 'huge', symbol, realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', symbol, realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.serotoninDelta).toBeGreaterThan(0.15);
     expect(r.serotoninDelta).toBeLessThanOrEqual(0.15 * 34);
@@ -120,7 +120,7 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     const history: number[] = [];
     for (let i = 0; i < 8; i++) history.push(0.003 + (i % 5) * 0.001);
     seedSymbolHistory(k, symbol, history);
-    k.pushReward({ source: 'huge', symbol, realizedPnlUsdt: 100, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', symbol, realizedPnlUsdt: 100, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
     const r = lastReward();
     expect(r.endorphinDelta).toBeGreaterThan(0.3);
     expect(r.endorphinDelta).toBeLessThanOrEqual(0.3 * 34);
@@ -134,27 +134,27 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     // signal from real-scale wins instead of being structurally muted.
     // After enough history, the gate z-scores against the kernel's
     // own distribution — sub-median wins still emit zero.
-    k.pushReward({ source: 'noise', realizedPnlUsdt: 0.005, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.005, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.dopamineDelta).toBeGreaterThan(0);
     expect(r.dopamineDelta).toBeLessThanOrEqual(0.5);
   });
 
   it('loss produces negative dopamine bounded by 0.1 cap', () => {
-    k.pushReward({ source: 'loss', realizedPnlUsdt: -10, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: -10, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.dopamineDelta).toBeLessThan(0);
     expect(Math.abs(r.dopamineDelta)).toBeLessThanOrEqual(0.1);
   });
 
   it('losses produce zero serotonin (wins-only path)', () => {
-    k.pushReward({ source: 'loss', realizedPnlUsdt: -10, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: -10, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.serotoninDelta).toBe(0);
   });
 
   it('losses produce zero endorphins (wins-only path)', () => {
-    k.pushReward({ source: 'loss', realizedPnlUsdt: -10, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: -10, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
     const r = lastReward();
     expect(r.endorphinDelta).toBe(0);
   });
@@ -181,16 +181,16 @@ describe('pushReward observer-derive — outlier robustness (MAD)', () => {
     // Seed 6 typical wins/losses around 1% pnlFrac.
     for (let i = 0; i < 6; i++) {
       k.pushReward({
-        source: 'seed',
+        source: 'polo_authoritative_close',
         realizedPnlUsdt: i % 2 === 0 ? 0.01 : -0.01,
         marginUsdt: 1,
         agent: 'K',
       });
     }
     // Inject a massive outlier win (+50% pnlFrac, like the live +$78).
-    k.pushReward({ source: 'outlier-win', realizedPnlUsdt: 0.5, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.5, marginUsdt: 1, agent: 'K' });
     // Now a normal-magnitude loss (-2% pnlFrac).
-    k.pushReward({ source: 'normal-loss', realizedPnlUsdt: -0.02, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: -0.02, marginUsdt: 1, agent: 'K' });
     const lossDop = lastReward().dopamineDelta;
     // Loss should produce measurable negative dopamine — NOT crushed to
     // near-zero by the outlier-inflated normalizer.
@@ -200,16 +200,16 @@ describe('pushReward observer-derive — outlier robustness (MAD)', () => {
   it('MAD normalization keeps chemistry response stable across outlier injection', () => {
     // Build a baseline: 6 small wins of 1% pnlFrac.
     for (let i = 0; i < 6; i++) {
-      k.pushReward({ source: 'pre', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
+      k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
     }
     // Record dopamine for a typical 1% win pre-outlier.
-    k.pushReward({ source: 'typical-pre', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
     const dopPre = lastReward().dopamineDelta;
     // Inject outlier.
-    k.pushReward({ source: 'outlier', realizedPnlUsdt: 1.0, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 1.0, marginUsdt: 1, agent: 'K' });
     // Same typical 1% win post-outlier — dopamine should be similar
     // (MAD didn't move; under stddev it would be much smaller).
-    k.pushReward({ source: 'typical-post', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
+    k.pushReward({ source: 'polo_authoritative_close', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
     const dopPost = lastReward().dopamineDelta;
     // Ratio should be close to 1 — outlier didn't suppress response.
     // (Under stddev the ratio would be ~5-10×.)
@@ -234,7 +234,7 @@ describe('pushReward observer-derive — kappaProxim from rolling kappa stddev',
     // non-degenerate.
     for (let i = 0; i < 6; i++) {
       k.pushReward({
-        source: 'seed',
+        source: 'polo_authoritative_close',
         realizedPnlUsdt: 0.05,
         marginUsdt: 1,
         kappaAtExit: 63 + (i % 2),  // alternating 63/64
@@ -243,7 +243,7 @@ describe('pushReward observer-derive — kappaProxim from rolling kappa stddev',
     }
     // Now a win exactly at κ*.
     k.pushReward({
-      source: 'peak',
+      source: 'polo_authoritative_close',
       realizedPnlUsdt: 0.05,
       marginUsdt: 1,
       kappaAtExit: 64,
@@ -257,7 +257,7 @@ describe('pushReward observer-derive — kappaProxim from rolling kappa stddev',
     // Seed history
     for (let i = 0; i < 6; i++) {
       k.pushReward({
-        source: 'seed',
+        source: 'polo_authoritative_close',
         realizedPnlUsdt: 0.05,
         marginUsdt: 1,
         kappaAtExit: 60 + (i % 3),
@@ -266,7 +266,7 @@ describe('pushReward observer-derive — kappaProxim from rolling kappa stddev',
     }
     // κ at κ*
     k.pushReward({
-      source: 'at-star',
+      source: 'polo_authoritative_close',
       realizedPnlUsdt: 0.05,
       marginUsdt: 1,
       kappaAtExit: 64,
@@ -275,7 +275,7 @@ describe('pushReward observer-derive — kappaProxim from rolling kappa stddev',
     const at = lastReward();
     // κ far from κ*
     k.pushReward({
-      source: 'far',
+      source: 'polo_authoritative_close',
       realizedPnlUsdt: 0.05,
       marginUsdt: 1,
       kappaAtExit: 80,
@@ -287,7 +287,7 @@ describe('pushReward observer-derive — kappaProxim from rolling kappa stddev',
 
   it('kappaAtExit missing → kappaProxim falls to 0.5 (legacy fallback preserved)', () => {
     k.pushReward({
-      source: 'no-kappa',
+      source: 'polo_authoritative_close',
       realizedPnlUsdt: 0.05,
       marginUsdt: 1,
       // kappaAtExit omitted

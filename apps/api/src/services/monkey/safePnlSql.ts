@@ -95,19 +95,32 @@ export function computeNetPnlForReward(
   grossPnlUsdt: number,
   notionalUsdt: number,
 ): number {
-  if (!Number.isFinite(grossPnlUsdt) || !Number.isFinite(notionalUsdt) || notionalUsdt <= 0) {
-    return grossPnlUsdt; // fall-open only for cold-start / test fixtures
+  // "Reward based on actual profit" doctrine (operator 2026-05-27):
+  //   "dont suggest knobs jsut increase the telemetry and reward based on
+  //    actual profit."
+  //
+  // The previous 9bp + 0.18 floor were knobs — fee estimates the operator
+  // explicitly rejected. The canonical reward path is
+  // applyPoloRealizedPnlAfterClose, which fetches Polo's real realizedPnl
+  // (net of fees + funding) and pushes a `polo_authoritative_close` event
+  // carrying the actual lived economic outcome. That path is the only one
+  // that produces chemistry from now on.
+  //
+  // This function (called for the immediate synthetic-close path) now
+  // returns 0 when an authoritative Polo notional context exists — the
+  // chemistry waits for the Polo-authoritative event rather than
+  // fabricating a fee estimate. The pre-Polo synthetic push therefore
+  // produces no chemistry delta; it's a placeholder that the
+  // authoritative event will replace within seconds.
+  //
+  // Cold-start / test fixtures (no notional → notionalUsdt ≤ 0) fall
+  // open to gross so harness code that doesn't thread a notional keeps
+  // working. Production paths always thread notional > 0.
+  if (!Number.isFinite(grossPnlUsdt)) return 0;
+  if (!Number.isFinite(notionalUsdt) || notionalUsdt <= 0) {
+    return grossPnlUsdt;
   }
-  // Conservative round-trip taker + funding buffer (Polo USDT-M typical)
-  // plus a small absolute floor so micro-edge trades that are gross-positive
-  // but fee-negative (the exact 15:30:45 case) correctly produce net ≤ 0
-  // for the reward observer.
-  const roundTripFeePct = 0.0009; // 9 bp conservative
-  const feeHit = Math.max(
-    notionalUsdt * roundTripFeePct,
-    0.18, // absolute floor — reproduces the ~$0.17 fee hit the user measured on the +0.148 gross trade (conservative)
-  );
-  return grossPnlUsdt - feeHit;
+  return 0;
 }
 
 /**

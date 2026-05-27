@@ -136,40 +136,43 @@ import { observerFibCoefficient } from '../ocean_reward.js';
 import { computeNetPnlForReward } from '../safePnlSql.js';
 
 describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived economic reality)', () => {
-  it('15:30:45 case: gross +0.148 but net ≈ −0.02 after fees → oceanCoeff must be 0, no positive tier reward', () => {
-    // User's exact production report: hold was 8.5 min (not 56.9), gross +0.148,
-    // Polo fees made it net-negative (~ −0.02). The observer reward gate must
-    // NOT fire positive chemistry on this structurally losing trade.
+  it('synthetic close path returns 0 — no fabricated fee estimate (operator "no knobs" doctrine 2026-05-27)', () => {
+    // The previous implementation used 9 bp + 0.18 floor as a fee estimate,
+    // which were knobs the operator explicitly rejected. The canonical
+    // reward path is now `applyPoloRealizedPnlAfterClose` which fetches
+    // Polo's real realizedPnl and pushes a separate `polo_authoritative_close`
+    // event. The synthetic immediate-close path returns 0 so no chemistry
+    // fires on estimated data; the authoritative event supersedes within
+    // seconds.
     const grossPnl = 0.148;
-    // Realistic margin for the trade that produced ~$0.17 fee hit at 9 bp + floor
-    const margin = 1.2; // notional ~19.2 USDT
+    const margin = 1.2;
     const notional = margin * 16;
 
     const netPnl = computeNetPnlForReward(grossPnl, notional);
-    // Must reproduce the user's measured outcome: net negative
-    expect(netPnl).toBeLessThan(0);
+    // No fabricated fee — synthetic path returns 0 by design.
+    expect(netPnl).toBe(0);
 
-    // Simulate the history the kernel would have seen (small positive median)
+    // Downstream observer behavior unchanged: 0 pnlFrac → coeff 0.
     const history = [0.0005, 0.0012, -0.0008, 0.0003, 0.0009];
-
-    // The pnlFrac passed to the observer must be the *net* version
     const netPnlFrac = netPnl / margin;
     const coeff = observerFibCoefficient(netPnlFrac, history);
-
-    // Gross would have produced positive z and tier ≥1.
-    // Net must produce z ≤ 0 → coeff = 0 (no positive chemistry).
     expect(coeff).toBe(0);
   });
 
-  it('computeNetPnlForReward is conservative (never over-rewards marginal gross-positive trades)', () => {
-    const gross = 0.05;
-    const notional = 10;
-    const net = computeNetPnlForReward(gross, notional);
-    expect(net).toBeLessThan(gross);
-    // On very small gross the net can easily go negative
-    const tinyGross = 0.005;
-    const tinyNet = computeNetPnlForReward(tinyGross, notional);
-    expect(tinyNet).toBeLessThan(0);
+  it('cold-start / test fixture path (notional ≤ 0) falls open to gross', () => {
+    // Test harnesses that don't thread a notional (legacy / cold-start)
+    // keep working. Production paths always thread notional > 0 and
+    // therefore hit the zero-fallback above.
+    expect(computeNetPnlForReward(0.5, 0)).toBe(0.5);
+    expect(computeNetPnlForReward(-0.5, 0)).toBe(-0.5);
+    expect(computeNetPnlForReward(1.0, -5)).toBe(1.0);
+    expect(computeNetPnlForReward(1.0, NaN)).toBe(1.0);
+  });
+
+  it('non-finite gross input returns 0 (defensive)', () => {
+    expect(computeNetPnlForReward(NaN, 10)).toBe(0);
+    expect(computeNetPnlForReward(Infinity, 10)).toBe(0);
+    expect(computeNetPnlForReward(-Infinity, 10)).toBe(0);
   });
 });
 

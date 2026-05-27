@@ -8826,21 +8826,20 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
-    const netPnlUsdtForReward = computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16);
+    // "Reward based on actual profit" doctrine (operator 2026-05-27 / 28):
+    //   polo_authoritative_close: realizedPnlUsdt IS the Polo net (fees +
+    //     funding already subtracted by the exchange). Use it directly.
+    //   any other source (synthetic immediate-close): chemistry waits.
+    //     The follow-up applyPoloRealizedPnlAfterClose call will push a
+    //     polo_authoritative_close event within ~1 tick.
+    // Replaces the prior `computeNetPnlForReward` fee-estimator (9 bp +
+    // 0.18 floor) which the operator explicitly rejected as a knob.
+    const netPnlUsdtForReward = input.source === 'polo_authoritative_close'
+      ? grossPnlUsdt
+      : computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16);
     const pnlFrac = marginUsdt > 0
       ? netPnlUsdtForReward / marginUsdt
       : 0;
-
-    // Hard assert (LIVED ONLY 5): if the net is materially worse than gross
-    // on a positive-gross trade, we must not let gross leak into chemistry.
-    if (grossPnlUsdt > 0 && netPnlUsdtForReward <= 0 && Math.abs(netPnlUsdtForReward - grossPnlUsdt) > 0.01) {
-      logger.warn('[LIVED ONLY 5][REWARD] gross-positive trade is net-negative after fees — chemistry correctly receives net', {
-        gross: grossPnlUsdt,
-        netForReward: netPnlUsdtForReward,
-        source: input.source,
-        symbol: input.symbol,
-      });
-    }
 
     // 2026-05-25 (observer-derive PR) — replaces magic input scales
     // (1.5×, 0.5×, 2×, /10) with observer-derived normalization against
