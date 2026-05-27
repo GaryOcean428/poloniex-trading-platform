@@ -8161,13 +8161,39 @@ export class MonkeyKernel extends EventEmitter {
         newContracts, currentContracts, cap,
       );
       if (clampedNewContracts === 0) {
+        // Diagnostic telemetry (2026-05-28 CC1): include the inputs the
+        // operator needs to immediately distinguish "kernel correctly
+        // refusing entry due to insufficient free equity" from "input
+        // threading bug somewhere upstream". Most operators looking at
+        // this log line want to know IMMEDIATELY whether they should
+        // top up the account or whether the kernel is mis-computing.
+        const dop = req.dopamine ?? 0.5;
+        const gaba = req.gaba ?? 0.5;
+        const riskFraction = Math.max(0.1, dop * req.phi * (1 - gaba));
+        const denom = req.entryPrice * symbolLotSize;
+        const equityHeadroom = Math.max(0, req.availableEquityUsdt ?? 0);
+        const expectedCap = denom > 0
+          ? Math.floor((equityHeadroom * riskFraction * req.leverage) / denom)
+          : 0;
+        const reason = !req.availableEquityUsdt || req.availableEquityUsdt <= 0
+          ? 'no_equity_threaded_from_caller'
+          : equityHeadroom * riskFraction * req.leverage < denom
+            ? `insufficient_free_equity (need ≥ ${(denom / Math.max(1, req.leverage * riskFraction)).toFixed(2)} USDT free, have ${equityHeadroom.toFixed(2)})`
+            : 'unknown';
         logger.info('[Monkey] entry suppressed by contracts cap', {
           symbol, agent: effectiveAgent, side, lane: effectiveLane,
           currentContracts, attemptedNew: newContracts, cap,
+          availableEquity: req.availableEquityUsdt?.toFixed(2),
+          leverage: req.leverage,
+          riskFraction: riskFraction.toFixed(3),
+          dopamine: dop.toFixed(3), phi: req.phi.toFixed(3), gaba: gaba.toFixed(3),
+          contractNotional: denom.toFixed(2),
+          expectedCap,
+          rootCause: reason,
         });
         return {
           executed: false, orderId: null,
-          reason: `at_position_contracts_cap: open=${currentContracts} desired=${newContracts} cap=${cap}`,
+          reason: `at_position_contracts_cap: open=${currentContracts} desired=${newContracts} cap=${cap} | ${reason}`,
         };
       }
       if (clampedNewContracts < newContracts) {
