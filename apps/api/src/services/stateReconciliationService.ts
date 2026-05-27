@@ -7,6 +7,7 @@
  */
 
 import { pool } from '../db/connection.js';
+import { verifyPnl, checkNotionalConsistency } from './monkey/safePnlSql.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { monitoringService } from './monitoringService.js';
@@ -267,6 +268,26 @@ class StateReconciliationService {
               `${reasonPrefix}|exchange_pid=${
                 exPos.positionId ?? exPos.id ?? 'na'
               }|lev=${effectiveLever}|inferred_lane=${inferredLane}|src=reconciler`;
+
+            // Finding 1 — notional self-consistency assertion for the
+            // reconciler/adopted-position INSERT. Expected notional comes
+            // from the exchange's own position report (exPos.notional);
+            // when that field is absent (older exchange clients), the
+            // helper falls open per its contract — the live + paper INSERT
+            // paths are the load-bearing ones for new rows.
+            const reconNotionalCheck = checkNotionalConsistency(
+              entryPrice,
+              size,
+              exPos.notional ?? 0,
+            );
+            if (!reconNotionalCheck.consistent) {
+              logger.error('[LIVED ONLY] reconciler INSERT — skipping row', {
+                symbol, entryPrice, size,
+                diagnostic: reconNotionalCheck.diagnostic,
+              });
+              continue;
+            }
+
             await pool.query(
               `INSERT INTO autonomous_trades
                (user_id, symbol, side, entry_price, quantity, leverage, reason,
@@ -535,6 +556,16 @@ class StateReconciliationService {
               : null;
 
           try {
+            // LIVED ONLY 5 guard on ghost recovery (Finding 1)
+            // Be conservative: do not write aggregate-derived recoveredPnl on ghost rows
+            // unless we can fully verify it. For now, skip writing it here to avoid phantoms.
+            if (recoveredPnl !== null) {
+              logger.warn('[LIVED ONLY] skipping aggregate recoveredPnl write during ghost recovery (conservative LIVED ONLY)', {
+                tradeId: g.dbTrade.id,
+              });
+              continue;
+            }
+
             await pool.query(
               `UPDATE autonomous_trades
                SET status = 'closed',

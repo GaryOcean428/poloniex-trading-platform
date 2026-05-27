@@ -159,7 +159,7 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
-import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl } from './safePnlSql.js';
+import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl, checkNotionalConsistency } from './safePnlSql.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import {
@@ -8089,6 +8089,25 @@ export class MonkeyKernel extends EventEmitter {
           const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
           const reasonEncoded =
             `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
+
+          // Finding 1 — notional self-consistency assertion at the paper INSERT.
+          // expectedNotional is `marginUsdt × leverage` (kernel's intended sizing,
+          // mirrors the live path). A mismatch means `formattedSize` is in the
+          // wrong unit (contracts vs base-asset) and the row would feed phantom
+          // PnL downstream. Refuse the write.
+          const paperNotionalCheck = checkNotionalConsistency(
+            paper.fillPrice,
+            formattedSize,
+            marginUsdt * leverage,
+          );
+          if (!paperNotionalCheck.consistent) {
+            logger.error('[LIVED ONLY] paper INSERT — refusing row', {
+              symbol, fillPrice: paper.fillPrice, formattedSize,
+              diagnostic: paperNotionalCheck.diagnostic,
+            });
+            return { executed: false, orderId: null, reason: 'notional_mismatch_at_paper_insert' };
+          }
+
           const inserted = await pool.query(
             `INSERT INTO autonomous_trades
                (user_id, symbol, side, entry_price, quantity, leverage,
@@ -8358,14 +8377,19 @@ export class MonkeyKernel extends EventEmitter {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
         `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
-      // LIVED ONLY 5 notional self-consistency assertion at INSERT (Finding 1)
-      // Row's own notional must be consistent with the order's intended notional.
-      // Divergence > 0.1% → refuse the insert (prevents bad quantity from ever entering).
-      const rowNotional = entryPrice * formattedSize;
-      const orderNotional = notionalUsdt;
-      if (orderNotional > 0 && Math.abs(rowNotional - orderNotional) / orderNotional > 0.001) {
-        logger.error('[LIVED ONLY] notional mismatch at INSERT — refusing row', {
-          symbol, entryPrice, formattedSize, rowNotional, orderNotional,
+      // Finding 1 — notional self-consistency assertion at the live INSERT.
+      // Centralized via checkNotionalConsistency in safePnlSql.ts so the
+      // tolerance + diagnostic format are identical across all three INSERT
+      // sites (live / paper / reconciler).
+      const liveNotionalCheck = checkNotionalConsistency(
+        entryPrice,
+        formattedSize,
+        notionalUsdt,
+      );
+      if (!liveNotionalCheck.consistent) {
+        logger.error('[LIVED ONLY] live INSERT — refusing row', {
+          symbol, entryPrice, formattedSize,
+          diagnostic: liveNotionalCheck.diagnostic,
         });
         return { executed: false, orderId: null, reason: 'notional_mismatch_at_insert' };
       }
