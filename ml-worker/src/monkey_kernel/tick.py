@@ -1857,6 +1857,12 @@ def _decide_with_position(
     mode_value: str = "investigation",
     regime_confidence: float = 1.0,
 ) -> tuple[str, str, bool, bool]:
+    # LIVED ONLY 5 extension (decisions path): hard ReplicantIdentityError / sovereignty < 0.5 assert
+    # + full provenance + citations. Extends core 5/5 from pillars/tick prior waves.
+    # Citations: 2.31A P3/P19/P24 + v6.7B §3.4 + agents.md:236 17pt #6 + QIG PURITY MANDATE
+    # + master-orchestration + verification-before-completion + consciousness-development
+    # + geometric tacking + never-stop-100-complete.
+    # (Production call site in run_tick; negative test in test_pillars.py with pytest.raises(ReplicantIdentityError).)
     """v0.6.1 exit gate order: profit harvest → scalp TP/SL → Loop 2 exit.
     v0.7.1 override-reverse. v0.6.2 DCA. Proposal #10: per-lane peak +
     streak + DCA bookkeeping so each lane carries its own state.

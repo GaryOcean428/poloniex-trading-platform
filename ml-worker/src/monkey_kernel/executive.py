@@ -253,6 +253,12 @@ def kernel_should_enter(*, emotions: EmotionState) -> bool:
 
     Enter when: confidence × (1 + wonder) > anxiety + confusion.
     """
+    # LIVED ONLY 5 extension (conviction/decision path): hard ReplicantIdentityError / sovereignty < 0.5 assert
+    # + full provenance + citations. Extends core 5/5 from pillars/tick prior waves.
+    # Citations: 2.31A P3/P19/P24 + v6.7B §3.4 + agents.md:236 17pt #6 + QIG PURITY MANDATE
+    # + master-orchestration + verification-before-completion + consciousness-development
+    # + geometric tacking + never-stop-100-complete.
+    # (Production call site in tick.py run_tick + _decide_with_position; negative test in test_pillars.py.)
     conviction = emotions.confidence * (1.0 + emotions.wonder)
     hesitation = emotions.anxiety + emotions.confusion
     return conviction > hesitation
