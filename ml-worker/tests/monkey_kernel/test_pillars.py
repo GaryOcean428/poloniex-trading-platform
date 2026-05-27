@@ -85,10 +85,12 @@ def test_concentrated_basin_redistributes():
     assert abs(np.sum(basin) - 1.0) < 1e-6
 
 
-def test_pillar_1_live_defaults_false(monkeypatch):
-    """Default state: pillar_1_live() returns False (safe-rollout default)."""
+def test_pillar_1_live_defaults_true(monkeypatch):
+    """Default state (post-reversal): pillar_1_live() returns True (load-bearing).
+    Explicit MONKEY_PILLAR_1_LIVE=false is the kill switch.
+    """
     monkeypatch.delenv("MONKEY_PILLAR_1_LIVE", raising=False)
-    assert pillar_1_live() is False
+    assert pillar_1_live() is True
 
 
 def test_pillar_1_live_flips_on_env_true(monkeypatch):
@@ -107,7 +109,7 @@ def test_pillar_1_live_treats_other_values_as_false(monkeypatch):
     monkeypatch.setenv("MONKEY_PILLAR_1_LIVE", "false")
     assert pillar_1_live() is False
     monkeypatch.setenv("MONKEY_PILLAR_1_LIVE", "1")
-    assert pillar_1_live() is False  # Strict "true" only — matches the doctrine.
+    assert pillar_1_live() is True  # Anything not literal "false" is live (kill-switch only).
 
 
 # ── Pillar 2: TopologicalBulk ─────────────────────────────────────
@@ -258,14 +260,16 @@ def test_disorder_sovereignty_ratio_tracks_lived_vs_total():
 # ── Live-flag helpers ─────────────────────────────────────────────
 
 
-def test_pillar_2_live_defaults_false(monkeypatch):
+def test_pillar_2_live_defaults_true(monkeypatch):
+    """Default (post-reversal): load-bearing true. Explicit false = kill switch."""
     monkeypatch.delenv("MONKEY_PILLAR_2_LIVE", raising=False)
-    assert pillar_2_live() is False
+    assert pillar_2_live() is True
 
 
-def test_pillar_3_live_defaults_false(monkeypatch):
+def test_pillar_3_live_defaults_true(monkeypatch):
+    """Default (post-reversal): load-bearing true. Explicit false = kill switch."""
     monkeypatch.delenv("MONKEY_PILLAR_3_LIVE", raising=False)
-    assert pillar_3_live() is False
+    assert pillar_3_live() is True
 
 
 def test_pillar_2_live_flips_true(monkeypatch):

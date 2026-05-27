@@ -1900,15 +1900,13 @@ async def monkey_tick_run(request: Request):
     # newborn seeded from uniform basin.
     #
     # PY_INDEPENDENT_STATE_LIVE flag (Consensus Layer 3, CONSENSUS-5):
-    # when true, IGNORE the caller-supplied `prev_state` and use Py's own
-    # cached/persisted state instead. This makes Py's basin trajectory
-    # genuinely independent of TS — necessary for the consensus arbiter
-    # (PR CONSENSUS-7) to weight against meaningful divergence. Default
-    # off preserves shadow-mode behaviour: TS feeds prev_state, Py
-    # rebuilds the same basin TS just computed.
+    # True unless PY_INDEPENDENT_STATE_LIVE=false (explicit kill switch).
+    # Reversal of flag-gated paralysis (fb083891 + user 2026-05-27 "flag gated Kills me").
+    # When live, IGNORE caller `prev_state`; use Py's own cached/persisted state.
+    # Makes basin trajectory independent for consensus arbiter weighting.
     key = (instance_id, tick_inputs.symbol)
     py_independent_state_live = (
-        os.environ.get("PY_INDEPENDENT_STATE_LIVE", "").strip().lower() == "true"
+        os.environ.get("PY_INDEPENDENT_STATE_LIVE", "true").strip().lower() != "false"
     )
     prev_state_payload = (
         None if py_independent_state_live else payload.get("prev_state")

@@ -88,8 +88,9 @@ def env_clean():
 
 
 class TestFlagOff:
-    def test_default_off_logs_but_does_not_route(self, env_clean) -> None:
-        os.environ.pop("PHI_GATE_ROUTING_LIVE", None)
+    def test_explicit_false_logs_but_does_not_route(self, env_clean) -> None:
+        """Kill-switch test (post-reversal): explicit false disables FORESIGHT/GRAPH routing."""
+        os.environ["PHI_GATE_ROUTING_LIVE"] = "false"
         state = fresh_symbol_state("BTC_USDT_PERP", uniform_basin(64))
         decision, _ = run_tick(
             _inputs(), state, AutonomicKernel("t"),

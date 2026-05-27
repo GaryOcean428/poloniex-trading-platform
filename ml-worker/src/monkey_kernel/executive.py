@@ -25,18 +25,18 @@ import numpy as np
 
 
 def upper_stack_executive_live() -> bool:
-    """Default-off env flag (PR 4 #609). When true, upper-stack
-    emotion signals modulate three executive formulas:
+    """True unless UPPER_STACK_EXECUTIVE_LIVE=false (explicit kill switch).
+    Reversal of flag-gated paralysis (fb083891 + user 2026-05-27 "flag gated Kills me").
+    When live, upper-stack emotion signals modulate three executive formulas:
 
       current_entry_threshold *= (1 − 0.2*wonder + 0.2*anxiety)
       current_leverage        *= (1 − 0.3*anxiety + 0.2*confidence)
       current_position_size   *= (1 + 0.15*flow)
 
     Multipliers are applied AFTER the existing formula's clamp, then
-    re-clipped to the same SAFETY_BOUNDS the formula uses. The bounds
-    are NOT bypassed — only the value within them is modulated.
+    re-clipped to the same SAFETY_BOUNDS. Bounds NOT bypassed.
     """
-    return os.environ.get("UPPER_STACK_EXECUTIVE_LIVE", "").strip().lower() == "true"
+    return os.environ.get("UPPER_STACK_EXECUTIVE_LIVE", "true").strip().lower() != "false"
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance, to_simplex
 
