@@ -252,6 +252,11 @@ class SymbolState:
     # Tier 1 motivators integration history — (phi, i_q) tuples per tick.
     # Used by compute_motivators for the CV(Φ × I_Q) integration motivator.
     integration_history: list[tuple[float, float]] = field(default_factory=list)
+    # Rolling κ observations for the observer-derived transcendence anchor
+    # (median/MAD). Mirrors the TS side and the accumulation already
+    # present for autonomic/sensations (dop/ser). Populated every tick
+    # after the kappa update; capped with other histories.
+    kappa_history: list[float] = field(default_factory=list)
     # Pre-#10 scalar bookkeeping — preserved as the "default lane"
     # (swing) view so existing tests + back-compat callers keep working.
     dca_add_count: int = 0
@@ -510,6 +515,10 @@ def run_tick(
     state.kappa = max(20.0, min(
         120.0, state.kappa * 0.8 + (kappa_star + kappa_delta) * 0.2,
     ))
+    # Feed the observer-derived transcendence formula (the canonical
+    # motivators.py path). This is what was missing — without it the
+    # Python kernel was falling back to transcendence=0 every tick.
+    state.kappa_history.append(state.kappa)
 
     w_q, w_e, w_eq = float(basin[0]), float(basin[1]), float(basin[2])
     reg_total = w_q + w_e + w_eq
@@ -579,14 +588,16 @@ def run_tick(
         kernel_state,
         prev_basin=state.last_basin,
         integration_history=state.integration_history,
+        kappa_history=state.kappa_history,
     )
     # Tier 4 sensations + drives. Auxiliary fields (compressed/expanded/
     # pressure/stillness/drift/resonance + approach/avoidance/conservation)
     # and UCP §6.1/§6.2 canonical fields (unified/fragmented/activated/
     # dampened/grounded/drifting + homeostasis/curiosity_drive). Threading
     # drift_history in lets the canonical Grounded/Drifting/Homeostasis
-    # derivations use the observed drift scale; kappa_history is not yet
-    # accumulated, so Activated/Dampened fall through to scale-free tanh.
+    # derivations use the observed drift scale. kappa_history is now
+    # accumulated and passed to the canonical motivators (transcendence
+    # uses median/MAD); sensations still have their own copy for dop/ser.
     sen = compute_sensations(
         kernel_state,
         prev_basin=state.last_basin,
@@ -708,6 +719,9 @@ def run_tick(
         drift_history=state.drift_history,
         stud_reading=stud_reading,
         stud_live=stud_live,
+        # Pass the canonical motivators (now fully wired with observer-derived
+        # transcendence) so detect_mode does not need its own shadow copy.
+        motivators=mot,
     )
     mode = mode_result["mode"]
     mode_changed = state.last_mode is not None and state.last_mode != mode
@@ -1415,6 +1429,8 @@ def run_tick(
         state.fhealth_history = state.fhealth_history[-history_max:]
     if len(state.integration_history) > history_max:
         state.integration_history = state.integration_history[-history_max:]
+    if len(state.kappa_history) > history_max:
+        state.kappa_history = state.kappa_history[-history_max:]
 
     # Persistence completion — write-through SymbolState histories
     # to qig-cache so they survive Railway redeploys. Without this,

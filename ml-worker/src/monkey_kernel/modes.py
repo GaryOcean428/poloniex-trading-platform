@@ -300,6 +300,16 @@ def compute_motivators(
     fhealth_history: list[float],
     neurochemistry: NeurochemicalState,
 ) -> Motivators:
+    """DEPRECATED — internal shadow copy.
+
+    Use the canonical implementation in monkey_kernel.motivators instead
+    (the one wired in tick.py with full kappa_history median/MAD transcendence
+    and the pure soft-saturation dopamine path).
+
+    This local version only exists for direct calls to detect_mode in tests
+    and will be removed once those are updated to pass the canonical motivators
+    object.
+    """
     # Curiosity = ΔΦ this tick (perception-volume expansion).
     # Fix 2026-05-16 (#718): use the current tick's phi_now vs the
     # most recent stored history value. The prior formulation
@@ -398,6 +408,10 @@ def detect_mode(
     drift_history: list[float],
     stud_reading: Any = None,
     stud_live: bool = False,
+    # When the caller (tick.py) passes the canonical motivators (now fully
+    # wired with history-derived transcendence), we use it directly instead
+    # of the legacy local copy below. This deprecates the shadow implementation.
+    motivators: Any = None,
 ) -> dict[str, Any]:
     """Classify current cognitive mode from derived state.
 
@@ -415,13 +429,28 @@ def detect_mode(
 
     drift_now = fisher_rao_distance(basin, identity_basin)
     fh_now = fhealth_history[-1] if fhealth_history else 0.5
-    mot = compute_motivators(
-        phi_now=phi,
-        phi_history=phi_history,
-        drift_history=drift_history,
-        fhealth_history=fhealth_history,
-        neurochemistry=neurochemistry,
-    )
+
+    if motivators is not None:
+        # Preferred path: use the fully-wired canonical motivators from tick.py
+        # (includes observer-derived transcendence, correct kappa_history, etc.).
+        mot = motivators
+    else:
+        # Legacy / direct-call path (tests, old callers). Will be removed
+        # once all call sites are updated.
+        mot = compute_motivators(
+            phi_now=phi,
+            phi_history=phi_history,
+            drift_history=drift_history,
+            fhealth_history=fhealth_history,
+            neurochemistry=neurochemistry,
+        )
+
+    # Frustration is a legacy mode-specific derived field ("persistent drift
+    # without investigation"). Compute it here from available data so we are
+    # independent of the legacy Motivators shape (which the canonical one
+    # does not have). This addresses the contract mismatch flagged in review.
+    investigation_val = getattr(mot, "investigation", 0.0)
+    frustration = abs(drift_now) if investigation_val <= 0 else 0.0
 
     # v0.6.5 gate — basinDirection blocks DRIFT. A clear directional
     # reading means she is NOT in an ambiguous state, regardless of
@@ -465,6 +494,6 @@ def detect_mode(
             "investigation": mot.investigation,
             "integration": mot.integration,
             "surprise": mot.surprise,
-            "frustration": mot.frustration,
+            "frustration": frustration,
         },
     }
