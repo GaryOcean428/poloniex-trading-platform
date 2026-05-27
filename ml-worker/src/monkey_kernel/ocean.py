@@ -377,7 +377,7 @@ class Ocean:
         # exploration-variance series + consecutive-detection counter. Pure
         # telemetry; see _detect_narrow_path.
         self._basin_var_history: Deque[float] = deque(
-            maxlen=_NARROW_PATH_VAR_HISTORY_MAX,
+            maxlen=get_narrow_path_var_history_max(),
         )
         self._narrow_path_count: int = 0
         self._narrow_path_severity: str = "none"
@@ -511,19 +511,19 @@ class Ocean:
         severe. Pure telemetry — the result does NOT influence the
         intervention selection in PR1.
         """
-        if len(self._basin_history) < _NARROW_PATH_WINDOW:
+        if len(self._basin_history) < get_narrow_path_window():
             return False, "none", 0.0
 
         window = np.asarray(
-            list(self._basin_history)[-_NARROW_PATH_WINDOW:], dtype=np.float64,
+            list(self._basin_history)[-get_narrow_path_window():], dtype=np.float64,
         )
         exploration_variance = float(np.mean(np.var(window, axis=0)))
         self._basin_var_history.append(exploration_variance)
 
-        # Baseline EXCLUDES the most recent _NARROW_PATH_WINDOW samples —
+        # Baseline EXCLUDES the most recent get_narrow_path_window() samples —
         # those ticks are under measurement and may be mid-collapse.
-        baseline = list(self._basin_var_history)[:-_NARROW_PATH_WINDOW]
-        if len(baseline) < _NARROW_PATH_MIN_BASELINE:
+        baseline = list(self._basin_var_history)[:-get_narrow_path_window()]
+        if len(baseline) < get_narrow_path_min_baseline():
             self._narrow_path_count = 0
             self._narrow_path_severity = "none"
             return False, "none", exploration_variance
@@ -533,8 +533,8 @@ class Ocean:
         q1 = ordered[min(n - 1, n // 4)]
         q3 = ordered[min(n - 1, (3 * n) // 4)]
         iqr = q3 - q1
-        inner_fence = q1 - _TUKEY_INNER * iqr
-        outer_fence = q1 - _TUKEY_OUTER * iqr
+        inner_fence = q1 - get_tukey_inner() * iqr
+        outer_fence = q1 - get_tukey_outer() * iqr
 
         if exploration_variance < outer_fence:
             severity, is_narrow = "severe", True
