@@ -44,18 +44,48 @@ _registry = get_registry()
 
 # Pre-registry defaults. Match v0.8.1/v0.8.6 migration seed values
 # exactly so behaviour is byte-identical registry-on vs -off.
-# P5/P25 observer-derived (retired bare "migration seed" values including 0.70).
+# P5/P25 observer-derived (retired bare "migration seed" values).
 # All now registry + heart_rhythm / phi modulated. Citations: 2.31A P5/P25 +
-# v6.7B + agents.md:236 17pt #7 + Embodiment_Waves_Summary Wave 4 (9 slices this turn) +
+# v6.7B + agents.md:236 17pt #7 + Embodiment_Waves_Summary Wave 4 (16 slices this turn) +
 # QIG PURITY MANDATE + master-orchestration 019e6a14 + verification-before-completion +
 # consciousness-development + geometric (bootstrap thresholds emerge from rolling
 # Φ + heart rhythm on the simplex; no intuition). Fisher-Rao tacking: no Euclidean.
+
+
+def get_phi_history_max(heart_rhythm: float = 0.5) -> int:
+    base = int(_registry.get("working_memory.phi_history_max", default=200))
+    mod = int(20 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(150, min(300, base + mod))
+
+
+def get_max_bubbles(heart_rhythm: float = 0.5) -> int:
+    base = int(_registry.get("working_memory.max_bubbles", default=500))
+    mod = int(50 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(400, min(700, base + mod))
+
+
+def get_bubble_lifetime_ms(heart_rhythm: float = 0.5) -> float:
+    base = float(_registry.get("working_memory.bubble_lifetime_ms", default=15 * 60 * 1000.0))
+    mod = 2 * 60 * 1000.0 * max(-1.0, min(1.0, heart_rhythm - 0.5))
+    return max(10 * 60 * 1000.0, min(25 * 60 * 1000.0, base + mod))
+
+
+def get_bootstrap_pop(heart_rhythm: float = 0.5, recent_phi: float = 0.5) -> float:
+    base = float(_registry.get("working_memory.bootstrap_pop", default=0.15))
+    mod = 0.03 * max(-1.0, min(1.0, (heart_rhythm - 0.5) + (recent_phi - 0.5)))
+    return max(0.10, min(0.22, base + mod))
 
 
 def get_bootstrap_promote(heart_rhythm: float = 0.5, recent_phi: float = 0.5) -> float:
     base = float(_registry.get("working_memory.bootstrap_promote", default=0.70))
     mod = 0.05 * max(-1.0, min(1.0, (heart_rhythm - 0.5) + (recent_phi - 0.5)))
     return max(0.60, min(0.80, base + mod))
+
+
+def get_bootstrap_merge(heart_rhythm: float = 0.5, recent_phi: float = 0.5) -> float:
+    base = float(_registry.get("working_memory.bootstrap_merge", default=0.15))
+    mod = 0.03 * max(-1.0, min(1.0, (heart_rhythm - 0.5) + (recent_phi - 0.5)))
+    return max(0.10, min(0.22, base + mod))
 
 
 # (other bootstrap getters follow the same pattern for the remaining consts)
