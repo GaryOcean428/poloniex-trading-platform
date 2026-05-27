@@ -164,9 +164,12 @@ def detect_inverted_hammer(candles: Sequence) -> PatternReading:
     lower_ratio = c.lower_wick / c.range
     if body_ratio > 0.4:
         return PatternReading("inverted_hammer", 0.0, 0)
-    if upper_ratio < 0.55 or lower_ratio > 0.15:
+    # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern as hammer).
+    inv_hammer_upper = float(_registry.get("candle.inv_hammer_upper_ratio", default=0.55))
+    inv_hammer_lower = float(_registry.get("candle.inv_hammer_lower_ratio", default=0.15))
+    if upper_ratio < inv_hammer_upper or lower_ratio > inv_hammer_lower:
         return PatternReading("inverted_hammer", 0.0, 0)
-    strength = float(np.clip((upper_ratio - 0.55) / 0.45, 0.0, 1.0))
+    strength = float(np.clip((upper_ratio - inv_hammer_upper) / (1.0 - inv_hammer_upper), 0.0, 1.0))
     if len(candles) >= 6:
         prev = [_row(x).close for x in list(candles)[-6:-1]]
         if prev[-1] < prev[0]:
