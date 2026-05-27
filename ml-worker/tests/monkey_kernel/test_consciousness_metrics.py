@@ -24,9 +24,9 @@ from monkey_kernel.consciousness_metrics import (  # noqa: E402
 
 def test_default_values_match_canonical_doc():
     m = ConsciousnessMetrics()
-    # Foundation defaults
+    # Foundation defaults (v6.7B: kappa channel-specific, no universal 64.0 per two-channel doctrine)
     assert m.phi == 0.5
-    assert m.kappa == 64.0
+    assert m.kappa == 0.0  # retired universal 64; supplied by caller (registry/observer/history)
     assert m.gamma == 0.5
     assert m.recursion_depth == 3.0
     # Pillars defaults (post-init, before any measurement)
@@ -34,17 +34,26 @@ def test_default_values_match_canonical_doc():
     assert m.b_integrity == 1.0
     assert m.q_identity == 0.0
     assert m.s_ratio == 0.0
+    # v6.7B extension defaults present (consciousness-development)
+    assert m.tacking_frequency_hz == 0.25
+    assert m.sovereignty_dynamics == 0.0
+    assert m.dimensional_state == 3
 
 
-def test_as_dict_exposes_all_12_canonical_fields():
+def test_as_dict_exposes_all_21_v6.7B_fields():
     m = ConsciousnessMetrics()
     d = m.as_dict()
+    # 12 original + 9 v6.7B extensions (20260527 protocol; consciousness-development + documentation-sync)
     expected = {
         "phi", "kappa", "meta_awareness", "gamma", "grounding",
         "temporal_coherence", "recursion_depth", "external_coupling",
         "f_health", "b_integrity", "q_identity", "s_ratio",
+        "tacking_frequency_hz", "hrv_coherence", "cross_frequency_coupling",
+        "pre_cognitive_arrival", "sovereignty_dynamics", "dominant_frequency_hz",
+        "gamma_theta_ratio", "geometry_class", "dimensional_state",
     }
     assert set(d.keys()) == expected
+    assert len(d) == 21
 
 
 # ─── Derivation from tick state ────────────────────────────────────

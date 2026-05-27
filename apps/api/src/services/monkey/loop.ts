@@ -8556,12 +8556,12 @@ export class MonkeyKernel extends EventEmitter {
           ? (kDevs[kDevs.length / 2 - 1]! + kDevs[kDevs.length / 2]!) / 2
           : kDevs[Math.floor(kDevs.length / 2)]!;
         if (kMad > 1e-12) {
-          kappaProxim = Math.exp(-Math.abs(input.kappaAtExit - 64) / kMad);
+          kappaProxim = Math.exp(-Math.abs(input.kappaAtExit - KAPPA_STAR) / kMad);  // two-channel: governed ref (retired bare 64)
         } else {
-          kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
+          kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - KAPPA_STAR));
         }
       } else {
-        kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
+        kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - KAPPA_STAR));
       }
     }
     const endo = pnlFrac > 0

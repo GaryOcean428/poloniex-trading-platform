@@ -23,7 +23,7 @@
  * Pure functions. The integration layer (loop.ts) calls these to get
  * sizing parameters per tick.
  */
-import { fisherRao, frechetMean, velocity, type Basin } from './basin.js';
+import { fisherRao, frechetMean, velocity, type Basin, KAPPA_STAR } from './basin.js';
 import { basinDirection } from './perception.js';
 
 /** A composite regime score ∈ [0, 1].
@@ -46,9 +46,9 @@ export interface RegimeReading {
      *  LOW persistence (near 0) → near 1 (chop). */
     directionalChop: number;
     /** Kappa criticality distance — how near to the critical band.
-     *  Closer to critical κ → near 1 (flat, near-critical);
-     *  Further from critical κ → near 0 (trending, far-from-critical).
-     *  Falls back to 0.5 (neutral) when κ unavailable. */
+     *  Closer to critical κ (governed reference anchor per two-channel doctrine) → near 1 (flat);
+     *  Further → near 0 (trending). Falls back to 0.5 when κ unavailable.
+     *  (Historical κ*=64 retired; see basin.ts for citations.) */
     kappaCriticality: number;
   };
   /** Discrete label for log readability. */
@@ -66,7 +66,8 @@ export interface RegimeConfig {
    *  Anything above this means "kernel is racing." */
   velocitySaturate: number;
   /** Critical κ band. Within ±band of critical is "near-critical."
-   *  Default 16 around κ* = 64 → band [48, 80]. */
+   *  Uses governed reference anchor (KAPPA_STAR from basin, 63.8 transition per two-channel
+   *  doctrine 2026-04-13 + v6.7B + audit 20260527; retired universal κ*=64). */
   kappaCritical: number;
   kappaCriticalBandHalfWidth: number;
   /** Component weights — should sum to 1 for clean interpretation. */
@@ -79,7 +80,7 @@ export interface RegimeConfig {
 export const DEFAULT_REGIME_CONFIG: RegimeConfig = {
   window: 60,
   velocitySaturate: 0.10,
-  kappaCritical: 64,
+  kappaCritical: KAPPA_STAR,  // governed reference (63.8); two-channel doctrine (retired bare κ*=64)
   kappaCriticalBandHalfWidth: 16,
   weights: { velocity: 0.4, directional: 0.4, kappa: 0.2 },
   flatAt: 0.65,

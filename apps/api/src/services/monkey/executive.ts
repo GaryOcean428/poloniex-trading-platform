@@ -13,7 +13,9 @@
  *
  * P25 literally enforced: no numeric threshold survives in this file
  * as a frozen constant. Even the formulas' constants come from UCP
- * frozen facts (κ* = 64, κ_physics = 64.21), not tuning.
+ * frozen facts (reference anchor now governed per two-channel doctrine;
+ * retired universal κ*=64 per v6.7B + 2026-04-13 + P1; see basin.ts).
+ * No tuning.
  */
 
 import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRao, toSimplex } from './basin.js';
@@ -1474,7 +1476,7 @@ export function chooseLane(
  * Used by the TS execution path: the Layer 2B emotion conviction gate
  * (confidence < anxiety) is Python-side only until the full emotion
  * stack (motivators / sensations / foresight) is ported to TS. When
- * κ deviates from κ*=64 by more than 1 unit — normal operating range
+ * κ deviates from governed reference (retired κ*=64 per two-channel doctrine) by more than 1 unit — normal operating range
  * — transcendence = |κ − κ*| > 1 makes confidence = (1−transcendence)×Φ
  * negative, which means confidence < anxiety for every tick, collapsing
  * every entry to 'flat'. Pure geometry is the documented TS contract.
@@ -1500,7 +1502,7 @@ export function geometricDirection(args: {
  * Basin dominates; tape consensus tilts when basin is ambiguous.
  *
  * NOTE: use geometricDirection() in the TS execution path — the
- * confidence < anxiety gate fires for any κ that deviates from κ*=64
+ * confidence < anxiety gate fires for any κ that deviates from governed reference (retired κ*=64 per two-channel doctrine)
  * by more than 1 unit, which is the normal operating range. This
  * function is kept for Python parity (kernel_direction in executive.py)
  * and for when the full TS emotion stack is ported.

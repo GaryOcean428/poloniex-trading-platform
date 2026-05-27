@@ -181,29 +181,31 @@ describe('Transcendence (Pillar 3 earned anchor)', () => {
   it('zero on cold start (no kappaHistory / insufficient samples)', () => {
     const m = computeMotivators(makeState({ kappa: KAPPA_STAR }));
     expect(m.transcendence).toBe(0);
-    const m2 = computeMotivators(makeState({ kappa: 70 }), { kappaHistory: [64] });
+    const m2 = computeMotivators(makeState({ kappa: 70 }), { kappaHistory: [KAPPA_STAR] });
     expect(m2.transcendence).toBe(0);
   });
 
-  it('zero when κ exactly at history median', () => {
-    const hist = [63.8, 64.0, 64.2];
-    const m = computeMotivators(makeState({ kappa: 64.0 }), { kappaHistory: hist });
+  it('zero when κ exactly at history median (observer-derived per two-channel doctrine)', () => {
+    // Historical 64 literals retired (pre two-channel 2026-04-13 + v6.7B audit); use governed KAPPA_STAR (63.8)
+    const hist = [63.7, KAPPA_STAR, 63.9];
+    const m = computeMotivators(makeState({ kappa: KAPPA_STAR }), { kappaHistory: hist });
     expect(m.transcendence).toBeCloseTo(0, 12);
   });
 
   it('rises smoothly when κ departs from own observed median (MAD scale)', () => {
-    const hist = [63.8, 64.0, 64.2];
-    const atMedian = computeMotivators(makeState({ kappa: 64.0 }), { kappaHistory: hist });
+    const hist = [63.7, KAPPA_STAR, 63.9];
+    const atMedian = computeMotivators(makeState({ kappa: KAPPA_STAR }), { kappaHistory: hist });
     const off = computeMotivators(makeState({ kappa: 66.0 }), { kappaHistory: hist });
     expect(off.transcendence).toBeGreaterThan(atMedian.transcendence);
   });
 
-  it('shared fixture parity value (exact numbers for py cross-test #940)', () => {
+  it('shared fixture parity value (exact numbers for py cross-test #940) — v6.7B two-channel', () => {
     // This fixture must produce identical numeric transcendence on both
-    // TS and Python sides. Median=64.0, devs=[0.2,0,0.2] → sorted [0,0.2,0.2],
-    // n=3 odd → mad=0.2; raw=|66-64|/0.2=10; bounded tanh(10) ~0.9999999958776927
-    const hist = [63.8, 64.0, 64.2];
-    const m = computeMotivators(makeState({ kappa: 66.0 }), { kappaHistory: hist });
+    // TS and Python sides. Uses governed reference anchor KAPPA_STAR (Python registry default 63.8).
+    // (Retired bare median=64 language per doctrine.)
+    // hist median 63.8, kappa=65.8 → |dev|=2.0, mad=0.2, raw=10 exactly.
+    const hist = [63.6, 63.8, 64.0];
+    const m = computeMotivators(makeState({ kappa: 65.8 }), { kappaHistory: hist });
     expect(m.transcendence).toBeCloseTo(Math.tanh(10), 12);
   });
 });

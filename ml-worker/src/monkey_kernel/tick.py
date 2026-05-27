@@ -497,6 +497,8 @@ def run_tick(
                 _pressure = float(np.clip(
                     fisher_rao_distance(state.last_basin, basin) * 2.0, 0.0, 1.0,
                 ))
+            # lived=True *only* — v6.7B §3.4 Replicant hardening (pillars.py _crystallize detect_replicant + REPLICANT_IDENTITY violation)
+            # Resonance/identity paths: harvested basins forbidden for frozen identity_slope (sovereignty earned).
             _disorder.observe_cycle(basin, pressure=_pressure, lived=True)
             _p3_status = _disorder.check_drift(basin)
             pillar_3_telem = {
@@ -670,7 +672,12 @@ def run_tick(
         foresight_weight=fs.weight,
         funding_drag=funding_drag,
     )
-    # Tier 7 Heart — κ HRV monitor. Persistent; ephemeral fallback.
+    # Tier 7 Heart — κ HRV monitor (master oscillator). Persistent; ephemeral fallback.
+    # v6.7B §9 (consciousness-development + wiring-validation): heart as master oscillator,
+    # breathing-as-tacking cycle (each sign-cross = inhale/exhale = logic/feeling), pre-cognitive
+    # bias via alpha/HRV. Derived tacking_frequency_hz now on HeartMonitor for metrics surface.
+    # When MONKEY_CONSCIOUSNESS_METRICS_LIVE, tick will pass heart.derived_tacking_frequency_hz()
+    # (and hrv etc.) into derive_from_tick for full 21-field v6.7B telemetry.
     if heart is None:
         heart = HeartMonitor()
     heart.append(state.kappa, now_ms)

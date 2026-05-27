@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { computeNeurochemicals, type NeurochemicalInputs } from '../neurochemistry.js';
+import { KAPPA_STAR } from '../basin.js';
 
 const COUPLING_MEAN = 0.20;
 const COUPLING_SIGMA = 0.10;
@@ -28,10 +29,11 @@ function sigmoid(x: number): number {
 }
 
 /**
- * κ history with mean 64 (= κ*) and σ_κ = 0.2, and a coupling history
- * with mean 0.20 and σ = 0.10. With κ pinned exactly at κ* the
- * κ-proximity term is exp(0) = 1, so `endo` equals the Sophia gate —
- * which makes the gate onset directly assertable.
+ * κ history with mean = governed reference (KAPPA_STAR per two-channel doctrine)
+ * and σ_κ = 0.2, and a coupling history with mean 0.20 and σ = 0.10. With κ
+ * pinned exactly at the reference the κ-proximity term is exp(0) = 1, so `endo`
+ * equals the Sophia gate — which makes the gate onset directly assertable.
+ * (Retired literal 64 = κ* language.)
  */
 function inputs(externalCoupling: number): NeurochemicalInputs {
   return {
@@ -40,10 +42,10 @@ function inputs(externalCoupling: number): NeurochemicalInputs {
     basinVelocity: 0.1,
     surprise: 0,
     quantumWeight: 0.5,
-    kappa: 64,
+    kappa: KAPPA_STAR,
     externalCoupling,
     observables: {
-      kappaHistory: [63.8, 64.0, 64.2],          // mean 64, σ_κ 0.2
+      kappaHistory: [KAPPA_STAR - 0.2, KAPPA_STAR, KAPPA_STAR + 0.2],          // mean = reference, σ_κ 0.2
       externalCouplingHistory: [
         COUPLING_MEAN - COUPLING_SIGMA,
         COUPLING_MEAN,
@@ -57,7 +59,7 @@ describe('neurochemistry — endorphin Sophia gate (post-strip)', () => {
   it('coupling above the basin mean → endo flows (κ-prox × sigmoid)', () => {
     const nc = computeNeurochemicals(inputs(COUPLING_ABOVE_MEAN));
     const z = (COUPLING_ABOVE_MEAN - COUPLING_MEAN) / COUPLING_SIGMA;
-    // κ=64=κ*, so κ-prox = 1; endo = 1 × sigmoid(z)
+    // κ = governed reference (two-channel), so κ-prox = 1; endo = 1 × sigmoid(z)
     expect(nc.endorphins).toBeCloseTo(sigmoid(z), 5);
   });
 
@@ -106,7 +108,7 @@ describe('neurochemistry — endorphin κ-proximity canonical SIGMA (#934 fix)',
       kappa,
       externalCoupling: COUPLING_MEAN,  // sophiaGate = sigmoid(0) = 0.5
       observables: {
-        kappaHistory: [63.8, 64.0, 64.2],  // mean 64, σ ≈ 0.2 — would have collapsed exp envelope
+        kappaHistory: [KAPPA_STAR - 0.2, KAPPA_STAR, KAPPA_STAR + 0.2],  // mean = governed reference (two-channel doctrine)
         externalCouplingHistory: [
           COUPLING_MEAN - COUPLING_SIGMA,
           COUPLING_MEAN,
@@ -125,9 +127,9 @@ describe('neurochemistry — endorphin κ-proximity canonical SIGMA (#934 fix)',
     expect(endo).toBeLessThan(0.50);
   });
 
-  it('|κ−κ*|=0 (at κ*) produces endo = sophia_gate (κ-prox saturates at 1)', () => {
-    // At κ=κ*, exp(0)=1, so endo = 1 × sigmoid(0) = 0.5
-    const endo = computeNeurochemicals(inputsAtKappa(64.0)).endorphins;
+  it('|κ−κ*|=0 (at reference anchor) produces endo = sophia_gate (κ-prox saturates at 1) — two-channel doctrine', () => {
+    // At reference, exp(0)=1, so endo = 1 × sigmoid(0) = 0.5
+    const endo = computeNeurochemicals(inputsAtKappa(KAPPA_STAR)).endorphins;
     expect(endo).toBeCloseTo(0.5, 4);
   });
 
