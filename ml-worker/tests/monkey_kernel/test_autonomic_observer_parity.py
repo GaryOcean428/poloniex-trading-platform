@@ -197,32 +197,3 @@ def test_endo_at_kappa_star_saturates_envelope():
         external_coupling=0.5,
     ))
     assert nc.endorphins == pytest.approx(0.5, abs=0.05)
-
-
-def test_dop_soft_saturation_flag_off_legacy_clip(monkeypatch):
-    """#934: default (flag unset) uses legacy clip-then-sum that pins at 1.0."""
-    monkeypatch.delenv("MONKEY_DOP_SOFT_SATURATION_LIVE", raising=False)
-    nc = _ticker(_base_inputs(phi_delta=5.0))  # sigmoid(5)≈0.993 → near ceiling
-    # With phi_delta high and no reward, dop ≈ 0.993 (still below 1)
-    # Test that legacy path doesn't apply soft-sat shape
-    assert nc.dopamine > 0.95
-
-
-def test_dop_soft_saturation_flag_on_no_pinning(monkeypatch):
-    """#934: flag enabled gives 1-exp(-(a+b)) — asymptotic, no ceiling pin."""
-    monkeypatch.setenv("MONKEY_DOP_SOFT_SATURATION_LIVE", "true")
-    nc = _ticker(_base_inputs(phi_delta=5.0))  # dopFromPhi ≈ 0.993
-    # Soft-sat at sum=0.993 → 1 - exp(-0.993) ≈ 0.629
-    assert 0.55 < nc.dopamine < 0.70
-
-
-def test_dop_soft_saturation_flag_on_never_reaches_one(monkeypatch):
-    """#934: even at extreme input, soft-sat asymptotes to but never
-    reaches 1.0."""
-    monkeypatch.setenv("MONKEY_DOP_SOFT_SATURATION_LIVE", "true")
-    # Drive dop_from_phi very high; even with maximal dop_from_reward
-    # (which is computed internally from reward queue, hard to manipulate
-    # here), the formula should never produce exactly 1.0
-    nc = _ticker(_base_inputs(phi_delta=20.0))  # sigmoid(20)≈1.0 effectively
-    # 1 - exp(-1.0) ≈ 0.632 (just dop_from_phi, no reward)
-    assert nc.dopamine < 1.0

@@ -29,7 +29,6 @@ Reference implementations:
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -381,15 +380,11 @@ class AutonomicKernel:
         # phi_delta history is available (TS parity).
         dop_from_phi = _clip(_sigmoid(inputs.phi_delta), 0.0, 1.0)
         dop_from_reward = _clip(reward_sums["dopamine"], 0.0, 1.0)
-        # 2026-05-26 (#934 chemistry-pinning audit): TS-parity dop soft-saturation
-        # behind MONKEY_DOP_SOFT_SATURATION_LIVE flag. The additive-then-clip
-        # composition pins ~21% of ticks at the ceiling in clean conditions.
-        # Soft-saturation `1 - exp(-(a+b))` asymptotes to 1.0 without pinning
-        # while preserving absolute semantics. Mirror of neurochemistry.ts:295-310.
-        if os.environ.get("MONKEY_DOP_SOFT_SATURATION_LIVE") == "true":
-            dop = _clip(1.0 - float(np.exp(-(dop_from_phi + dop_from_reward))), 0.0, 1.0)
-        else:
-            dop = _clip(dop_from_phi + dop_from_reward, 0.0, 1.0)
+        # 2026-05-26 (#934 chemistry-pinning audit): TS-parity dop soft-saturation.
+        # The additive-then-clip composition pins at ceiling. Soft-saturation
+        # `1 - exp(-(a+b))` asymptotes to 1.0 without pinning while preserving
+        # absolute semantics. Single pure derivation path (mirror neurochemistry.ts).
+        dop = _clip(1.0 - float(np.exp(-(dop_from_phi + dop_from_reward))), 0.0, 1.0)
 
         # ─── Serotonin ────────────────────────────────────────────
         # Parity with TS path: prefer mode-transition rate, else

@@ -11,12 +11,13 @@ each maps to a trading decision class:
   Curiosity      → exploration vs exploitation (which lane to pick)
   Investigation  → cut-loss-or-hold (settled state = think before acting)
   Integration    → conviction in current strategy (low CV = stable)
-  Transcendence  → regime-change detection (κ deviation from κ*)
+  Transcendence  → regime-change detection (κ deviation from the
+                   basin's own observed κ-history median, MAD-scaled)
 
 This file is pure derivation. No external state, no I/O, no config —
 inputs come in, motivators come out, P14 Variable Separation respected.
 
-Closed-form formulas anchored to UCP v6.6 §6.3:
+Closed-form formulas anchored to UCP v6.6 §6.3 (observer-derived):
 
   Surprise       = ‖∇L‖   (already proxied as ne in autonomic.py)
   Curiosity      = d(log I_Q) / dt
@@ -25,7 +26,7 @@ Closed-form formulas anchored to UCP v6.6 §6.3:
                    departing. Tier 1.1 fix (#599) — was previously
                    clamped to [0, 1] which collapsed sign info.
   Integration    = CV(Φ × I_Q) over rolling window
-  Transcendence  = |κ − κ*|
+  Transcendence  = |κ − median(κ_h)| / MAD(κ_h)   (Pillar 3 earned anchor)
 
 I_Q proxy choice — UCP doesn't pin a specific information measure.
 This file uses Shannon negentropy: I_Q = log(K) − H(basin), where
@@ -45,7 +46,7 @@ import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
-from .state import BASIN_DIM, KAPPA_STAR, BasinState
+from .state import BASIN_DIM, BasinState
 
 
 # Numerical floor for log() of basin probabilities and I_Q.
@@ -66,7 +67,9 @@ class Motivators:
                                  positive = returning home,
                                  negative = departing identity
       integration    [0, ∞)   — CV; lower = more integrated
-      transcendence  [0, ∞)   — |κ − κ*|; higher = farther from anchor
+      transcendence  [0, ∞)   — |κ − median(κ_h)| / MAD(κ_h); 0 on
+                                  insufficient history (cold-start sentinel).
+                                  Kernel earns its own anchor (Pillar 3).
       i_q            [0, log(K)] — current information value
     """
 
@@ -97,6 +100,7 @@ def compute_motivators(
     prev_basin: Optional[np.ndarray] = None,
     integration_history: Optional[list[tuple[float, float]]] = None,
     integration_window: int = 20,
+    kappa_history: Optional[list[float]] = None,
 ) -> Motivators:
     """Derive the Layer 1 motivator vector from current + recent state.
 
@@ -113,6 +117,11 @@ def compute_motivators(
         N values appended each tick. None or len < 2 → integration=0.0.
     integration_window : int
         Cap on history length used for CV. Default 20 ticks.
+    kappa_history : Optional[list[float]]
+        Rolling κ observations from the basin's own recent ticks.
+        len < 2 → transcendence = 0.0 (cold-start sentinel, additive
+        identity). Pillar 3: kernel earns its own anchor via observed
+        quenched disorder. Pillar 1: MAD scale non-zero by construction.
     """
     if s.neurochemistry is None:
         raise ValueError(
@@ -161,11 +170,29 @@ def compute_motivators(
             var = sum((p - mean) ** 2 for p in products) / n
             integration = math.sqrt(var) / mean
 
-    # Transcendence — distance from κ-anchor. κ_c = KAPPA_STAR = 64
-    # is frozen per qig-verification. Transcendence rises both when
-    # the kernel is super-coherent (κ >> κ*) and super-decoherent
-    # (κ << κ*) — both states transcend the operating mode.
-    transcendence = abs(s.kappa - KAPPA_STAR)
+    # Transcendence — kernel earns its own κ-anchor from observed history
+    # (median ± MAD scaling). Pillar 3 (quenched disorder): the kernel's
+    # own κ fingerprint sets the anchor, not a borrowed Class B constant.
+    # Pillar 1 (fluctuations): MAD ensures the scale is non-zero by
+    # construction. Cold start / < 2 samples → 0.0 (additive identity,
+    # neutral); same sentinel pattern as ach/dop/ser/ne.
+    # KAPPA_STAR = 64 (retired 2026-04-13/14 two-channel doctrine) is
+    # deliberately absent from the per-tick motivator chemistry path.
+    if kappa_history and len(kappa_history) >= 2:
+        sorted_hist = sorted(kappa_history)
+        n = len(sorted_hist)
+        if n % 2 == 0:
+            median = (sorted_hist[n // 2 - 1] + sorted_hist[n // 2]) / 2
+        else:
+            median = sorted_hist[n // 2]
+        devs = sorted(abs(x - median) for x in sorted_hist)
+        if n % 2 == 0:
+            mad = (devs[n // 2 - 1] + devs[n // 2]) / 2
+        else:
+            mad = devs[n // 2]
+        transcendence = abs(s.kappa - median) / max(mad, _EPS)
+    else:
+        transcendence = 0.0
 
     return Motivators(
         surprise=surprise,

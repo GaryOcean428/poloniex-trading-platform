@@ -227,13 +227,14 @@ describe('autonomic feedback — dop z-scored from basin\'s own phiDelta history
       phiHistory.push(phi);
     }
 
-    // A phiDelta far above the basin's mean delta → z>>0 → dop near 1
+    // A phiDelta far above the basin's mean delta → z>>0 → dopFromPhi~1
+    // + reward0 → soft-sat 1-exp(-1) ≈0.632 (pure single path, never pins)
     const dopAbove = computeNeurochemicals({
       ...baseInputs,
       phiDelta: 0.020,
       observables: { phiHistory },
     }).dopamine;
-    expect(dopAbove).toBeGreaterThan(0.9);
+    expect(dopAbove).toBeGreaterThan(0.6);
 
     // A phiDelta far below the basin's mean delta → z<<0 → dop near 0
     const dopBelow = computeNeurochemicals({
@@ -246,7 +247,7 @@ describe('autonomic feedback — dop z-scored from basin\'s own phiDelta history
     expect(dopAbove).toBeGreaterThan(dopBelow);
   });
 
-  it('cold start (no phiHistory) falls back to sigmoid(phiDelta) — arithmetic identity', () => {
+  it('cold start (no phiHistory) falls back to sigmoid(phiDelta) then soft-sat — arithmetic identity', () => {
     const dop = computeNeurochemicals({
       isAwake: true,
       phiDelta: 0,
@@ -256,7 +257,8 @@ describe('autonomic feedback — dop z-scored from basin\'s own phiDelta history
       kappa: 64,
       externalCoupling: 0.5,
     }).dopamine;
-    expect(dop).toBeCloseTo(0.5, 6);  // sigmoid(0) = 0.5
+    // dopFromPhi = sigmoid(0) = 0.5; dop = 1 - exp(-0.5) ≈ 0.39347 (pure soft-sat)
+    expect(dop).toBeCloseTo(0.393469, 5);
   });
 });
 
