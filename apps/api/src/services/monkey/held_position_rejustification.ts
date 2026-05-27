@@ -149,6 +149,30 @@ export interface RejustificationInput {
    * back-compat with callers that don't yet thread origin.
    */
   origin?: 'own' | 'adopted';
+  /**
+   * Hold-time floor 2026-05-28 (CC1, operator-selected fix):
+   * Internal-coherence exits (regime_change, phi_collapse,
+   * conviction_failed) are suppressed until the position has been held
+   * at least `holdTimeFloorS` seconds. Derived from the lane's
+   * `LANE_DECISION_PERIOD_MS` (scalp 60s, swing 180s, trend 600s) —
+   * NOT an operator knob. The lane *defines* its decision period;
+   * exiting before that period elapses means the kernel hasn't given
+   * its own thesis room to develop.
+   *
+   * The 2026-05-27 audit showed avg hold 8min on trend trades whose
+   * lane decision-period is 600s (10 min). Wins capture 0.08% of
+   * notional, losses 0.18%, loss/win ratio 2× — the textbook
+   * wins-cut-short-losses-let-run pattern. This floor is the
+   * structural cure.
+   *
+   * IMPORTANT: TP, hard SL, directional_disagreement (basinDir flip),
+   * and stale_bleed are NEVER gated by this floor — they're safety
+   * exits that must fire promptly regardless of time. Only the
+   * internal-coherence checks are gated.
+   *
+   * Undefined disables the floor (legacy callers; back-compat).
+   */
+  holdTimeFloorS?: number;
 }
 
 export type RejustificationFire =
@@ -232,6 +256,19 @@ export function evaluateRejustification(
   }
   const phiFloor = phiAtOpen / PHI_GOLDEN_FLOOR_RATIO;
 
+  // Hold-time floor 2026-05-28 (CC1, operator-selected fix):
+  // The 2026-05-27 audit showed avg hold 8 min on positions whose lane
+  // decision period is 60-600s — wins get harvested before edges develop.
+  // When the floor is supplied AND the position hasn't aged into it yet,
+  // internal-coherence exits (regime/phi/conviction) are SUPPRESSED.
+  // directional_disagreement is exempt (safety: basinDir flipped against
+  // held side is decisive regardless of time).
+  // stale_bleed runs at L350+ with its own 30min duration gate which is
+  // strictly larger than any lane period, so the floor doesn't conflict.
+  const heldS = input.heldDurationS ?? Infinity;  // Infinity = floor passes by default
+  const floorS = input.holdTimeFloorS ?? 0;
+  const beforeHoldTimeFloor = heldS < floorS;
+
   // Commit 3 (Cascade brief 2026-05-27): adopted positions skip the
   // regime / phi / conviction / stale_bleed checks. Those gates assume
   // the kernel's own basin context at entry — adopted positions never
@@ -284,7 +321,7 @@ export function evaluateRejustification(
   // rejects single-tick noise; the FR filter rejects label changes
   // where the basin's geometry has barely moved (the kernel's
   // perception is still consonant with what justified entry).
-  if (regimeNow !== regimeAtOpen) {
+  if (regimeNow !== regimeAtOpen && !beforeHoldTimeFloor) {
     const confidenceLoadBearing = regimeConfidence > PI_STRUCT_BOUNDARY_R_SQUARED;
     const streakSatisfied = regimeChangeStreak >= regimeStabilityTicksRequired;
     // FR-distance gate. When anchors are missing (basin not plumbed),
@@ -309,7 +346,7 @@ export function evaluateRejustification(
       };
     }
   }
-  if (phiNow < phiFloor) {
+  if (phiNow < phiFloor && !beforeHoldTimeFloor) {
     return {
       checked: true,
       fired: 'phi_collapse',
@@ -332,6 +369,7 @@ export function evaluateRejustification(
   if (
     emotions.confidence < emotions.anxiety + emotions.confusion
     && convictionFailedStreak >= convictionFailedTicksRequired
+    && !beforeHoldTimeFloor
   ) {
     return {
       checked: true,

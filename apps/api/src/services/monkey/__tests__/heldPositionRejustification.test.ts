@@ -769,3 +769,138 @@ describe('held-position rejustification — conviction post-Layer-2B-port', () =
     expect(out.fired).toBe('conviction_failed');
   });
 });
+
+// ─── Hold-time floor (2026-05-28 CC1 operator-selected fix) ────────
+
+describe('hold-time floor suppresses internal-coherence exits', () => {
+  const FLOOR = 600; // seconds — mirrors LANE_DECISION_PERIOD_MS.trend / 1000
+
+  it('regime_change is suppressed when held < floor', () => {
+    const basinA: Basin = uniformBasin(BASIN_DIM);
+    const basinB: Basin = Array.from({ length: BASIN_DIM }, (_, i) =>
+      i === 0 ? 1.0 : 0.0,
+    );
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.20,
+      emotions: NEUTRAL_EMO,
+      regimeConfidence: 0.99,
+      regimeChangeStreak: 10,
+      regimeStabilityTicksRequired: 3,
+      basinAtOpen: basinA,
+      basinNow: basinB,
+      heldDurationS: 30,        // held 30s, floor 600s
+      holdTimeFloorS: FLOOR,
+    });
+    expect(out.fired).not.toBe('regime_change');
+  });
+
+  it('regime_change fires once held >= floor (same scenario, different time)', () => {
+    const basinA: Basin = uniformBasin(BASIN_DIM);
+    const basinB: Basin = Array.from({ length: BASIN_DIM }, (_, i) =>
+      i === 0 ? 1.0 : 0.0,
+    );
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.20,
+      emotions: NEUTRAL_EMO,
+      regimeConfidence: 0.99,
+      regimeChangeStreak: 10,
+      regimeStabilityTicksRequired: 3,
+      basinAtOpen: basinA,
+      basinNow: basinB,
+      heldDurationS: 700,       // held 700s > 600s floor
+      holdTimeFloorS: FLOOR,
+    });
+    expect(out.fired).toBe('regime_change');
+  });
+
+  it('phi_collapse is suppressed when held < floor', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.10,             // well below floor 0.27 / φ ≈ 0.167
+      emotions: NEUTRAL_EMO,
+      heldDurationS: 30,
+      holdTimeFloorS: FLOOR,
+    });
+    expect(out.fired).not.toBe('phi_collapse');
+  });
+
+  it('phi_collapse fires once held >= floor', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.10,
+      emotions: NEUTRAL_EMO,
+      heldDurationS: 700,
+      holdTimeFloorS: FLOOR,
+    });
+    expect(out.fired).toBe('phi_collapse');
+  });
+
+  it('conviction_failed is suppressed when held < floor', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: { confidence: 0.05, anxiety: 0.15, confusion: 0.10 },
+      convictionFailedStreak: 5,
+      convictionFailedTicksRequired: 2,
+      heldDurationS: 30,
+      holdTimeFloorS: FLOOR,
+    });
+    expect(out.fired).not.toBe('conviction_failed');
+  });
+
+  it('conviction_failed fires once held >= floor', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: { confidence: 0.05, anxiety: 0.15, confusion: 0.10 },
+      convictionFailedStreak: 5,
+      convictionFailedTicksRequired: 2,
+      heldDurationS: 700,
+      holdTimeFloorS: FLOOR,
+    });
+    expect(out.fired).toBe('conviction_failed');
+  });
+
+  it('stale_bleed is NOT gated by the floor (safety exit must fire regardless of time)', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: NEUTRAL_EMO,
+      heldDurationS: STALE_BLEED_MIN_DURATION_S + 1,  // 30min+ held
+      currentRoi: STALE_BLEED_ROI_THRESHOLD - 0.005,  // worse than -1%
+      holdTimeFloorS: FLOOR,
+    });
+    // stale_bleed's own duration gate (30min) is strictly larger than
+    // any lane floor, so it will always have aged into the floor first.
+    expect(out.fired).toBe('stale_bleed');
+  });
+
+  it('floor=0 (undefined) preserves legacy behavior — coherence exits fire promptly', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.10,
+      emotions: NEUTRAL_EMO,
+      heldDurationS: 5,
+      // holdTimeFloorS undefined → no floor → phi_collapse fires
+    });
+    expect(out.fired).toBe('phi_collapse');
+  });
+});
