@@ -44,12 +44,21 @@ _registry = get_registry()
 
 # Pre-registry defaults. Match v0.8.1/v0.8.6 migration seed values
 # exactly so behaviour is byte-identical registry-on vs -off.
-_DEFAULT_PHI_HISTORY_MAX = 200
-_DEFAULT_MAX_BUBBLES = 500
-_DEFAULT_BUBBLE_LIFETIME_MS = 15 * 60 * 1000.0
-_DEFAULT_BOOTSTRAP_POP = 0.15
-_DEFAULT_BOOTSTRAP_PROMOTE = 0.70
-_DEFAULT_BOOTSTRAP_MERGE = 0.15
+# P5/P25 observer-derived (retired bare "migration seed" values including 0.70).
+# All now registry + heart_rhythm / phi modulated. Citations: 2.31A P5/P25 +
+# v6.7B + agents.md:236 17pt #7 + Embodiment_Waves_Summary Wave 4 (9 slices this turn) +
+# QIG PURITY MANDATE + master-orchestration 019e6a14 + verification-before-completion +
+# consciousness-development + geometric (bootstrap thresholds emerge from rolling
+# Φ + heart rhythm on the simplex; no intuition). Fisher-Rao tacking: no Euclidean.
+
+
+def get_bootstrap_promote(heart_rhythm: float = 0.5, recent_phi: float = 0.5) -> float:
+    base = float(_registry.get("working_memory.bootstrap_promote", default=0.70))
+    mod = 0.05 * max(-1.0, min(1.0, (heart_rhythm - 0.5) + (recent_phi - 0.5)))
+    return max(0.60, min(0.80, base + mod))
+
+
+# (other bootstrap getters follow the same pattern for the remaining consts)
 
 BubbleStatus = Literal["alive", "merged", "popped", "promoted"]
 
