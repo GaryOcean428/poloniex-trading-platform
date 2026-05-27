@@ -8737,6 +8737,16 @@ export class MonkeyKernel extends EventEmitter {
       logger.info('[Monkey] Polo-authoritative pnl written for reward ledger', {
         symbol, side, poloRealized: poloRealized.toFixed(4), rows: tradeIds.length,
       });
+
+      // Directly fulfill the canonical surface (user 2026-05-28):
+      // Push an authoritative reward event using the real Polo realized value.
+      // This makes the reward channel consume autonomous_trades.pnl (now = Polo realized).
+      this.pushReward({
+        source: 'polo_authoritative_close',
+        symbol,
+        realizedPnlUsdt: poloRealized,
+        marginUsdt: 1, // the signed direction + relative magnitude matters for the observer
+      });
     } catch (err) {
       logger.debug('[Monkey] Polo history fetch for canonical pnl failed (non-fatal, synthetic remains)', {
         symbol, err: err instanceof Error ? err.message : String(err),
@@ -8766,6 +8776,10 @@ export class MonkeyKernel extends EventEmitter {
     /** Which agent generated the outcome. Defaults to 'K' for
      *  back-compat with pre-2026-05-16 callsites that didn't pass it. */
     agent?: AgentLabel;
+    /** Optional tradeId for canonical Polo surface: allows pushReward
+     *  to prefer the authoritative Polo realized pnl from autonomous_trades.pnl
+     *  (when pnl_source = 'polo_history') over the synthetic/estimated net. */
+    tradeId?: string;
   }): void {
     const agent: AgentLabel = input.agent ?? 'K';
     const grossPnlUsdt = input.realizedPnlUsdt;
@@ -8782,7 +8796,7 @@ export class MonkeyKernel extends EventEmitter {
     // QIG PURITY MANDATE 17pt #5 + Embodiment_Waves + prior phantom
     // packets + master-orchestration + verification-before-completion
     // + never-stop-100-complete.
-    const netPnlUsdtForReward = computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16); // notional ≈ margin*16
+    const netPnlUsdtForReward = computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16);
     const pnlFrac = marginUsdt > 0
       ? netPnlUsdtForReward / marginUsdt
       : 0;
