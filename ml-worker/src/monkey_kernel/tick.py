@@ -138,6 +138,48 @@ def _regime_stability_ticks_for_exit() -> int:
     ))
 
 
+# Commit 4 (Cascade brief 2026-05-27) — Observer-derived conviction streak.
+# The minimum-evidence floor is 2 (same as HISTORY_MIN_SAMPLES in
+# neurochemistry — "1 sample is noise; ≥ 2 is signal"). Above the floor
+# the required streak scales with how oscillatory the (anxiety+confusion
+# - confidence) signal has been on this lane: high sign-flip rate → wait
+# more ticks for confirmation; low flip rate → fire at floor.
+_CONVICTION_STREAK_FLOOR = 2
+_CONVICTION_HESITATION_WINDOW = 20  # ticks in the rolling sample
+_CONVICTION_STREAK_CAP = 12         # safety ceiling
+
+
+def _observer_conviction_streak_required(hesitation_history: list[float]) -> int:
+    """Required consecutive-tick count for conviction_failed to fire.
+
+    Pure observer derivation: counts sign flips in the most recent
+    hesitation values and scales the streak requirement upward when
+    the signal is oscillating. Floor 2, cap 12.
+
+    `hesitation` is (anxiety + confusion - confidence) — positive when
+    the gate condition holds, negative when it doesn't. A flip is a
+    consecutive pair with opposite sign.
+    """
+    if len(hesitation_history) < _CONVICTION_STREAK_FLOOR:
+        return _CONVICTION_STREAK_FLOOR
+    flips = 0
+    for prev, curr in zip(hesitation_history[:-1], hesitation_history[1:]):
+        # Treat zero as neutral — only count true sign flips.
+        if prev > 0 and curr < 0:
+            flips += 1
+        elif prev < 0 and curr > 0:
+            flips += 1
+    # flip_rate ∈ [0, 1] — fraction of adjacent pairs that flipped sign.
+    flip_rate = flips / max(1, len(hesitation_history) - 1)
+    # Map flip_rate → streak requirement. At flip_rate=0 (monotonic),
+    # require floor (2). At flip_rate=0.5 (random-walk), require ~6.
+    # At flip_rate ≥ 0.8 (highly oscillatory), require cap (12).
+    # Linear ramp: required = floor + round(flip_rate * (cap - floor) * 2)
+    # Clamp at cap.
+    scaled = _CONVICTION_STREAK_FLOOR + round(flip_rate * (_CONVICTION_STREAK_CAP - _CONVICTION_STREAK_FLOOR) * 2)
+    return max(_CONVICTION_STREAK_FLOOR, min(_CONVICTION_STREAK_CAP, scaled))
+
+
 def _chop_suppress_entry(reading: RegimeReading) -> bool:
     """True when the regime classifier reads sustained chop above the
     suppression confidence threshold. Held positions are unaffected;
@@ -308,6 +350,17 @@ class SymbolState:
     # to 0 the first tick the regime returns to regime_at_open or the
     # position closes/reopens.
     regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
+    # Commit 4 (Cascade brief 2026-05-27) — per-lane conviction-failed
+    # streak + emotion-delta history for observer-derived N. The streak
+    # increments while `confidence < anxiety + confusion` and resets
+    # on any tick where the condition flips. The history is a rolling
+    # ring of `(anxiety + confusion - confidence)` values over the last
+    # 20 ticks on this lane — its sign-flip rate sets how many
+    # consecutive ticks the gate requires before firing (high flip rate
+    # = noisy emotion telemetry = longer wait; low flip rate = monotonic
+    # collapse = fire at floor=2).
+    conviction_failed_streak_by_lane: dict[str, int] = field(default_factory=dict)
+    hesitation_history_by_lane: dict[str, list[float]] = field(default_factory=dict)
     # Prediction-corpus instrumentation bookkeeping. Read-only; never
     # feeds back into executive decisions.
     last_prediction_snapshot_at_ms: Optional[float] = None
@@ -1825,6 +1878,18 @@ def _decide_with_position(
     # flicker would otherwise close every held position on noise. Φ
     # collapse and conviction-fail still fire immediately; both are
     # already conservative gates. All three are geometric.
+    #
+    # Commit 3 (Cascade brief 2026-05-27) — adopted-vs-own distinction:
+    # this block is ALREADY anchor-gated below
+    # (`if has_regime_anchor and has_phi_anchor`). Adopted positions —
+    # opened by an external sibling kernel or by the operator — never
+    # ran through the open-entry path that sets regime_at_open_by_lane
+    # and phi_at_open_by_lane, so they naturally fall through this
+    # entire block without firing regime_change / phi_collapse /
+    # conviction_failed. The TS side required an explicit `origin`
+    # parameter because its evaluateRejustification doesn't gate on
+    # anchor presence the same way; on Py the structural anchor-gating
+    # provides the equivalent semantic guarantee.
     rejust: dict[str, Any] = {"checked": False}
     has_regime_anchor = position_lane in state.regime_at_open_by_lane
     has_phi_anchor = position_lane in state.phi_at_open_by_lane
@@ -1926,17 +1991,40 @@ def _decide_with_position(
             )
             return "scalp_exit", reason, False, False
         # 3. CONVICTION CHECK — Layer 2B emotion stack no longer
-        # supports the position. The moment current conviction fails
-        # against hesitation, exit. No half-life, no streak.
+        # supports the position. Commit 4 (Cascade brief 2026-05-27):
+        # observer-derived N per lane, mirroring TS side. Maintain a
+        # rolling hesitation_history (anxiety+confusion - confidence)
+        # over the last 20 ticks; sign-flip rate sets required streak.
         confidence = getattr(emotions, "confidence", 0.0)
         anxiety = getattr(emotions, "anxiety", 0.0)
         confusion = getattr(emotions, "confusion", 0.0)
-        if confidence < anxiety + confusion:
+        hesitation = anxiety + confusion - confidence
+
+        # Maintain per-lane hesitation history (bounded ring).
+        history = state.hesitation_history_by_lane.setdefault(position_lane, [])
+        history.append(hesitation)
+        if len(history) > _CONVICTION_HESITATION_WINDOW:
+            history.pop(0)
+
+        conviction_condition = hesitation > 0  # confidence < anxiety + confusion
+        if conviction_condition:
+            state.conviction_failed_streak_by_lane[position_lane] = (
+                state.conviction_failed_streak_by_lane.get(position_lane, 0) + 1
+            )
+        else:
+            state.conviction_failed_streak_by_lane[position_lane] = 0
+
+        streak = state.conviction_failed_streak_by_lane[position_lane]
+        n_required = _observer_conviction_streak_required(history)
+
+        if conviction_condition and streak >= n_required:
             rejust["fired"] = "conviction_failed"
             derivation["rejustification"] = rejust
             reason = (
                 f"conviction_failed: conf={confidence:.3f} < "
-                f"anxiety+confusion={anxiety + confusion:.3f}"
+                f"anxiety+confusion={anxiety + confusion:.3f} "
+                f"for {streak} consecutive ticks "
+                f"(≥ {n_required} required, observer-derived)"
             )
             return "scalp_exit", reason, False, False
     derivation["rejustification"] = rejust

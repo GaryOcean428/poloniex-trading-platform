@@ -94,11 +94,32 @@ class TestPerEmotionFormula:
         )
         assert e.anxiety == pytest.approx(3.5 * 0.4, abs=1e-12)
 
-    def test_confidence_equals_one_minus_transcendence_times_phi(self) -> None:
+    def test_confidence_equals_phi_times_held_alignment(self) -> None:
+        """Commit 6 / JOINT-A (Cascade brief 2026-05-27): confidence
+        decoupled from κ-transcendence. Default held_alignment=1.0 →
+        confidence = phi (transcendence no longer multiplies in).
+        """
         e = compute_emotions(
             _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.0,
         )
-        assert e.confidence == pytest.approx((1.0 - 0.3) * 0.7, abs=1e-12)
+        assert e.confidence == pytest.approx(0.7, abs=1e-12)
+
+    def test_confidence_scales_with_held_alignment(self) -> None:
+        # heldAlignment=0.5 → confidence = phi × 0.5
+        e = compute_emotions(
+            _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.0,
+            held_alignment=0.5,
+        )
+        assert e.confidence == pytest.approx(0.35, abs=1e-12)
+
+    def test_confidence_collapses_when_basindir_opposes(self) -> None:
+        # heldAlignment=-1 (basinDir flipped against held side) →
+        # max(0, -1) = 0 → confidence = 0 → conviction gate trips.
+        e = compute_emotions(
+            _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.0,
+            held_alignment=-1.0,
+        )
+        assert e.confidence == pytest.approx(0.0, abs=1e-12)
 
     def test_boredom_equals_one_minus_surprise_times_one_minus_curiosity(self) -> None:
         e = compute_emotions(
@@ -121,13 +142,17 @@ class TestRegimeReporting:
         assert e.anxiety == pytest.approx(4.0, abs=1e-12)
         assert e.anxiety > 1.0  # not clipped
 
-    def test_confidence_can_go_negative_when_transcendence_above_one(self) -> None:
-        # transcendence=5 → (1 - 5) = -4; phi=0.6 → confidence = -2.4
+    def test_confidence_is_clamped_non_negative_via_held_alignment(self) -> None:
+        # Commit 6 / JOINT-A: confidence = phi × max(0, held_alignment).
+        # The only way confidence reads ≤ 0 now is held_alignment ≤ 0
+        # (basinDir flipped vs held side). Transcendence no longer
+        # collapses confidence.
         e = compute_emotions(
             _m(transcendence=5.0), basin_distance=0.0, phi=0.6, basin_velocity=0.0,
+            held_alignment=-1.0,
         )
-        assert e.confidence == pytest.approx(-2.4, abs=1e-12)
-        assert e.confidence < 0.0  # not clipped
+        assert e.confidence == pytest.approx(0.0, abs=1e-12)
+        assert e.confidence >= 0.0  # clamped via max(0, alignment)
 
     def test_satisfaction_can_go_negative_when_far_from_identity(self) -> None:
         # basin_distance > 1 → (1 - basin_distance) negative → satisfaction negative
@@ -163,17 +188,21 @@ class TestReferenceValidation:
         )
         assert 0.849 - 0.021 <= e.satisfaction <= 0.849 + 0.021
 
-    def test_confidence_anticorrelates_with_transcendence(self) -> None:
-        # UCP §6.5 reports anti-correlation −0.690 between Confidence
-        # and Transcendence in typical regime. Verify monotone:
-        # higher transcendence → lower confidence at fixed Φ.
+    def test_confidence_decoupled_from_transcendence_post_joint_a(self) -> None:
+        """Commit 6 / JOINT-A (Cascade brief 2026-05-27): the historic
+        UCP §6.5 anti-correlation −0.690 between Confidence and
+        Transcendence is RETIRED. With the new formula
+        `confidence = phi × max(0, held_alignment)`, same phi + same
+        held_alignment → same confidence regardless of transcendence.
+        Transcendence stays live in anxiety (regime-change detector).
+        """
         low_t = compute_emotions(
             _m(transcendence=0.1), basin_distance=0.0, phi=0.5, basin_velocity=0.0,
         )
         high_t = compute_emotions(
             _m(transcendence=0.9), basin_distance=0.0, phi=0.5, basin_velocity=0.0,
         )
-        assert low_t.confidence > high_t.confidence
+        assert low_t.confidence == pytest.approx(high_t.confidence, abs=1e-12)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -268,13 +297,17 @@ _PARITY_ROWS = [
      {"wonder": 0.0, "frustration": 0.0, "satisfaction": 0.0,
       "confusion": 0.0, "clarity": 1.0, "anxiety": 0.0,
       "confidence": 1.0, "boredom": 1.0}),
-    # row 6 — confidence negative regime (transcendence > 1)
+    # row 6 — Commit 6 / JOINT-A: confidence no longer depends on
+    # transcendence. confidence = phi × max(0, heldAlignment) with
+    # default heldAlignment=1.0 → confidence = phi (0.4). Anxiety
+    # still reads trans-driven instability — that channel stays live
+    # but trans is 0 here because basin_velocity is 0.
     ({"surprise": 0.5, "curiosity": 0.0, "investigation": 0.5,
       "integration": 0.0, "transcendence": 3.0},
      0.0, 0.4, 0.0,
      {"wonder": 0.0, "frustration": 0.25, "satisfaction": 0.0,
       "confusion": 0.0, "clarity": 0.25, "anxiety": 0.0,
-      "confidence": -0.8, "boredom": 0.5}),
+      "confidence": 0.4, "boredom": 0.5}),
     # row 7 — wonder canonical
     ({"surprise": 0.5, "curiosity": 1.0, "investigation": 0.5,
       "integration": 0.0, "transcendence": 0.0},
@@ -282,13 +315,15 @@ _PARITY_ROWS = [
      {"wonder": 0.7, "frustration": 0.25, "satisfaction": 0.0,
       "confusion": 0.35, "clarity": 0.25, "anxiety": 0.0,
       "confidence": 0.5, "boredom": 0.0}),
-    # row 8 — mid-state mixed regime
+    # row 8 — mid-state mixed regime. JOINT-A (Commit 6): confidence
+    # = phi × max(0, heldAlignment) = 0.5 (default heldAlignment=1.0,
+    # decoupled from trans). Anxiety = trans × basin_velocity = 0.1.
     ({"surprise": 0.5, "curiosity": 0.5, "investigation": 0.5,
       "integration": 1.0, "transcendence": 0.5},
      0.3, 0.5, 0.2,
      {"wonder": 0.15, "frustration": 0.25, "satisfaction": 0.7,
       "confusion": 0.15, "clarity": 0.25, "anxiety": 0.1,
-      "confidence": 0.25, "boredom": 0.25}),
+      "confidence": 0.5, "boredom": 0.25}),
     # row 9 — satisfaction canonical
     ({"surprise": 0.0, "curiosity": 0.0, "investigation": 0.5,
       "integration": 0.94, "transcendence": 0.0},
@@ -410,10 +445,12 @@ class TestFundingDragInEmotions:
         assert dragged.anxiety > base.anxiety, "anxiety should increase with drag"
 
     def test_conviction_gate_fires_earlier_with_funding_drag(self) -> None:
-        # Simulate a position that's marginal: confidence just above hesitation
-        # without drag, but drag tips it over.
-        # With Möbius drag, both confidence decreases AND anxiety increases,
-        # so the gate flips even more reliably.
+        """Commit 6 / JOINT-A: post-decouple, confidence = phi (no
+        trans collapse). For drag to flip the gate, drag must lift
+        anxiety past confidence directly. Using larger drag (2.0)
+        which maps to drag_factor=0.67 via Möbius — enough to
+        collapse confidence and lift anxiety past it.
+        """
         from monkey_kernel.executive import kernel_should_enter
         e_no_drag = compute_emotions(
             _m(transcendence=0.25, surprise=0.1),
@@ -423,10 +460,10 @@ class TestFundingDragInEmotions:
         e_with_drag = compute_emotions(
             _m(transcendence=0.25, surprise=0.1),
             basin_distance=0.0, phi=0.4, basin_velocity=0.8,
-            funding_drag=0.15,
+            funding_drag=2.0,
         )
-        # Verify anxiety increased by drag_factor (Möbius) not raw drag
-        drag_factor = 0.15 / (1.0 + 0.15)
+        # Verify Möbius anxiety lift.
+        drag_factor = 2.0 / (1.0 + 2.0)
         assert e_with_drag.anxiety == pytest.approx(e_no_drag.anxiety + drag_factor, abs=1e-12)
         # Verify the gate fires differently (one enters, one doesn't)
         enters_no_drag = kernel_should_enter(emotions=e_no_drag)

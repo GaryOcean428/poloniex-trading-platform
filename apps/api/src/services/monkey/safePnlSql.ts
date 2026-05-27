@@ -107,3 +107,58 @@ export function verifyPnl(
     divergenceAbs,
   };
 }
+
+/**
+ * Notional self-consistency assertion (Finding 1 / LIVED ONLY 5).
+ *
+ * Before any row enters `autonomous_trades`, the row's own data
+ * (`entry_price * quantity`) must match the originating order's
+ * declared notional within a small tolerance. Mismatch means the
+ * `quantity` value is in the wrong unit (contracts vs base-asset) —
+ * the root cause of the 100×/1000× phantom-PnL.
+ *
+ * Default tolerance 0.1% — wider than realistic slippage, tighter
+ * than any unit-conversion mismatch could be.
+ *
+ * Fall-open when `expectedNotional ≤ 0` or non-finite: the caller
+ * had no observable notional to assert against (e.g. legacy test
+ * fixtures, paths that don't yet thread the order response).
+ * Callers MUST thread an expected notional on the live INSERT paths
+ * — the fall-open is only for boundary code.
+ */
+export interface NotionalCheck {
+  consistent: boolean;
+  rowNotional: number;
+  expectedNotional: number;
+  divergenceAbs: number;
+  divergencePct: number;
+  diagnostic: string;
+}
+
+export function checkNotionalConsistency(
+  entryPrice: number,
+  quantity: number,
+  expectedNotional: number,
+  tolerancePct = 0.001,
+): NotionalCheck {
+  const rowNotional = entryPrice * quantity;
+  if (expectedNotional <= 0 || !Number.isFinite(expectedNotional)) {
+    return {
+      consistent: true,
+      rowNotional, expectedNotional,
+      divergenceAbs: 0, divergencePct: 0,
+      diagnostic: 'no expected notional supplied — assertion bypassed (fall-open)',
+    };
+  }
+  const divergenceAbs = Math.abs(rowNotional - expectedNotional);
+  const divergencePct = divergenceAbs / expectedNotional;
+  const consistent = divergencePct <= tolerancePct;
+  return {
+    consistent, rowNotional, expectedNotional, divergenceAbs, divergencePct,
+    diagnostic: consistent
+      ? `notional consistent (${(divergencePct * 100).toFixed(3)}% vs tolerance ${(tolerancePct * 100).toFixed(2)}%)`
+      : `notional MISMATCH: row=$${rowNotional.toFixed(2)} vs expected=$${expectedNotional.toFixed(2)} `
+        + `(${(divergencePct * 100).toFixed(3)}% > ${(tolerancePct * 100).toFixed(2)}% tolerance) — `
+        + `likely unit mismatch (contracts vs base-asset)`,
+  };
+}

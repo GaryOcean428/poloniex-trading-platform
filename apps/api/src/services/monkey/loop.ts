@@ -159,7 +159,7 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
-import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl } from './safePnlSql.js';
+import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl, checkNotionalConsistency } from './safePnlSql.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import {
@@ -341,16 +341,76 @@ function stabilityTicksFromPhi(phi: number): number {
     Math.ceil(STABILITY_TICKS_MIN_EVIDENCE / safePhi),
   );
 }
-/** CALIB-3 lane-timescale multipliers. Encodes the user's lane-
- *  timeframe doctrine: scalp = micro (1×), swing = moderate (3×),
- *  trend = macro (10×). With base=4, this gives scalp=4 ticks (≈2 min
- *  at 30s tick), swing=12 ticks (≈6 min), trend=40 ticks (≈20 min).
- *  Same multipliers apply to convictionFailed via lane-scaled call. */
-const DISAGREEMENT_LANE_MULTIPLIER: Record<'scalp' | 'swing' | 'trend', number> = {
-  scalp: 1,
-  swing: 3,
-  trend: 10,
+/** Lane decision-period — the wall-clock window a lane's
+ *  natural decision cycle occupies. These are LANE DEFINITIONS,
+ *  not tuning knobs: a scalp lane decides over ~minutes, a swing
+ *  lane over ~tens of minutes, a trend lane over hours. They
+ *  feed `laneMultiplierFromTickPeriod()` which divides by the
+ *  substrate's actual tick period to derive the streak gate
+ *  in ticks — so the gate adapts when adaptive-tick changes
+ *  the cadence (e.g. EXPLORATION 15s vs INTEGRATION 60s tick)
+ *  without operator intervention.
+ *
+ *  At the canonical 30s tick:
+ *    scalp(60s)  → ceil(60/30) = 2  ticks  (≈ floor)
+ *    swing(180s) → ceil(180/30) = 6  ticks
+ *    trend(600s) → ceil(600/30) = 20 ticks
+ *
+ *  At adaptive 15s (EXPLORATION):
+ *    scalp = 4, swing = 12, trend = 40 (more confirmation when ticks are fast)
+ *
+ *  At adaptive 60s (INTEGRATION/DRIFT):
+ *    scalp = 2 (floor), swing = 3, trend = 10
+ *
+ *  Compare to the legacy hardcoded {1, 3, 10}: those values are
+ *  what the derivation produces at tickMs=60s — i.e. they were
+ *  calibrated for the slowest mode and didn't adapt to the
+ *  cadence governor. */
+const LANE_DECISION_PERIOD_MS: Record<'scalp' | 'swing' | 'trend', number> = {
+  scalp: 60_000,
+  swing: 180_000,
+  trend: 600_000,
 };
+
+/** Derive the lane multiplier from the active tick period. Floor 2
+ *  (Cascade brief: "Math.max(2, Math.round(...))") so a position
+ *  never fires its streak gate on a single tick. Exported for tests. */
+export function laneMultiplierFromTickPeriod(
+  lane: 'scalp' | 'swing' | 'trend',
+  tickPeriodMs: number,
+): number {
+  const periodMs = LANE_DECISION_PERIOD_MS[lane];
+  if (!Number.isFinite(tickPeriodMs) || tickPeriodMs <= 0) return 2;
+  return Math.max(2, Math.round(periodMs / tickPeriodMs));
+}
+
+/** Commit 4 (Cascade brief 2026-05-27) — observer-derived conviction
+ *  streak requirement. Mirrors the Py side
+ *  `_observer_conviction_streak_required` exactly. Floor 2, cap 12.
+ *  Inputs: rolling history of (anxiety + confusion - confidence) on
+ *  this lane over the last 20 ticks. High sign-flip rate → require
+ *  more ticks; low flip rate → fire at floor. */
+export const CONVICTION_STREAK_FLOOR = 2;
+export const CONVICTION_HESITATION_WINDOW = 20;
+export const CONVICTION_STREAK_CAP = 12;
+
+export function observerConvictionStreakRequired(
+  hesitationHistory: number[],
+): number {
+  if (hesitationHistory.length < CONVICTION_STREAK_FLOOR) {
+    return CONVICTION_STREAK_FLOOR;
+  }
+  let flips = 0;
+  for (let i = 1; i < hesitationHistory.length; i++) {
+    const prev = hesitationHistory[i - 1]!;
+    const curr = hesitationHistory[i]!;
+    if ((prev > 0 && curr < 0) || (prev < 0 && curr > 0)) flips++;
+  }
+  const flipRate = flips / Math.max(1, hesitationHistory.length - 1);
+  const scaled = CONVICTION_STREAK_FLOOR
+    + Math.round(flipRate * (CONVICTION_STREAK_CAP - CONVICTION_STREAK_FLOOR) * 2);
+  return Math.max(CONVICTION_STREAK_FLOOR, Math.min(CONVICTION_STREAK_CAP, scaled));
+}
 
 /**
  * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
@@ -592,6 +652,11 @@ interface SymbolState {
    *  2026-05-17 CSV analysis showed single-tick conviction noise was
    *  driving 60% of losses in chop-zone scalping. */
   convictionFailedStreakByLane: Record<string, number>;
+  /** Commit 4 (Cascade brief 2026-05-27) — per-lane hesitation history
+   *  (anxiety + confusion - confidence) over the last 20 ticks. Drives
+   *  the observer-derived conviction streak requirement: high sign-flip
+   *  rate → require more ticks; monotonic collapse → fire at floor. */
+  hesitationHistoryByLane: Record<string, number[]>;
   /** CALIB-3 (2026-05-17): consecutive-tick counter for "current tick's
    *  preferred side disagrees with held side" per-lane. Drives the
    *  directional_disagreement exit. Increments on disagreement, resets
@@ -1787,6 +1852,7 @@ export class MonkeyKernel extends EventEmitter {
       basinAtOpenByLane: {},
       regimeChangeStreakByLane: {},
       convictionFailedStreakByLane: {},
+      hesitationHistoryByLane: {},
       directionalDisagreementStreakByLane: {},
       heldSideByLane: {},
       entryTimeMsByLane: {},
@@ -3309,15 +3375,33 @@ export class MonkeyKernel extends EventEmitter {
         // three env knobs it replaces.
         const baseStabilityTicks = stabilityTicksFromPhi(phi);
         const regimeStabilityTicksRequired = baseStabilityTicks;
-        // CALIB-3 lane timescale doctrine: scalp=micro (1×), swing=moderate (3×),
-        // trend=macro (10×). Applies to both conviction-failed and directional-
-        // disagreement so the same scalp-tolerates-noise-but-swing-doesn't logic
-        // governs both streak gates. See DISAGREEMENT_LANE_MULTIPLIER comment.
-        // Lane multipliers stay as structural (lane-timeframe encoding) —
-        // future cleanup may derive them from lane-timeframe ratios.
-        const laneMultiplier = DISAGREEMENT_LANE_MULTIPLIER[heldLane] ?? 1;
-        const convictionFailedTicksRequired = baseStabilityTicks * laneMultiplier;
+        // Commit 2 (2026-05-27): lane multiplier derived from the
+        // active tick period via laneMultiplierFromTickPeriod(). The
+        // substrate's own cadence sets the scale — no operator number.
+        // Adaptive-tick (modes 15s / 30s / 60s) now correctly scales
+        // the streak gate: the same lane fires after the same wall-
+        // clock duration regardless of which tick cadence is active.
+        const laneMultiplier = laneMultiplierFromTickPeriod(heldLane, state.currentTickMs);
         const directionalDisagreementTicksRequired = baseStabilityTicks * laneMultiplier;
+
+        // Commit 4 (2026-05-27): conviction streak observer-derived from
+        // per-lane hesitation history (anxiety+confusion - confidence
+        // sign-flip rate). Maintain the rolling ring at the gate site
+        // so it stays in sync with the streak counter.
+        const hesitation = emotions.anxiety + emotions.confusion - emotions.confidence;
+        const hesitationHistory = (state.hesitationHistoryByLane[heldLane] ??= []);
+        hesitationHistory.push(hesitation);
+        if (hesitationHistory.length > CONVICTION_HESITATION_WINDOW) {
+          hesitationHistory.shift();
+        }
+        const convictionFailedTicksRequired = observerConvictionStreakRequired(hesitationHistory);
+        // Commit 3 (2026-05-27): detect adopted-position origin from the
+        // open row's reason. Reconciler-adopted rows carry `|adopted|` in
+        // their reason after the ownership rewrite; kernel-entered rows
+        // never carry that substring. Origin gates which rejustification
+        // checks are eligible (adopted: only directional_disagreement).
+        const heldOrigin: 'own' | 'adopted' =
+          ownOpenRow?.reason.includes('|adopted|') ? 'adopted' : 'own';
         const rejustResult = !exitFired
           ? evaluateRejustification({
               regimeAtOpen,
@@ -3336,6 +3420,7 @@ export class MonkeyKernel extends EventEmitter {
               basinAtOpen,
               heldDurationS,
               currentRoi,
+              origin: heldOrigin,
             })
           : {
               checked: false, fired: null, reason: '', phiFloor: null,
@@ -5879,18 +5964,20 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   private async findOpenMonkeyTrade(symbol: string): Promise<
-    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend'; take_profit: number | null; stop_loss: number | null }
+    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend'; take_profit: number | null; stop_loss: number | null; reason: string }
     | null
   > {
     // Aggregate over ALL open lanes (back-compat: callers that don't
     // know about lanes still need a single open-row view). Returns the
     // OLDEST lane's pseudo-row when multiple lanes hold positions; the
     // proper lane-aware path uses ``findOpenMonkeyTradesByLane`` below.
+    // Commit 3 (2026-05-27): include `reason` so callers can detect
+    // adopted-position origin via the `|adopted|` substring.
     try {
       const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
       const result = await pool.query(
         `SELECT id, entry_price, quantity, leverage, order_id, side, lane,
-                take_profit, stop_loss
+                take_profit, stop_loss, reason
            FROM autonomous_trades
           WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
           ORDER BY entry_time ASC`,
@@ -5900,6 +5987,7 @@ export class MonkeyKernel extends EventEmitter {
         id: string; entry_price: string; quantity: string; leverage: number;
         order_id: string | null; side: string; lane: string;
         take_profit: string | null; stop_loss: string | null;
+        reason: string;
       }>;
       const normSide = (s: string): 'long' | 'short' =>
         s === 'buy' || s === 'long' ? 'long' : 'short';
@@ -5930,6 +6018,10 @@ export class MonkeyKernel extends EventEmitter {
         (s, r) => s + Number(r.entry_price) * Math.abs(Number(r.quantity) || 0),
         0,
       ) / totalQty;
+      // For multi-row aggregation, `reason` is "adopted" only if EVERY
+      // underlying row is adopted — a kernel-entered row mixed in means
+      // the position is at least partly own-managed.
+      const allAdopted = rows.every((r) => r.reason.includes('|adopted|'));
       return {
         id: rows[0].id,
         entry_price: String(weightedPrice),
@@ -5940,6 +6032,7 @@ export class MonkeyKernel extends EventEmitter {
         lane: normLane(rows[0].lane),
         take_profit: numOrNull(rows[0].take_profit),
         stop_loss: numOrNull(rows[0].stop_loss),
+        reason: allAdopted ? rows[0].reason : rows[0].reason.replace('|adopted|', '|'),
       };
     } catch (err) {
       logger.debug('[Monkey] findOpenMonkeyTrade failed', {
@@ -8089,6 +8182,25 @@ export class MonkeyKernel extends EventEmitter {
           const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
           const reasonEncoded =
             `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
+
+          // Finding 1 — notional self-consistency assertion at the paper INSERT.
+          // expectedNotional is `marginUsdt × leverage` (kernel's intended sizing,
+          // mirrors the live path). A mismatch means `formattedSize` is in the
+          // wrong unit (contracts vs base-asset) and the row would feed phantom
+          // PnL downstream. Refuse the write.
+          const paperNotionalCheck = checkNotionalConsistency(
+            paper.fillPrice,
+            formattedSize,
+            marginUsdt * leverage,
+          );
+          if (!paperNotionalCheck.consistent) {
+            logger.error('[LIVED ONLY] paper INSERT — refusing row', {
+              symbol, fillPrice: paper.fillPrice, formattedSize,
+              diagnostic: paperNotionalCheck.diagnostic,
+            });
+            return { executed: false, orderId: null, reason: 'notional_mismatch_at_paper_insert' };
+          }
+
           const inserted = await pool.query(
             `INSERT INTO autonomous_trades
                (user_id, symbol, side, entry_price, quantity, leverage,
@@ -8358,14 +8470,31 @@ export class MonkeyKernel extends EventEmitter {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
         `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
-      // LIVED ONLY 5 notional self-consistency assertion at INSERT (Finding 1)
-      // Row's own notional must be consistent with the order's intended notional.
-      // Divergence > 0.1% → refuse the insert (prevents bad quantity from ever entering).
-      const rowNotional = entryPrice * formattedSize;
-      const orderNotional = notionalUsdt;
-      if (orderNotional > 0 && Math.abs(rowNotional - orderNotional) / orderNotional > 0.001) {
-        logger.error('[LIVED ONLY] notional mismatch at INSERT — refusing row', {
-          symbol, entryPrice, formattedSize, rowNotional, orderNotional,
+      // Finding 1 — notional self-consistency assertion at the live INSERT.
+      // Centralized via checkNotionalConsistency in safePnlSql.ts so the
+      // tolerance + diagnostic format are identical across all three INSERT
+      // sites (live / paper / reconciler).
+      //
+      // Commit 5 (Cascade brief 2026-05-27) — kernel-direct unit invariant.
+      // `formattedSize` at this point is BASE ASSET (BTC, ETH, ...) and
+      // `entryPrice` is USDT per unit base-asset; their product is USDT
+      // notional, directly comparable to the kernel's intended notionalUsdt.
+      // The contracts/base-asset boundary lives in poloniexFuturesService —
+      // see the chunker doc at L7189 for the explicit rule:
+      // "formattedSize and symbolLotSize are in BASE ASSET units. The
+      //  poloniexFuturesService.placeOrder converts size/lotSize → contracts
+      //  internally before sending."
+      // Any future regression that stores contracts here trips this assertion
+      // immediately (100× / 1000× / lot-size-recip ratio is well above 0.1%).
+      const liveNotionalCheck = checkNotionalConsistency(
+        entryPrice,
+        formattedSize,
+        notionalUsdt,
+      );
+      if (!liveNotionalCheck.consistent) {
+        logger.error('[LIVED ONLY] live INSERT — refusing row', {
+          symbol, entryPrice, formattedSize,
+          diagnostic: liveNotionalCheck.diagnostic,
         });
         return { executed: false, orderId: null, reason: 'notional_mismatch_at_insert' };
       }

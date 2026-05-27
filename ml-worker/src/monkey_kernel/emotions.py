@@ -159,6 +159,7 @@ def compute_emotions(
     predicted_basin: Optional[np.ndarray] = None,
     foresight_weight: float = 0.0,
     funding_drag: float = 0.0,
+    held_alignment: float = 1.0,
 ) -> EmotionState:
     """Compose the Layer 2B emotion vector from Tier 1 motivators
     plus raw geometric quantities (+ Tier 3 foresight reference for Flow).
@@ -188,6 +189,15 @@ def compute_emotions(
         position direction is working against the position — that is
         anxiety. The conviction gate (confidence < anxiety + confusion)
         fires earlier on funding-bleeding positions as a result.
+    held_alignment : float
+        Commit 6 / JOINT-A (Cascade brief 2026-05-27). Projection of
+        the basin's current directional read onto the held-side sign
+        (long = +1, short = −1). Range [-1, +1]. The clamped-positive
+        part [0, 1] scales `confidence = phi × max(0, held_alignment)`,
+        which decouples conviction from the κ-transcendence saturation
+        that was collapsing confidence on healthy MAD jitter. Default
+        1.0 preserves the no-position semantics (no alignment penalty).
+        When no position held, caller passes 1.0.
     """
     stability = phi
     instability = basin_velocity
@@ -212,7 +222,18 @@ def compute_emotions(
         curiosity_optimal = 0.0
     flow = curiosity_optimal * motivators.investigation
 
-    confidence = (1.0 - motivators.transcendence) * stability
+    # Commit 6 / JOINT-A (Cascade brief 2026-05-27) — confidence decoupled
+    # from κ-transcendence. Previously `confidence = (1 − trans) × phi`
+    # multiplied regime-change-detection (trans saturates on κ MAD
+    # jitter in stable regimes) into position-conviction, collapsing
+    # confidence on noise. The canonical reframe: confidence reflects
+    # "kernel's geometric view still supports the held direction,
+    # scaled by overall coherence". Trans-saturation no longer leaks
+    # into the conviction gate. Anxiety still reads trans-driven
+    # regime-change signal — that channel stays live as the kernel's
+    # "something is changing" detector.
+    held_alignment_positive = max(0.0, held_alignment)
+    confidence = stability * held_alignment_positive
     anxiety = motivators.transcendence * instability
 
     # Funding drag — dimensionless cost-on-margin ratio. Map [0, ∞) →

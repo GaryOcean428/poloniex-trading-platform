@@ -130,20 +130,9 @@ export async function runStackedGhostPnlBackfill(opts: {
     }
 
     if (apply) {
-      for (const u of updates) {
-        try {
-          await pool.query(`UPDATE autonomous_trades SET pnl = $1 WHERE id = $2`, [
-            u.newPnl,
-            u.id,
-          ]);
-          totalRowsUpdated++;
-        } catch (updErr) {
-          logger.error('[BACKFILL] row update failed', {
-            id: u.id,
-            err: updErr instanceof Error ? updErr.message : String(updErr),
-          });
-        }
-      }
+      logger.error('[LIVED ONLY] refusing aggregate backfill apply — this path is a known phantom vector (Finding 1). Use per-row safe repair only.');
+      // Do not apply aggregate-derived pnl. This protects the canonical table.
+      // totalRowsUpdated stays 0 for this group.
     }
   }
 

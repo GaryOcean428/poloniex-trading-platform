@@ -137,6 +137,18 @@ export interface RejustificationInput {
    * gate. Undefined disables both checks.
    */
   currentRoi?: number;
+  /**
+   * Commit 3 (Cascade brief 2026-05-27): position-origin distinction.
+   * When `'adopted'`, the position was opened by an external sibling
+   * kernel instance (monkey-position) or by the operator manually,
+   * NOT by this kernel's own decision. Adopted positions skip the
+   * regime / phi / conviction / stale-bleed checks because none of
+   * those gates have the kernel's own basin context at entry — they
+   * fire on noise. Adopted positions exit on TP / hard SL / basinDir-
+   * flip (directional_disagreement) only. Defaults to `'own'` for
+   * back-compat with callers that don't yet thread origin.
+   */
+  origin?: 'own' | 'adopted';
 }
 
 export type RejustificationFire =
@@ -195,6 +207,7 @@ export function evaluateRejustification(
   input: RejustificationInput,
 ): RejustificationResult {
   const { regimeAtOpen, phiAtOpen, regimeNow, phiNow, emotions } = input;
+  const origin = input.origin ?? 'own';
   const regimeConfidence = input.regimeConfidence ?? 1.0;
   const regimeChangeStreak = input.regimeChangeStreak ?? 0;
   const regimeStabilityTicksRequired = input.regimeStabilityTicksRequired ?? 3;
@@ -218,6 +231,46 @@ export function evaluateRejustification(
     };
   }
   const phiFloor = phiAtOpen / PHI_GOLDEN_FLOOR_RATIO;
+
+  // Commit 3 (Cascade brief 2026-05-27): adopted positions skip the
+  // regime / phi / conviction / stale_bleed checks. Those gates assume
+  // the kernel's own basin context at entry — adopted positions never
+  // had that context (operator or sibling kernel opened them). The
+  // only kernel-view-driven close that still applies is the
+  // directional_disagreement check ("basinDir flipped against held
+  // side"), which doesn't depend on entry-basin anchoring. Adopted
+  // positions otherwise exit on TP / hard SL only.
+  if (origin === 'adopted') {
+    // Still compute directional_disagreement (this gate compares the
+    // kernel's CURRENT preferred side to the held side; no entry-basin
+    // dependency). Order: directional_disagreement → no-fire.
+    if (
+      directionalDisagreementStreak >= directionalDisagreementTicksRequired
+      && input.currentRoi !== undefined
+    ) {
+      return {
+        checked: true,
+        fired: 'directional_disagreement',
+        reason:
+          `directional_disagreement (adopted): held-side ≠ current preferred side `
+          + `for ${directionalDisagreementStreak} ticks (≥ ${directionalDisagreementTicksRequired})`,
+        phiFloor,
+        frDistance, frThreshold,
+        regimeChangeStreak, regimeStabilityTicksRequired,
+        convictionFailedStreak, convictionFailedTicksRequired,
+        directionalDisagreementStreak, directionalDisagreementTicksRequired,
+      };
+    }
+    return {
+      checked: true, fired: null,
+      reason: `adopted_position: regime/phi/conviction/stale_bleed gates skipped (origin=adopted)`,
+      phiFloor,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
+      convictionFailedStreak, convictionFailedTicksRequired,
+      directionalDisagreementStreak, directionalDisagreementTicksRequired,
+    };
+  }
 
   // 1. REGIME CHECK — triple-AND gate. All of:
   //   (a) regimeNow != regimeAtOpen   (label divergence)
