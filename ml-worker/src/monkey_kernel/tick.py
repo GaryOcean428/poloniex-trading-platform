@@ -1825,6 +1825,18 @@ def _decide_with_position(
     # flicker would otherwise close every held position on noise. Φ
     # collapse and conviction-fail still fire immediately; both are
     # already conservative gates. All three are geometric.
+    #
+    # Commit 3 (Cascade brief 2026-05-27) — adopted-vs-own distinction:
+    # this block is ALREADY anchor-gated below
+    # (`if has_regime_anchor and has_phi_anchor`). Adopted positions —
+    # opened by an external sibling kernel or by the operator — never
+    # ran through the open-entry path that sets regime_at_open_by_lane
+    # and phi_at_open_by_lane, so they naturally fall through this
+    # entire block without firing regime_change / phi_collapse /
+    # conviction_failed. The TS side required an explicit `origin`
+    # parameter because its evaluateRejustification doesn't gate on
+    # anchor presence the same way; on Py the structural anchor-gating
+    # provides the equivalent semantic guarantee.
     rejust: dict[str, Any] = {"checked": False}
     has_regime_anchor = position_lane in state.regime_at_open_by_lane
     has_phi_anchor = position_lane in state.phi_at_open_by_lane
@@ -1926,17 +1938,29 @@ def _decide_with_position(
             )
             return "scalp_exit", reason, False, False
         # 3. CONVICTION CHECK — Layer 2B emotion stack no longer
-        # supports the position. The moment current conviction fails
-        # against hesitation, exit. No half-life, no streak.
+        # supports the position.
+        # LIVED wiring (Finding 3): add a small streak requirement for symmetry/parity
+        # with the TS side. Immediate fire is the historical source of asymmetric
+        # winner-harvest in chop. Require N consecutive ticks before firing.
         confidence = getattr(emotions, "confidence", 0.0)
         anxiety = getattr(emotions, "anxiety", 0.0)
         confusion = getattr(emotions, "confusion", 0.0)
-        if confidence < anxiety + confusion:
+
+        conviction_condition = confidence < anxiety + confusion
+        if conviction_condition:
+            state.conviction_failed_streak = getattr(state, 'conviction_failed_streak', 0) + 1
+        else:
+            state.conviction_failed_streak = 0
+
+        # Require at least 2 consecutive ticks (bridge to observer-derived later).
+        # This matches the spirit of the TS side while we finish the full sign-flip derivation.
+        if conviction_condition and state.conviction_failed_streak >= 2:
             rejust["fired"] = "conviction_failed"
             derivation["rejustification"] = rejust
             reason = (
                 f"conviction_failed: conf={confidence:.3f} < "
-                f"anxiety+confusion={anxiety + confusion:.3f}"
+                f"anxiety+confusion={anxiety + confusion:.3f} "
+                f"(streak={state.conviction_failed_streak})"
             )
             return "scalp_exit", reason, False, False
     derivation["rejustification"] = rejust

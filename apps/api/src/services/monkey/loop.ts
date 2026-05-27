@@ -3350,6 +3350,13 @@ export class MonkeyKernel extends EventEmitter {
         const laneMultiplier = laneMultiplierFromTickPeriod(heldLane, state.currentTickMs);
         const convictionFailedTicksRequired = baseStabilityTicks * laneMultiplier;
         const directionalDisagreementTicksRequired = baseStabilityTicks * laneMultiplier;
+        // Commit 3 (2026-05-27): detect adopted-position origin from the
+        // open row's reason. Reconciler-adopted rows carry `|adopted|` in
+        // their reason after the ownership rewrite; kernel-entered rows
+        // never carry that substring. Origin gates which rejustification
+        // checks are eligible (adopted: only directional_disagreement).
+        const heldOrigin: 'own' | 'adopted' =
+          ownOpenRow?.reason.includes('|adopted|') ? 'adopted' : 'own';
         const rejustResult = !exitFired
           ? evaluateRejustification({
               regimeAtOpen,
@@ -3368,6 +3375,7 @@ export class MonkeyKernel extends EventEmitter {
               basinAtOpen,
               heldDurationS,
               currentRoi,
+              origin: heldOrigin,
             })
           : {
               checked: false, fired: null, reason: '', phiFloor: null,
@@ -5911,18 +5919,20 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   private async findOpenMonkeyTrade(symbol: string): Promise<
-    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend'; take_profit: number | null; stop_loss: number | null }
+    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend'; take_profit: number | null; stop_loss: number | null; reason: string }
     | null
   > {
     // Aggregate over ALL open lanes (back-compat: callers that don't
     // know about lanes still need a single open-row view). Returns the
     // OLDEST lane's pseudo-row when multiple lanes hold positions; the
     // proper lane-aware path uses ``findOpenMonkeyTradesByLane`` below.
+    // Commit 3 (2026-05-27): include `reason` so callers can detect
+    // adopted-position origin via the `|adopted|` substring.
     try {
       const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
       const result = await pool.query(
         `SELECT id, entry_price, quantity, leverage, order_id, side, lane,
-                take_profit, stop_loss
+                take_profit, stop_loss, reason
            FROM autonomous_trades
           WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
           ORDER BY entry_time ASC`,
@@ -5932,6 +5942,7 @@ export class MonkeyKernel extends EventEmitter {
         id: string; entry_price: string; quantity: string; leverage: number;
         order_id: string | null; side: string; lane: string;
         take_profit: string | null; stop_loss: string | null;
+        reason: string;
       }>;
       const normSide = (s: string): 'long' | 'short' =>
         s === 'buy' || s === 'long' ? 'long' : 'short';
@@ -5962,6 +5973,10 @@ export class MonkeyKernel extends EventEmitter {
         (s, r) => s + Number(r.entry_price) * Math.abs(Number(r.quantity) || 0),
         0,
       ) / totalQty;
+      // For multi-row aggregation, `reason` is "adopted" only if EVERY
+      // underlying row is adopted — a kernel-entered row mixed in means
+      // the position is at least partly own-managed.
+      const allAdopted = rows.every((r) => r.reason.includes('|adopted|'));
       return {
         id: rows[0].id,
         entry_price: String(weightedPrice),
@@ -5972,6 +5987,7 @@ export class MonkeyKernel extends EventEmitter {
         lane: normLane(rows[0].lane),
         take_profit: numOrNull(rows[0].take_profit),
         stop_loss: numOrNull(rows[0].stop_loss),
+        reason: allAdopted ? rows[0].reason : rows[0].reason.replace('|adopted|', '|'),
       };
     } catch (err) {
       logger.debug('[Monkey] findOpenMonkeyTrade failed', {
