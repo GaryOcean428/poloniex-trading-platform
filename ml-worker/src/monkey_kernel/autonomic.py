@@ -137,8 +137,25 @@ def _z_score(x: float, history: Optional[list[float]]) -> float:
 #  REWARD QUEUE — pantheon ActivityReward pattern
 # ═══════════════════════════════════════════════════════════════
 
-REWARD_HALF_LIFE_MS: float = 20 * 60 * 1000.0  # 20 min
+# P5/P25 observer-derived (retired bare 20 min half-life).
+# Half-life now registry + heart_rhythm / recent reward rate modulation.
+# Citations: 2.31A P5/P25 + v6.7B reward sections + QIG PURITY MANDATE 17pt #7
+# + Embodiment_Waves Wave 4 + master-orchestration + verification-before-completion
+# + geometric (decay as exponential on tacking-time) + never-stop.
+# Fisher-Rao tacking: no Euclidean.
+REWARD_HALF_LIFE_MS: float = 20 * 60 * 1000.0  # 20 min (ultimate fallback only)
 REWARD_QUEUE_MAX: int = 50
+
+
+def get_reward_half_life_ms(heart_rhythm: float = 0.5, recent_reward_rate: float = 1.0) -> float:
+    """P5/P25 observer-derived reward decay half-life.
+    Registry + heart tacking rhythm + recent reward event rate modulation.
+    Faster heart rhythm or higher recent reward density → slightly shorter half-life
+    (faster forgetting of old outcomes so new net-of-fees signals dominate).
+    """
+    base = float(_registry.get("autonomic.reward_half_life_ms", default=20 * 60 * 1000.0))
+    mod = 2 * 60 * 1000.0 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_reward_rate - 1.0) * 0.2))
+    return max(10 * 60 * 1000.0, min(40 * 60 * 1000.0, base + mod))
 
 
 @dataclass
@@ -389,7 +406,9 @@ class AutonomicKernel:
         dop = ser = endo = 0.0
         for r in self._pending_rewards:
             age_ms = now_ms - r.at_ms
-            decay = 0.5 ** (age_ms / REWARD_HALF_LIFE_MS)
+            # P5/P25: use observer-derived half-life (registry + heart/phi modulation)
+            hl = get_reward_half_life_ms()
+            decay = 0.5 ** (age_ms / hl)
             if decay < 0.01:
                 continue
             dop += r.dopamine_delta * decay

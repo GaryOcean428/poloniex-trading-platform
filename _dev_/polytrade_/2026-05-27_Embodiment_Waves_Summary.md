@@ -150,8 +150,10 @@ Execution started in the non-stop wave (direct main):
 - applyPoloRealizedPnlAfterClose helper added in loop.ts (exact fetch + match + write logic)
 - Gated wiring stub in the primary live close success path
 - tsc clean after edits
+- Advanced wiring: live close row loop now collects tradeIds + grossById during accumulation; helper called with real data from the close group (commit e09616fc on main)
+- Type on perAgentTotals extended for the surface
 
-Full integration (threading row ids, updating all UPDATE sites to populate gross_pnl, making pushReward prefer Polo pnl, LIVED ONLY 5 asserts on the new authoritative path, Py transparency, negative test on the 15:30:45 case) will be completed in the immediate next micro-slices without pause.
+Full integration (gross_pnl population in synthetic UPDATE sites, pushReward preferring Polo pnl when available, hard LIVED ONLY 5 on the authoritative reward ledger, Py transparency, negative test on the 15:30:45 case) continues in the immediate next micro-slices without pause.
 
 This is the surface the kernel will learn from going forward. No knobs. "Ask the exchange what it actually paid us."
 
