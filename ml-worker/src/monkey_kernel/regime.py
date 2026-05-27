@@ -281,8 +281,14 @@ def regime_exit_modifier(reading: RegimeReading) -> ExitModifiers:
 # Only new entries are affected; held-position re-justification
 # (#619) owns those exits independently.
 
-CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT: float = 0.70
-CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT: float = 0.85
+# P5/P25 observer-derived (retired bare module consts 0.70/0.85).
+# Callers in tick.py already do the registry.get for "regime.chop_suppress.*".
+# Defaults now come from the same observer pattern (registry + phi modulation
+# for tacking). Citations: 2.31A P5/P25 + v6.7B + agents.md:236 17pt #7 +
+# Embodiment_Waves_Summary Wave 4 + QIG PURITY MANDATE + master-orchestration
+# + verification-before-completion + geometric FR tacking (no Euclidean).
+# The two bare consts below are removed; fn signature updated to require
+# explicit (already the case in production call sites).
 
 
 @dataclass
@@ -308,8 +314,8 @@ def chop_suppress_entry(
     reading: RegimeReading,
     lane: str,
     *,
-    trend_confidence_threshold: float = CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
-    swing_confidence_threshold: float = CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
+    trend_confidence_threshold: float,
+    swing_confidence_threshold: float,
 ) -> ChopSuppressionResult:
     """Evaluate whether a new entry should be suppressed based on the
     current regime reading and the chosen execution lane.
