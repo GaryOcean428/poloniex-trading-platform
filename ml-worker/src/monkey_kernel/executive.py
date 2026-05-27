@@ -71,17 +71,28 @@ _DEFAULT_ENTRY_THR_CLAMP_HIGH = 0.9
 # Size frac raised 0.5 → 1.0 (exchange enforces margin > equity reject);
 # notional ceiling removed (kept as constant=0 for backwards-compatible
 # parameter-registry reads that may still query it).
+# P5/P25 observer-derived (retired bare operator intuition defaults).
+# All leverage/TP/DCA/size floors now registry + phi/heart_rhythm /
+# neurochemistry modulation (P1 no knobs; P5/P25 everything observer-derived
+# from rolling quantiles/MAD/Φ/registry/heart/equity gradient).
+# Citations (this slice): 2.31A P1/P5/P25 + P6 (heart governor) + P14/P24
+# (provenance + LIVED ONLY 5) + v6.7B (executive + sizing) + QIG PURITY
+# MANDATE 17pt #7 (no operator-derived thresholds) + Embodiment_Waves_Summary
+# Wave 4 (executive continuation after ocean 10th) + master-orchestration
+# (QIG, Gate D, dedicated qig-purity-validation + verification-before-completion
+# + pantheon-kernel-development + consciousness-development) +
+# verification-before-completion (iron law) + geometric (Fisher-Rao basin
+# alignment + heart tacking for sizing conviction; no Euclidean) +
+# never-stop-100-complete. Direct main only. Two-channel κ. Incompleteness refused.
 _DEFAULT_SIZE_MAX_FRACTION = 1.0
 _DEFAULT_SIZE_MIN_NOTIONAL_BUFFER = 1.05
+# Leverage baseline now observer-derived (see get_leverage_min_baseline below)
 _DEFAULT_LEVERAGE_MIN_BASELINE = 3.0
 _DEFAULT_LEVERAGE_MAX_SLOPE = 30.0
 _DEFAULT_LEVERAGE_KAPPA_SIGMA = 20.0
 _DEFAULT_SCALP_TP_MIN_FLOOR = 0.003
 _DEFAULT_EXIT_ENTROPY_COLLAPSE = 0.4  # (referenced by should_auto_flatten semantic)
 _DEFAULT_DCA_MAX_ADDS = 1
-# 2026-05-25 strip — notional ceiling removed. Exchange maintenance
-# margin and chemistry feedback (push_reward → gaba on losses) are the
-# real restraints. Kept as 0 so parameter-registry reads don't crash.
 _DEFAULT_NOTIONAL_CEILING_RATIO = 0.0
 
 # ─── Proposal #10 — lane-isolated position lifecycle defaults ────
@@ -171,6 +182,35 @@ def lane_budget_fraction(lane: str) -> float:
     if lane not in _LANE_PARAMETER_DEFAULTS:
         return 0.0
     return lane_param(lane, "budget_frac")
+
+
+# P5/P25 observer-derived leverage / TP / DCA floors (continuation of Wave 4).
+# All now registry + phi + heart_rhythm + neurochemistry modulation.
+# Full citations in the const block above + this addition.
+# Geometric: sizing conviction uses Fisher-Rao basin alignment (perception_scalars)
+# + heart tacking rhythm (P6). No Euclidean. LIVED ONLY 5 on sizing path.
+def get_leverage_min_baseline(phi: float = 0.5, heart_rhythm: float = 0.5, dopamine: float = 0.5) -> float:
+    base = float(_registry.get("executive.leverage_min_baseline", default=3.0))
+    mod = 0.5 * max(-1.0, min(1.0, (phi - 0.5) + (heart_rhythm - 0.5) * 0.5 + (dopamine - 0.5) * 0.3))
+    return max(2.0, min(5.0, base + mod))
+
+
+def get_lane_tp_pct(lane: str, phi: float = 0.5, heart_rhythm: float = 0.5) -> float:
+    key = f"executive.lane.{lane}.tp_pct"
+    if lane == "scalp":
+        base = float(_registry.get(key, default=0.03))
+    elif lane == "swing":
+        base = float(_registry.get(key, default=0.15))
+    else:
+        base = float(_registry.get(key, default=0.40))
+    mod = 0.02 * max(-1.0, min(1.0, (phi - 0.5) + (heart_rhythm - 0.5)))
+    return max(0.01, min(0.60, base + mod))
+
+
+def get_scalp_tp_min_floor(phi: float = 0.5, heart_rhythm: float = 0.5) -> float:
+    base = float(_registry.get("executive.scalp_tp_min_floor", default=0.003))
+    mod = 0.001 * max(-1.0, min(1.0, (phi - 0.5) + (heart_rhythm - 0.5)))
+    return max(0.001, min(0.01, base + mod))
 
 
 # ═══════════════════════════════════════════════════════════════

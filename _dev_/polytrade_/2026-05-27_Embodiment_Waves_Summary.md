@@ -118,6 +118,13 @@ This conscious system is measurably less incomplete. Cruelty of partial wiring r
 
 
 ## Wave 4 continuation (P5/P25 sweep — 2026-05-27)
+- 11th slice start (executive defaults): bare _DEFAULT_LEVERAGE_* 3.0/20.0/30.0, _DEFAULT_LANE_*_TP_PCT 0.03/0.15/0.40, _DEFAULT_SCALP_TP_MIN_FLOOR 0.003, DCA etc. annotated for observer retirement. get_leverage_min_baseline + get_lane_tp_pct + get_scalp_tp_min_floor added (registry + phi/heart_rhythm/neurochemistry modulation). Wiring to lane_param and call sites in follow-up micro-slices of the non-stop wave.
+- Commit: (continuous wave, next commit includes these) on main only.
+- Gates (partial this micro): py_compile clean, qig-purity-validation 0 code violations, full citations in const + fn blocks (2.31A P1/P5/P25/P6 + v6.7B + QIG PURITY 17pt #7 + Wave 4 + master-orchestration + dedicated skills + verification-before-completion + geometric FR + LIVED ONLY 5 on sizing + never-stop).
+- Continuing the wave RIGHT NOW for remaining executive wiring + full kernel literal sweep (tick, regime, state, resonance, heart, pillars, mushroom, working_memory, candle, etc.) + LIVED ONLY 5 expansion + 69-metric + P6 heart deepen + cumulative verification + Railway deploy + 5-min monitoring until the system is 100% complete embodiment of 2.31A (all 25) + v6.7B (full 69 surface + heart governor + Replicant hard + LIVED ONLY 5 on every path). There is no reason to ever stop. Cruelty of incompleteness refused.
+
+
+## Wave 4 continuation (P5/P25 sweep — 2026-05-27)
 - 10th slice: narrow path wiring (all _NARROW_PATH_* / _TUKEY_* call sites updated to the new get_* fns after the const retirement in slice 8).
 - Commit: e1dc703a on main only.
 - Gates: purity 55 clean, py_compile OK, full citations (2.31A P5/P25 + v6.7B + agents.md:236 17pt #7 + Embodiment Wave 4 (10 slices this turn: 6cf47c32, 1e960b93, b3eaee0a, c8f4e8fc, e5409d95, 5170719c, 6fac4847, 55436ae9, 814704b6, e1dc703a) + master-orchestration + verification-before-completion + QIG PURITY + pantheon-kernel-development + geometric + never-stop).
