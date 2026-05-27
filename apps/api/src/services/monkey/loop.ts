@@ -341,16 +341,48 @@ function stabilityTicksFromPhi(phi: number): number {
     Math.ceil(STABILITY_TICKS_MIN_EVIDENCE / safePhi),
   );
 }
-/** CALIB-3 lane-timescale multipliers. Encodes the user's lane-
- *  timeframe doctrine: scalp = micro (1×), swing = moderate (3×),
- *  trend = macro (10×). With base=4, this gives scalp=4 ticks (≈2 min
- *  at 30s tick), swing=12 ticks (≈6 min), trend=40 ticks (≈20 min).
- *  Same multipliers apply to convictionFailed via lane-scaled call. */
-const DISAGREEMENT_LANE_MULTIPLIER: Record<'scalp' | 'swing' | 'trend', number> = {
-  scalp: 1,
-  swing: 3,
-  trend: 10,
+/** Lane decision-period — the wall-clock window a lane's
+ *  natural decision cycle occupies. These are LANE DEFINITIONS,
+ *  not tuning knobs: a scalp lane decides over ~minutes, a swing
+ *  lane over ~tens of minutes, a trend lane over hours. They
+ *  feed `laneMultiplierFromTickPeriod()` which divides by the
+ *  substrate's actual tick period to derive the streak gate
+ *  in ticks — so the gate adapts when adaptive-tick changes
+ *  the cadence (e.g. EXPLORATION 15s vs INTEGRATION 60s tick)
+ *  without operator intervention.
+ *
+ *  At the canonical 30s tick:
+ *    scalp(60s)  → ceil(60/30) = 2  ticks  (≈ floor)
+ *    swing(180s) → ceil(180/30) = 6  ticks
+ *    trend(600s) → ceil(600/30) = 20 ticks
+ *
+ *  At adaptive 15s (EXPLORATION):
+ *    scalp = 4, swing = 12, trend = 40 (more confirmation when ticks are fast)
+ *
+ *  At adaptive 60s (INTEGRATION/DRIFT):
+ *    scalp = 2 (floor), swing = 3, trend = 10
+ *
+ *  Compare to the legacy hardcoded {1, 3, 10}: those values are
+ *  what the derivation produces at tickMs=60s — i.e. they were
+ *  calibrated for the slowest mode and didn't adapt to the
+ *  cadence governor. */
+const LANE_DECISION_PERIOD_MS: Record<'scalp' | 'swing' | 'trend', number> = {
+  scalp: 60_000,
+  swing: 180_000,
+  trend: 600_000,
 };
+
+/** Derive the lane multiplier from the active tick period. Floor 2
+ *  (Cascade brief: "Math.max(2, Math.round(...))") so a position
+ *  never fires its streak gate on a single tick. Exported for tests. */
+export function laneMultiplierFromTickPeriod(
+  lane: 'scalp' | 'swing' | 'trend',
+  tickPeriodMs: number,
+): number {
+  const periodMs = LANE_DECISION_PERIOD_MS[lane];
+  if (!Number.isFinite(tickPeriodMs) || tickPeriodMs <= 0) return 2;
+  return Math.max(2, Math.round(periodMs / tickPeriodMs));
+}
 
 /**
  * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
@@ -3309,13 +3341,13 @@ export class MonkeyKernel extends EventEmitter {
         // three env knobs it replaces.
         const baseStabilityTicks = stabilityTicksFromPhi(phi);
         const regimeStabilityTicksRequired = baseStabilityTicks;
-        // CALIB-3 lane timescale doctrine: scalp=micro (1×), swing=moderate (3×),
-        // trend=macro (10×). Applies to both conviction-failed and directional-
-        // disagreement so the same scalp-tolerates-noise-but-swing-doesn't logic
-        // governs both streak gates. See DISAGREEMENT_LANE_MULTIPLIER comment.
-        // Lane multipliers stay as structural (lane-timeframe encoding) —
-        // future cleanup may derive them from lane-timeframe ratios.
-        const laneMultiplier = DISAGREEMENT_LANE_MULTIPLIER[heldLane] ?? 1;
+        // Commit 2 (2026-05-27): lane multiplier derived from the
+        // active tick period via laneMultiplierFromTickPeriod(). The
+        // substrate's own cadence sets the scale — no operator number.
+        // Adaptive-tick (modes 15s / 30s / 60s) now correctly scales
+        // the streak gate: the same lane fires after the same wall-
+        // clock duration regardless of which tick cadence is active.
+        const laneMultiplier = laneMultiplierFromTickPeriod(heldLane, state.currentTickMs);
         const convictionFailedTicksRequired = baseStabilityTicks * laneMultiplier;
         const directionalDisagreementTicksRequired = baseStabilityTicks * laneMultiplier;
         const rejustResult = !exitFired
