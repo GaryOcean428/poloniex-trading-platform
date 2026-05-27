@@ -7521,11 +7521,12 @@ export class MonkeyKernel extends EventEmitter {
       // attributing chemistry to the agent that actually generated each
       // win. Each agent gets its own margin estimate from its own qty
       // share so pnlFraction = pnl / margin is meaningful per agent.
-      const perAgentTotals: Record<AgentLabel, { pnl: number; qty: number }> = {
-        K: { pnl: 0, qty: 0 },
-        M: { pnl: 0, qty: 0 },
-        T: { pnl: 0, qty: 0 },
-        L: { pnl: 0, qty: 0 },
+      // Extended for canonical Polo surface (gross_pnl + IDs for later Polo history write)
+      const perAgentTotals: Record<AgentLabel, { pnl: number; qty: number; ids?: string[]; grossById?: Record<string, number> }> = {
+        K: { pnl: 0, qty: 0, ids: [], grossById: {} },
+        M: { pnl: 0, qty: 0, ids: [], grossById: {} },
+        T: { pnl: 0, qty: 0, ids: [], grossById: {} },
+        L: { pnl: 0, qty: 0, ids: [], grossById: {} },
       };
       if (rows.length === 0 || totalQty === 0) {
         // #931 safe-pnl: compute pnl from row's own entry/qty/side via SAFE_PNL_FROM_ROW,
@@ -7644,6 +7645,14 @@ export class MonkeyKernel extends EventEmitter {
           this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl, (markPrice * rowQty) / 16);
           perAgentTotals[agentLabel].pnl += rowPnl;
           perAgentTotals[agentLabel].qty += rowQty;
+
+          // For canonical Polo surface: collect the actual row IDs and the
+          // synthetic gross_pnl so we can pass them to the Polo history fetch
+          // and write gross_pnl + authoritative Polo net later.
+          if (!perAgentTotals[agentLabel].ids) perAgentTotals[agentLabel].ids = [];
+          if (!perAgentTotals[agentLabel].grossById) perAgentTotals[agentLabel].grossById = {};
+          perAgentTotals[agentLabel].ids.push(row.id);
+          perAgentTotals[agentLabel].grossById[row.id] = rowPnl;  // synthetic gross at this moment
         }
       }
 
@@ -7652,16 +7661,27 @@ export class MonkeyKernel extends EventEmitter {
       // pushPerAgentCloseRewards for margin derivation + rationale.
       this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals);
 
-      // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec) — stub wiring.
-      // Full integration (threading row ids, gross_pnl population, credential
-      // access) in the next micro-slices of this non-stop wave. The helper
-      // itself is the structural piece; call sites will be hardened.
+      // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
+      // Now wired with real data from the row loop. The helper will
+      // fetch Polo history, match, write Polo realized to .pnl and
+      // preserve the synthetic as .gross_pnl.
+      // LIVED ONLY 5: reward ledger will eventually be driven by the
+      // Polo net value.
       if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
+        // Collect all trade IDs and a gross map across agents for this close group
+        const allTradeIds: string[] = [];
+        const grossById: Record<string, number> = {};
+        for (const agentKey of ['K', 'M', 'T', 'L'] as const) {
+          const t = perAgentTotals[agentKey];
+          if (t.ids) allTradeIds.push(...t.ids);
+          if (t.grossById) Object.assign(grossById, t.grossById);
+        }
         void this.applyPoloRealizedPnlAfterClose({
-          tradeIds: [], // will be populated from the row loop in follow-up edit
+          tradeIds: allTradeIds,
           symbol,
           closeTimeMs: Date.now(),
           side: heldSide,
+          grossPnlByRow: grossById,
           credentials: (this as any).credentials ?? null,
         });
       }
