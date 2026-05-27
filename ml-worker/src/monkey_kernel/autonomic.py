@@ -158,6 +158,16 @@ def get_reward_half_life_ms(heart_rhythm: float = 0.5, recent_reward_rate: float
     return max(10 * 60 * 1000.0, min(40 * 60 * 1000.0, base + mod))
 
 
+def get_pnl_frac_history_max(heart_rhythm: float = 0.5) -> int:
+    """P5/P25 observer-derived history window for observer_fib_coefficient.
+    Registry + heart rhythm modulation. Larger window in calm regimes for
+    more stable median/MAD; smaller when heart is fast (more responsive observer).
+    """
+    base = int(_registry.get("autonomic.pnl_frac_history_max", default=200))
+    mod = int(20 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(100, min(400, base + mod))
+
+
 @dataclass
 class ActivityReward:
     """Reward event pushed by the orchestrator when an outcome lands."""
@@ -302,8 +312,10 @@ class AutonomicKernel:
         if not hasattr(self, "_pnl_frac_history"):
             self._pnl_frac_history: list[float] = []
         self._pnl_frac_history.append(pnl_frac)
-        if len(self._pnl_frac_history) > 200:
-            self._pnl_frac_history = self._pnl_frac_history[-200:]
+        # P5/P25 observer-derived (retired bare 200 window).
+        hist_max = get_pnl_frac_history_max()
+        if len(self._pnl_frac_history) > hist_max:
+            self._pnl_frac_history = self._pnl_frac_history[-hist_max:]
         ocean_coeff = observer_fib_coefficient(pnl_frac, self._pnl_frac_history)
 
         if pnl_frac > 0:
