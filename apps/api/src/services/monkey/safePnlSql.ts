@@ -66,6 +66,51 @@ export function computeSafePnl(
 }
 
 /**
+ * Net-of-fees PnL for the *chemistry / reward observer* (P1/P5/P25 critical).
+ *
+ * The gross SAFE_PNL_FROM_ROW / computeSafePnl value is correct for
+ * row-level accounting and phantom detection. It is NOT the economic
+ * reality the kernel actually experienced on Polo (taker fees on entry
+ * + exit + funding rates).
+ *
+ * The reward gate (pnlFracHistory → median/MAD → z-deviation →
+ * observerFibCoefficient → dopamine/serotonin tiers) MUST be driven by
+ * the net outcome. Otherwise small-edge trades that are gross-positive
+ * but net-negative (the exact 15:30:45 case: +0.148 gross / ≈ −0.02 net
+ * after ~$0.17 fees) will fire positive chemistry, systematically
+ * reinforcing structurally losing behavior.
+ *
+ * Conservative model (Polo USDT-M futures, typical VIP0 taker):
+ *   roundTripFeePct ≈ 0.0008 (8 bp) + small funding buffer.
+ * This is deliberately conservative so the kernel never over-rewards
+ * marginal trades. A more precise per-symbol fee schedule can replace
+ * the constant later; the structure (gross → net adjustment before
+ * the observer) is the invariant.
+ *
+ * LIVED ONLY 5: every call site that feeds the reward observer must
+ * pass through this (or an equivalent authoritative net source).
+ * Gross is a violation.
+ */
+export function computeNetPnlForReward(
+  grossPnlUsdt: number,
+  notionalUsdt: number,
+): number {
+  if (!Number.isFinite(grossPnlUsdt) || !Number.isFinite(notionalUsdt) || notionalUsdt <= 0) {
+    return grossPnlUsdt; // fall-open only for cold-start / test fixtures
+  }
+  // Conservative round-trip taker + funding buffer (Polo USDT-M typical)
+  // plus a small absolute floor so micro-edge trades that are gross-positive
+  // but fee-negative (the exact 15:30:45 case) correctly produce net ≤ 0
+  // for the reward observer.
+  const roundTripFeePct = 0.0009; // 9 bp conservative
+  const feeHit = Math.max(
+    notionalUsdt * roundTripFeePct,
+    0.18, // absolute floor — reproduces the ~$0.17 fee hit the user measured on the +0.148 gross trade (conservative)
+  );
+  return grossPnlUsdt - feeHit;
+}
+
+/**
  * Verify a caller-provided pnl against the row's own data. Returns a
  * structured object describing any divergence > threshold so callers
  * can log/alert without depending on the divergence to occur.

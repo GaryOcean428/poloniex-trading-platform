@@ -131,3 +131,44 @@ describe('regression: per-row arithmetic recovers from the aggregate-pnl bug', (
     }
   });
 });
+
+import { observerFibCoefficient } from '../ocean_reward.js';
+import { computeNetPnlForReward } from '../safePnlSql.js';
+
+describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived economic reality)', () => {
+  it('15:30:45 case: gross +0.148 but net ≈ −0.02 after fees → oceanCoeff must be 0, no positive tier reward', () => {
+    // User's exact production report: hold was 8.5 min (not 56.9), gross +0.148,
+    // Polo fees made it net-negative (~ −0.02). The observer reward gate must
+    // NOT fire positive chemistry on this structurally losing trade.
+    const grossPnl = 0.148;
+    // Realistic margin for the trade that produced ~$0.17 fee hit at 9 bp + floor
+    const margin = 1.2; // notional ~19.2 USDT
+    const notional = margin * 16;
+
+    const netPnl = computeNetPnlForReward(grossPnl, notional);
+    // Must reproduce the user's measured outcome: net negative
+    expect(netPnl).toBeLessThan(0);
+
+    // Simulate the history the kernel would have seen (small positive median)
+    const history = [0.0005, 0.0012, -0.0008, 0.0003, 0.0009];
+
+    // The pnlFrac passed to the observer must be the *net* version
+    const netPnlFrac = netPnl / margin;
+    const coeff = observerFibCoefficient(netPnlFrac, history);
+
+    // Gross would have produced positive z and tier ≥1.
+    // Net must produce z ≤ 0 → coeff = 0 (no positive chemistry).
+    expect(coeff).toBe(0);
+  });
+
+  it('computeNetPnlForReward is conservative (never over-rewards marginal gross-positive trades)', () => {
+    const gross = 0.05;
+    const notional = 10;
+    const net = computeNetPnlForReward(gross, notional);
+    expect(net).toBeLessThan(gross);
+    // On very small gross the net can easily go negative
+    const tinyGross = 0.005;
+    const tinyNet = computeNetPnlForReward(tinyGross, notional);
+    expect(tinyNet).toBeLessThan(0);
+  });
+});

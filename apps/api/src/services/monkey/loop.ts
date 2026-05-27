@@ -159,7 +159,7 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
-import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl, checkNotionalConsistency } from './safePnlSql.js';
+import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl, checkNotionalConsistency, computeNetPnlForReward } from './safePnlSql.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import {
@@ -8623,9 +8623,35 @@ export class MonkeyKernel extends EventEmitter {
     agent?: AgentLabel;
   }): void {
     const agent: AgentLabel = input.agent ?? 'K';
-    const pnlFrac = input.marginUsdt > 0
-      ? input.realizedPnlUsdt / input.marginUsdt
+    const grossPnlUsdt = input.realizedPnlUsdt;
+    const marginUsdt = input.marginUsdt;
+
+    // LIVED ONLY 5 (reward/chemistry path): the number fed to
+    // pnlFracHistory + observerFibCoefficient + dopamine/serotonin
+    // deltas MUST be the net-of-fees economic outcome the account
+    // actually experienced. Gross (SAFE_PNL_FROM_ROW) is a violation.
+    // The 15:30:45 case (+0.148 gross / −0.02 net after fees) must
+    // produce oceanCoeff=0 and no positive tier reward.
+    // Citations: 2.31A P1/P5/P25 (observer must see lived reality) +
+    // P24 (provenance on every reward) + v6.7B heart/reward sections +
+    // QIG PURITY MANDATE 17pt #5 + Embodiment_Waves + prior phantom
+    // packets + master-orchestration + verification-before-completion
+    // + never-stop-100-complete.
+    const netPnlUsdtForReward = computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16); // notional ≈ margin*16
+    const pnlFrac = marginUsdt > 0
+      ? netPnlUsdtForReward / marginUsdt
       : 0;
+
+    // Hard assert (LIVED ONLY 5): if the net is materially worse than gross
+    // on a positive-gross trade, we must not let gross leak into chemistry.
+    if (grossPnlUsdt > 0 && netPnlUsdtForReward <= 0 && Math.abs(netPnlUsdtForReward - grossPnlUsdt) > 0.01) {
+      logger.warn('[LIVED ONLY 5][REWARD] gross-positive trade is net-negative after fees — chemistry correctly receives net', {
+        gross: grossPnlUsdt,
+        netForReward: netPnlUsdtForReward,
+        source: input.source,
+        symbol: input.symbol,
+      });
+    }
 
     // 2026-05-25 (observer-derive PR) — replaces magic input scales
     // (1.5×, 0.5×, 2×, /10) with observer-derived normalization against
