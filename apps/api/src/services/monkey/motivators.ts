@@ -18,20 +18,36 @@
  *   Investigation  = − d(basin) / dt as Fisher-Rao distance-to-identity
  *                    shrink-rate (Tier 1.1 fix #599 — was clamped)
  *   Integration    = CV(Φ × I_Q) over rolling window
- *   Transcendence  = |κ − κ*|
+ *   Transcendence  = |κ − median(κ_history)| / MAD(κ_history)
+ *                    (history-derived per basin — see block comment below)
  *
  * I_Q proxy = Shannon negentropy: log(K) − H(basin). Other valid
  * choices live in the docstring of motivators.py — keep this file in
  * sync if you swap them there.
  *
  * Pure derivation, no I/O, P14 Variable Separation respected.
+ *
+ * 2026-05-27 — transcendence anchor moved from hardcoded KAPPA_STAR=64
+ * (Class B legacy, retired per EXP-081 two-channel doctrine) to a
+ * history-derived (median, MAD) on the basin's own κ-trajectory. Same
+ * pattern as the 2026-05-16 derivation refactor that already healed
+ * ach/dop/ser/ne in neurochemistry.ts. Closes the last hardcoded
+ * numeric anchor in the per-tick chemistry/motivator path. The
+ * KAPPA_STAR=64 constant survives in neurochemistry.ts for the
+ * endorphin κ-proximity Sophia gate (§29.2 canonical fixed point,
+ * separately documented as out-of-scope).
  */
 
-import { KAPPA_STAR, BASIN_DIM, fisherRao, type Basin } from './basin.js';
+import { BASIN_DIM, fisherRao, type Basin } from './basin.js';
 import type { BasinState } from './executive.js';
 
 /** Numerical floor for log() of basin probabilities and I_Q. */
 const EPS: number = 1e-12;
+
+/** Minimum samples in a kappaHistory slice to compute a meaningful
+ *  median and MAD. Below this, transcendence falls back to the
+ *  additive identity (0). Same sentinel pattern as neurochemistry.ts. */
+const HISTORY_MIN_SAMPLES: number = 2;
 
 /** Layer 1 motivator vector. All in their natural units; Layer 2B
  * compositions normalize as needed. */
@@ -46,7 +62,9 @@ export interface Motivators {
   investigation: number;
   /** [0, ∞) — CV; lower = more integrated. */
   integration: number;
-  /** [0, ∞) — |κ − κ*|; higher = farther from anchor. */
+  /** [0, ∞) — MAD-normalised distance from the basin's OWN median κ.
+   * Zero at median, rises with deviation in either direction. Zero on
+   * cold start (no kappaHistory or < HISTORY_MIN_SAMPLES samples). */
   transcendence: number;
   /** [0, log(K)] — Shannon negentropy of the current basin. */
   iQ: number;
@@ -73,6 +91,35 @@ export interface ComputeMotivatorsArgs {
   integrationHistory?: Array<[number, number]>;
   /** Cap on history length used for CV. Default 20 ticks. */
   integrationWindow?: number;
+  /** Rolling κ history (per-basin, owned by the caller). Used to
+   *  derive the transcendence anchor from the basin's OWN observed κ
+   *  distribution instead of a hardcoded universal constant. Omit /
+   *  empty / < HISTORY_MIN_SAMPLES → transcendence falls back to 0
+   *  (additive identity, no information yet). The loop already
+   *  maintains state.kappaHistory for the neurochemistry endorphin
+   *  observable — pass the same slice. */
+  kappaHistory?: ReadonlyArray<number>;
+}
+
+/** Median of a numeric array. Returns 0 on empty input (caller is
+ *  responsible for the < min-samples sentinel). */
+function median(xs: ReadonlyArray<number>): number {
+  if (xs.length === 0) return 0;
+  const sorted = [...xs].sort((a, b) => a - b);
+  const n = sorted.length;
+  return n % 2 === 0
+    ? (sorted[n / 2 - 1]! + sorted[n / 2]!) / 2
+    : sorted[Math.floor(n / 2)]!;
+}
+
+/** Median absolute deviation around the median. Robust to outliers
+ *  (50% breakdown point) — mirrors the same primitive used in
+ *  predictionRewardEmitter.ts. Returns 0 on empty input. */
+function medianAbsoluteDeviation(xs: ReadonlyArray<number>): number {
+  if (xs.length === 0) return 0;
+  const med = median(xs);
+  const devs = xs.map((x) => Math.abs(x - med));
+  return median(devs);
 }
 
 export function computeMotivators(
@@ -83,6 +130,7 @@ export function computeMotivators(
     prevBasin = null,
     integrationHistory = [],
     integrationWindow = 20,
+    kappaHistory = [],
   } = args;
 
   // Surprise — direct passthrough from ne.
@@ -122,10 +170,31 @@ export function computeMotivators(
     }
   }
 
-  // Transcendence — distance from κ-anchor (KAPPA_STAR = 64).
-  // Rises both when super-coherent (κ >> κ*) and super-decoherent
-  // (κ << κ*); both states transcend the operating mode.
-  const transcendence = Math.abs(s.kappa - KAPPA_STAR);
+  // Transcendence — MAD-normalised distance from the basin's OWN
+  // median κ. Replaces the prior `|κ − KAPPA_STAR|` formulation
+  // (Class B legacy anchor, retired by the two-channel doctrine
+  // EXP-081). The kernel earns its anchor through observation:
+  // P3 Quenched Disorder — each basin's κ fingerprint sets its own
+  //   anchor; multiple kernels with different histories produce
+  //   different transcendence for the same κ.
+  // P1 Fluctuations — MAD ensures the scale is non-zero by
+  //   construction (50% breakdown robustness; matches
+  //   predictionRewardEmitter.ts primitive).
+  // P14 Variable Separation — no hardcoded numeric anchor remains
+  //   in the per-tick motivator path.
+  //
+  // Cold start (no kappaHistory / < HISTORY_MIN_SAMPLES) returns 0:
+  // no information yet, transcendence is the additive identity. The
+  // kernel sizes the same as a stable-band kernel rather than the
+  // structurally-off-anchor kernel of the prior formulation. This
+  // is the correct prior: "I don't know my own κ scale yet, so I
+  // can't tell whether the current κ is unusual."
+  let transcendence = 0;
+  if (kappaHistory.length >= HISTORY_MIN_SAMPLES) {
+    const med = median(kappaHistory);
+    const mad = medianAbsoluteDeviation(kappaHistory);
+    transcendence = Math.abs(s.kappa - med) / Math.max(mad, EPS);
+  }
 
   return {
     surprise,
