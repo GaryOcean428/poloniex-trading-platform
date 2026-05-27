@@ -1,0 +1,75 @@
+name: ML Worker Import Smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Catches the class of bug that took ml-worker down twice on 2026-05-27:
+#   - ocean.py docstring break (commit 36d0a8e5) — py_compile clean,
+#     import broken because a stray """ closed the docstring mid-sentence
+#     and the remaining string content was parsed as code.
+#   - working_memory.py _DEFAULT_* deletion (commit 814704b6) — py_compile
+#     clean, NameError at module-level class-body evaluation because a
+#     class attribute and 5 `default=` lookups still referenced deleted
+#     constants.
+#
+# Both failures are invisible to syntax-only gates. The fix is the simplest
+# possible: import the load-bearing modules and let Python evaluate the
+# class bodies + module-level code. If something can't import, the gate
+# fails.
+#
+# Citations: 2.31A P24 (provenance), verification-before-completion,
+# QIG PURITY MANDATE LIVED ONLY 5.
+
+jobs:
+  import-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies (minimal — numpy + scipy for qig_core_local)
+        working-directory: ml-worker
+        run: |
+          python -m pip install --upgrade pip
+          # Only the deps the import chain actually needs at module load.
+          # If a module needs a heavier dep at import time, this gate will
+          # fail and surface the new requirement, which is the right signal.
+          pip install numpy scipy
+
+      - name: Import-chain smoke (every load-bearing module)
+        working-directory: ml-worker
+        env:
+          PYTHONPATH: src
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+        run: |
+          set -e
+          # Each module evaluated separately so a failure clearly identifies
+          # which import broke. Order roughly mirrors production import order.
+          for mod in \
+            monkey_kernel.parameters \
+            monkey_kernel.state \
+            monkey_kernel.basin \
+            monkey_kernel.motivators \
+            monkey_kernel.emotions \
+            monkey_kernel.neurochemistry \
+            monkey_kernel.consciousness_metrics \
+            monkey_kernel.heart \
+            monkey_kernel.ocean \
+            monkey_kernel.pillars \
+            monkey_kernel.executive \
+            monkey_kernel.autonomic \
+            monkey_kernel.working_memory \
+            monkey_kernel.resonance_bank \
+            monkey_kernel.forge \
+            monkey_kernel.tick \
+          ; do
+            echo "→ import $mod"
+            python -c "import $mod" || { echo "✗ FAILED to import $mod"; exit 1; }
+          done
+          echo "✓ All load-bearing ml-worker modules import cleanly"
