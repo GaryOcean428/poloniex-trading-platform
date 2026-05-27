@@ -445,6 +445,13 @@ def detect_mode(
             neurochemistry=neurochemistry,
         )
 
+    # Frustration is a legacy mode-specific derived field ("persistent drift
+    # without investigation"). Compute it here from available data so we are
+    # independent of the legacy Motivators shape (which the canonical one
+    # does not have). This addresses the contract mismatch flagged in review.
+    investigation_val = getattr(mot, "investigation", 0.0)
+    frustration = abs(drift_now) if investigation_val <= 0 else 0.0
+
     # v0.6.5 gate — basinDirection blocks DRIFT. A clear directional
     # reading means she is NOT in an ambiguous state, regardless of
     # fHealth (which is structurally pinned ≥ 0.97 by noise-floor dims).
@@ -487,6 +494,6 @@ def detect_mode(
             "investigation": mot.investigation,
             "integration": mot.integration,
             "surprise": mot.surprise,
-            "frustration": mot.frustration,
+            "frustration": frustration,
         },
     }
