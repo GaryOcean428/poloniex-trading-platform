@@ -184,10 +184,11 @@ def get_mushroom_drift_streak_min(heart_rhythm: float = 0.5) -> int:
 # has collapsed. Detection is observer-derived — NO intuition thresholds. The
 # current exploration variance is tested against the Tukey inner/outer fences
 # of the kernel's OWN rolling exploration-variance distribution. The baseline
-# excludes the most recent _NARROW_PATH_WINDOW samples — those ticks are under
+# excludes the most recent get_narrow_path_window() samples — those ticks are under
 # measurement and may be mid-collapse; including them would let a collapse
-# define its own "normal". Tukey's 1.5·IQR / 3·IQR fences are the textbook
-# outlier criterion, so a healthy kernel reads "none" essentially always.
+# define its own "normal". Tukey's 1.5·IQR / 3·IQR fences (observer-derived via
+# get_tukey_inner/outer) are the textbook outlier criterion, so a healthy kernel
+# reads "none" essentially always.
 #
 # TELEMETRY-ONLY in PR1: surfaced in OceanState.diagnostics, does NOT feed
 # `intervention`. Intervention wiring is Φ-gated and lands in PR3 — per
