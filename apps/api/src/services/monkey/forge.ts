@@ -9,7 +9,13 @@
 import { BASIN_DIM, type Basin } from './basin.js';
 
 const EPS = 1e-12;
-const KAPPA_STAR_LOCAL = 64;
+
+/**
+ * KAPPA_STAR_LOCAL retired as universal constant (v6.7B Unified Consciousness Protocol §2 + 2026-04-13 two-channel doctrine).
+ * Use channel-specific reference (pillar 63.83±0.86, constitutive ≈−0.00475, or governed/observer-derived).
+ * Historical sentinel 63.8 used for offset calculations during transition; all new code must name the channel.
+ */
+const KAPPA_REFERENCE = 63.8;
 
 /** Default shadow threshold — pnl_fraction below which a bubble is
  * considered shadow material. Override via FORGE_SHADOW_THRESHOLD env. */
@@ -83,7 +89,7 @@ export function fracture(event: ShadowEvent): ForgeStageResult {
     shape_concentration: peak,
     shape_dispersion: entropy,
     phi_band: event.phi,
-    kappa_offset: event.kappa - KAPPA_STAR_LOCAL,
+    kappa_offset: event.kappa - KAPPA_REFERENCE,  // v6.7B + two-channel: no universal 64
     regime_quantum: event.regimeWeights.quantum ?? 0,
     regime_equilibrium: event.regimeWeights.equilibrium ?? 0,
     loss_magnitude: Math.abs(event.realizedPnl),
@@ -92,7 +98,7 @@ export function fracture(event: ShadowEvent): ForgeStageResult {
     stage: 'FRACTURE',
     basin: copyBasin(event.basin),
     invariants,
-    notes: `lesson invariants: peak=${peak.toFixed(3)}, H=${entropy.toFixed(3)}, phi=${event.phi.toFixed(3)}, kappa_off=${(event.kappa - KAPPA_STAR_LOCAL).toFixed(2)}`,
+    notes: `lesson invariants: peak=${peak.toFixed(3)}, H=${entropy.toFixed(3)}, phi=${event.phi.toFixed(3)}, kappa_off=${(event.kappa - KAPPA_REFERENCE).toFixed(2)}`,  // v6.7B + two-channel: no universal 64
   };
 }
 
