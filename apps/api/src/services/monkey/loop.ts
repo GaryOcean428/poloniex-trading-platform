@@ -8741,6 +8741,7 @@ export class MonkeyKernel extends EventEmitter {
       // Directly fulfill the canonical surface (user 2026-05-28):
       // Push an authoritative reward event using the real Polo realized value.
       // This makes the reward channel consume autonomous_trades.pnl (now = Polo realized).
+      // LIVED ONLY 5: this 'polo_authoritative_close' path carries explicit provenance and will receive hard asserts in pushReward.
       this.pushReward({
         source: 'polo_authoritative_close',
         symbol,
