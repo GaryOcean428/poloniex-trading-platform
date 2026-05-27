@@ -94,25 +94,25 @@ def warm_connection() -> bool:
 
 
 def cross_observation_live() -> bool:
-    """Default-off flag. When false, peers are visible in telemetry but
-    the observer effect is NOT applied to the local basin."""
+    """True unless CONSENSUS_CROSS_OBSERVATION_LIVE=false (explicit kill switch).
+    Reversal of flag-gated paralysis (fb083891 + user 2026-05-27 "flag gated Kills me").
+    When live, peers pull the local basin via Φ-weighted SLERP (observer effect).
+    """
     return (
-        os.environ.get("CONSENSUS_CROSS_OBSERVATION_LIVE", "").strip().lower()
-        == "true"
+        os.environ.get("CONSENSUS_CROSS_OBSERVATION_LIVE", "true").strip().lower()
+        != "false"
     )
 
 
 def basin_sync_db_live() -> bool:
-    """Master enable for ALL sync ops in this module. Default OFF.
-
-    With the Redis-bridge architecture (2026-05-16 pivot) the segfault
-    risk that previously required this gate is gone, but the flag is
-    kept so the operator retains a single-switch kill if the TS-side
-    bridge mis-behaves (e.g. write storms saturating Postgres).
+    """True unless MONKEY_PY_BASIN_SYNC_DB_LIVE=false (explicit kill switch).
+    Reversal of flag-gated paralysis (fb083891 + user 2026-05-27).
+    Master for basin sync ops. Segfault risk gone per Redis-bridge pivot;
+    flag now pure kill switch only.
     """
     return (
-        os.environ.get("MONKEY_PY_BASIN_SYNC_DB_LIVE", "").strip().lower()
-        == "true"
+        os.environ.get("MONKEY_PY_BASIN_SYNC_DB_LIVE", "true").strip().lower()
+        != "false"
     )
 
 

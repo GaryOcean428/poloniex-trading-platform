@@ -34,15 +34,12 @@ PhiGate = Literal["CHAIN", "GRAPH", "FORESIGHT", "LIGHTNING"]
 
 
 def phi_gate_routing_live() -> bool:
-    """Default-off env flag. When false (default), select_phi_gate
-    still EMITS the chosen gate for telemetry, but the orchestrator
-    routes the executive through CHAIN regardless. When true,
-    FORESIGHT blends current basin with predicted basin (slerp at
-    foresight.weight) and GRAPH evaluates entry threshold per
-    lane→mode mapping and picks the lane with the lowest threshold.
-    LIGHTNING is unreachable until P9 lands.
+    """True unless PHI_GATE_ROUTING_LIVE=false (explicit kill switch).
+    Reversal of flag-gated paralysis (fb083891 + user 2026-05-27 "flag gated Kills me").
+    When live, FORESIGHT blends current basin with predicted (slerp) and
+    GRAPH evaluates entry threshold per lane→mode; CHAIN fallback otherwise.
     """
-    return os.environ.get("PHI_GATE_ROUTING_LIVE", "").strip().lower() == "true"
+    return os.environ.get("PHI_GATE_ROUTING_LIVE", "true").strip().lower() != "false"
 
 
 # Lane → mode mapping used by GRAPH routing for parallel-lane

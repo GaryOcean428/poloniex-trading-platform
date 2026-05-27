@@ -37,8 +37,11 @@ PEER_PROPOSAL_FRESHNESS_MS = 60_000
 
 
 def consensus_bus_live() -> bool:
-    """Default-off flag. When false, publisher and subscriber don't connect."""
-    return os.environ.get("CONSENSUS_PROPOSAL_BUS_LIVE", "").strip().lower() == "true"
+    """True unless CONSENSUS_PROPOSAL_BUS_LIVE=false (explicit kill switch).
+    Reversal of flag-gated paralysis (fb083891 + user 2026-05-27 "flag gated Kills me").
+    When live, publisher/subscriber connect for cross-kernel proposal bus.
+    """
+    return os.environ.get("CONSENSUS_PROPOSAL_BUS_LIVE", "true").strip().lower() != "false"
 
 
 @dataclass

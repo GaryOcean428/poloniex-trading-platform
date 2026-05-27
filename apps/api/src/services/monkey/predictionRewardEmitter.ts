@@ -195,6 +195,25 @@ export function predictionChemistryDeltas(
       summary,
     };
   }
+
+  // Surgical anti-windup for persistent predictor anti-correlation.
+  // If the direction-match rate is below chance (0.5), the predictor is
+  // systematically wrong more often than right. Continuing to emit
+  // negative dopamineDelta creates a constant aversive bleed with no
+  // recovery path (the exact pattern that produced pinned predDop ~-0.231).
+  // Conservative fix (P1, no new knobs): zero the predictor deltas until
+  // it earns at least chance. Uses the existing CHANCE_RATE constant.
+  // This stops the suicidal constant punishment while preserving the
+  // channel for when the predictor improves.
+  if (summary.directionMatchRate < CHANCE_RATE) {
+    return {
+      dopamineDelta: 0,
+      serotoninDelta: 0,
+      source: `prediction_residual_anti_correlated:rate=${summary.directionMatchRate.toFixed(3)}`,
+      summary,
+    };
+  }
+
   const dirSignal = summary.directionMatchRate - CHANCE_RATE;
   const dopamineDelta = Math.tanh(dirSignal) * DOPAMINE_CAP;
 

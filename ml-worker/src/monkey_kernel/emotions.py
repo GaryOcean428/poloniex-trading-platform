@@ -9,7 +9,12 @@ produce.
 
 If anxiety exceeds 1 in a high-transcendence + high-velocity regime,
 that is the kernel correctly reporting "high-anxiety regime" — not
-a bug to squash with tanh.
+a bug to squash with tanh at the consumer level. (Note: transcendence
+itself is now bounded ∈ [0, 1) at the SOURCE motivator via tanh on
+the MAD-normalized raw value — see motivators.py. That source-level
+bound is structural, not a consumer-level squash, and it preserves the
+geometric meaning while preventing unbounded ratios from driving
+confidence below zero during healthy κ-jitter.)
 
 Stability and instability derive from existing geometric quantities,
 not from synthesized normalizations:
@@ -68,7 +73,8 @@ class EmotionState:
 
     Per-emotion natural ranges (when motivators are in their typical
     Tier 1 ranges: surprise ∈ [0,1], curiosity ∈ ℝ, investigation ∈ ℝ
-    (Tier 1.1 signed), integration ∈ [0,∞), transcendence ∈ [0,∞),
+    (Tier 1.1 signed), integration ∈ [0,∞), transcendence ∈ [0,1)
+    (tanh-bounded since 2026-05-27 unbounded-confidence regression fix),
     basin_distance ∈ [0, π/2], basin_velocity ∈ [0,∞), Φ ∈ [0,1]):
 
       wonder       : ℝ                  curiosity × basin_distance
@@ -78,10 +84,17 @@ class EmotionState:
       confusion    : [0, π/2]           surprise × basin_distance
       clarity      : ℝ                  (1 − surprise) × investigation
                                         — signed via investigation
-      anxiety      : [0, ∞)             transcendence × basin_velocity
+      anxiety      : [0, basin_velocity) transcendence × basin_velocity
                                         + funding_drag (real carry cost)
-      confidence   : ℝ                  (1 − transcendence) × Φ
-                                        — negative when transcendence > 1
+                                        — bounded above by basin_velocity
+                                          since transcendence ∈ [0,1)
+      confidence   : (0, Φ]             (1 − transcendence) × Φ
+                                        — strictly positive since
+                                          transcendence ∈ [0,1); the
+                                          gate confidence < anxiety+confusion
+                                          now fires on relative magnitude,
+                                          not on confidence being structurally
+                                          negative
       boredom      : ℝ                  (1 − surprise) × (1 − curiosity)
                                         — negative when curiosity > 1
       flow         : ℝ                  exp(−FR(basin, predicted)) × investigation

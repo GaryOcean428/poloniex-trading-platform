@@ -53,14 +53,12 @@ logger = logging.getLogger("monkey_kernel.ocean")
 
 
 def ocean_interventions_live() -> bool:
-    """Default-off env flag. When false (the default), Ocean still
-    EMITS the intervention field for telemetry, but the orchestrator
-    does NOT branch on it — normal tick flow continues. When true,
-    DREAM/ESCAPE handlers fire (skip executive, force flatten
-    respectively). SLEEP/WAKE go through autonomic.is_awake regardless
-    of the flag.
+    """True unless OCEAN_INTERVENTIONS_LIVE=false (explicit kill switch).
+    Reversal of flag-gated paralysis (fb083891 + user 2026-05-27 "flag gated Kills me").
+    When live, DREAM/ESCAPE handlers fire (skip executive, force flatten).
+    SLEEP/WAKE always via autonomic.is_awake.
     """
-    return os.environ.get("OCEAN_INTERVENTIONS_LIVE", "").strip().lower() == "true"
+    return os.environ.get("OCEAN_INTERVENTIONS_LIVE", "true").strip().lower() != "false"
 
 
 # ═══════════════════════════════════════════════════════════════

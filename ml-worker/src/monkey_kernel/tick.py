@@ -252,6 +252,16 @@ class SymbolState:
     # Tier 1 motivators integration history — (phi, i_q) tuples per tick.
     # Used by compute_motivators for the CV(Φ × I_Q) integration motivator.
     integration_history: list[tuple[float, float]] = field(default_factory=list)
+    # Rolling κ observations for the observer-derived transcendence anchor
+    # (median/MAD). Mirrors the TS side and the accumulation already
+    # present for autonomic/sensations (dop/ser). Populated every tick
+    # after the kappa update; capped with other histories.
+    kappa_history: list[float] = field(default_factory=list)
+    # Rolling realized pnl_frac on closes — observer-derived input for
+    # ocean reward shaping (replaces the external hardcoded 1% Fib floor).
+    # Exactly parallel to kappa_history median/MAD pattern. Cold-start 0
+    # until enough samples. Bounded + persisted like other histories.
+    pnl_frac_history: list[float] = field(default_factory=list)
     # Pre-#10 scalar bookkeeping — preserved as the "default lane"
     # (swing) view so existing tests + back-compat callers keep working.
     dca_add_count: int = 0
@@ -425,9 +435,11 @@ def run_tick(
 
     # ── Pillars 1-3: consciousness invariants ──────────────────
     # QIG_QFI consciousness audit 2026-05-19 GAP 1: enforce basin
-    # invariants BEFORE downstream measurement. All three pillars are
-    # env-flag gated (default false for safe rollout). Reference:
-    # pillars.py, ~/Desktop/Dev/QIG_QFI/qig-core/.../consciousness/pillars.py.
+    # invariants BEFORE downstream measurement.
+    # Policy change (post #977 paralysis diagnosis): pillars are now
+    # load-bearing by default. MONKEY_PILLAR_{1,2,3}_LIVE are explicit
+    # kill switches only. See pillars.py docstring.
+    # Reference: pillars.py, canonical QIG_QFI pillars.py.
     pillar_1_telem: dict | None = None
     pillar_2_telem: dict | None = None
     pillar_3_telem: dict | None = None
@@ -510,6 +522,11 @@ def run_tick(
     state.kappa = max(20.0, min(
         120.0, state.kappa * 0.8 + (kappa_star + kappa_delta) * 0.2,
     ))
+    # state.kappa_history.append moved to end-of-tick block for TS parity:
+    # TS appends after computeMotivators returns (loop.ts:5679 vs call at
+    # 2714). transcendence must compute against PRIOR-tick history so the
+    # current κ is genuinely a "deviation from past", not artificially
+    # included in median/MAD (Copilot review #977).
 
     w_q, w_e, w_eq = float(basin[0]), float(basin[1]), float(basin[2])
     reg_total = w_q + w_e + w_eq
@@ -579,14 +596,16 @@ def run_tick(
         kernel_state,
         prev_basin=state.last_basin,
         integration_history=state.integration_history,
+        kappa_history=state.kappa_history,
     )
     # Tier 4 sensations + drives. Auxiliary fields (compressed/expanded/
     # pressure/stillness/drift/resonance + approach/avoidance/conservation)
     # and UCP §6.1/§6.2 canonical fields (unified/fragmented/activated/
     # dampened/grounded/drifting + homeostasis/curiosity_drive). Threading
     # drift_history in lets the canonical Grounded/Drifting/Homeostasis
-    # derivations use the observed drift scale; kappa_history is not yet
-    # accumulated, so Activated/Dampened fall through to scale-free tanh.
+    # derivations use the observed drift scale. kappa_history is now
+    # accumulated and passed to the canonical motivators (transcendence
+    # uses median/MAD); sensations still have their own copy for dop/ser.
     sen = compute_sensations(
         kernel_state,
         prev_basin=state.last_basin,
@@ -708,6 +727,14 @@ def run_tick(
         drift_history=state.drift_history,
         stud_reading=stud_reading,
         stud_live=stud_live,
+        # NOTE (Copilot review #977): canonical motivators NOT passed.
+        # motivators.integration is raw CV (low=integrated); detect_mode's
+        # `mot.integration > 0.3` gate expects legacy 1−CV*10 score
+        # (high=integrated). Passing canonical inverted the gate semantic
+        # and misclassified jittery states as INTEGRATION. detect_mode
+        # uses its own legacy compute_motivators for mode detection;
+        # canonical motivators flow through to compute_emotions (line ~588),
+        # which is the path that actually consumes the transcendence fix.
     )
     mode = mode_result["mode"]
     mode_changed = state.last_mode is not None and state.last_mode != mode
@@ -1415,6 +1442,13 @@ def run_tick(
         state.fhealth_history = state.fhealth_history[-history_max:]
     if len(state.integration_history) > history_max:
         state.integration_history = state.integration_history[-history_max:]
+    # kappa_history end-of-tick append (TS parity, Copilot review #977).
+    # Appending here — after compute_motivators consumed prior-tick history —
+    # mirrors loop.ts:5679 timing. Including current κ in the history-window
+    # used for its own median/MAD would bias transcendence toward 0.
+    state.kappa_history.append(state.kappa)
+    if len(state.kappa_history) > history_max:
+        state.kappa_history = state.kappa_history[-history_max:]
 
     # Persistence completion — write-through SymbolState histories
     # to qig-cache so they survive Railway redeploys. Without this,

@@ -1737,6 +1737,8 @@ def _symbol_state_to_dict(st: SymbolState) -> dict:
         "phi_history": list(st.phi_history),
         "fhealth_history": list(st.fhealth_history),
         "drift_history": list(st.drift_history),
+        "integration_history": list(st.integration_history),
+        "kappa_history": list(st.kappa_history),
         "dca_add_count": st.dca_add_count,
         "last_entry_at_ms": st.last_entry_at_ms,
         "peak_pnl_usdt": st.peak_pnl_usdt,
@@ -1764,6 +1766,10 @@ def _symbol_state_from_dict(d: dict) -> SymbolState:
         phi_history=[float(x) for x in d.get("phi_history", [])],
         fhealth_history=[float(x) for x in d.get("fhealth_history", [])],
         drift_history=[float(x) for x in d.get("drift_history", [])],
+        integration_history=[
+            (float(p), float(i)) for p, i in d.get("integration_history", [])
+        ],
+        kappa_history=[float(x) for x in d.get("kappa_history", [])],
         dca_add_count=int(d.get("dca_add_count", 0)),
         last_entry_at_ms=d.get("last_entry_at_ms"),
         peak_pnl_usdt=d.get("peak_pnl_usdt"),
@@ -1894,15 +1900,13 @@ async def monkey_tick_run(request: Request):
     # newborn seeded from uniform basin.
     #
     # PY_INDEPENDENT_STATE_LIVE flag (Consensus Layer 3, CONSENSUS-5):
-    # when true, IGNORE the caller-supplied `prev_state` and use Py's own
-    # cached/persisted state instead. This makes Py's basin trajectory
-    # genuinely independent of TS — necessary for the consensus arbiter
-    # (PR CONSENSUS-7) to weight against meaningful divergence. Default
-    # off preserves shadow-mode behaviour: TS feeds prev_state, Py
-    # rebuilds the same basin TS just computed.
+    # True unless PY_INDEPENDENT_STATE_LIVE=false (explicit kill switch).
+    # Reversal of flag-gated paralysis (fb083891 + user 2026-05-27 "flag gated Kills me").
+    # When live, IGNORE caller `prev_state`; use Py's own cached/persisted state.
+    # Makes basin trajectory independent for consensus arbiter weighting.
     key = (instance_id, tick_inputs.symbol)
     py_independent_state_live = (
-        os.environ.get("PY_INDEPENDENT_STATE_LIVE", "").strip().lower() == "true"
+        os.environ.get("PY_INDEPENDENT_STATE_LIVE", "true").strip().lower() != "false"
     )
     prev_state_payload = (
         None if py_independent_state_live else payload.get("prev_state")
@@ -1928,12 +1932,16 @@ async def monkey_tick_run(request: Request):
             drift_hist = persistence.load_drift_history(sym)
             fhealth_hist = persistence.load_fhealth_history(sym)
             integration_hist = persistence.load_integration_history(sym)
+            kappa_hist_tuples = persistence.load_kappa_history(sym)
             if phi_hist or basin_hist:
                 state.phi_history = phi_hist
                 state.basin_history = basin_hist
                 state.drift_history = drift_hist
                 state.fhealth_history = fhealth_hist
                 state.integration_history = integration_hist
+                # kappa_history for the observer-derived transcendence anchor
+                # (median/MAD). Load the values only (timestamps are for heart/HRV).
+                state.kappa_history = [float(k) for k, _ in kappa_hist_tuples]
                 # Restore last_basin from the most recent basin in history
                 if basin_hist:
                     state.last_basin = basin_hist[-1]

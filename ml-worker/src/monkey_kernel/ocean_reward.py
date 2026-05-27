@@ -116,6 +116,51 @@ def fibonacci_reward_tier(roi_frac: float) -> int:
 TRAIL_TIERS: tuple[float, ...] = (0.03, 0.05, 0.08, 0.13, 0.21)
 
 
+def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
+    """Observer-derived ocean reward coefficient (P1, post flag-reversal).
+
+    Replaces the external hardcoded 1% Fib floor (never fired at real
+    kernel scale ~0.04% MAD). Uses own realized pnl_frac distribution
+    (exact median + MAD from motivators.py transcendence block).
+    Positive deviation from own history now yields positive chemistry.
+    Cold-start or non-positive deviation → 0. Structural (no knob).
+    """
+    import math
+    _EPS = 1e-12
+    if not history or len(history) < 2:
+        return 0
+    if not isinstance(pnl_frac, (int, float)) or not math.isfinite(pnl_frac):
+        return 0
+
+    sorted_hist = sorted(history)
+    n = len(sorted_hist)
+    if n % 2 == 0:
+        median = (sorted_hist[n // 2 - 1] + sorted_hist[n // 2]) / 2
+    else:
+        median = sorted_hist[n // 2]
+    devs = sorted(abs(x - median) for x in sorted_hist)
+    if n % 2 == 0:
+        mad = (devs[n // 2 - 1] + devs[n // 2]) / 2
+    else:
+        mad = devs[n // 2]
+
+    if mad < _EPS:
+        return 0
+    z = (pnl_frac - median) / mad
+    if z <= 0.0:
+        return 0
+
+    # Structural mapping (positive z-deviation → Fib tiers)
+    if z < 0.5: return 1
+    if z < 1.0: return 2
+    if z < 1.5: return 3
+    if z < 2.0: return 5
+    if z < 3.0: return 8
+    if z < 4.0: return 13
+    if z < 5.0: return 21
+    return 34
+
+
 def ocean_trail_retracement(coherence_streak: float) -> float:
     """Ocean's trail/SL retracement tier as a function of the kernel's
     coherence streak — Matrix tier-3 doctrine extension (2026-05-26).

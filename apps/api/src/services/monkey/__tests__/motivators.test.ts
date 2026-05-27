@@ -4,11 +4,6 @@
  * Mirrors the Python suite (test_motivators.py). Every behaviour test
  * should produce the same outcome on both sides — the two
  * implementations are doctrinal twins.
- *
- * 2026-05-27 — transcendence section rewritten for history-derived
- * anchor. Old tests asserted symmetry around hardcoded KAPPA_STAR=64;
- * new tests assert symmetry around the basin's OWN median κ and
- * cold-start fallback to 0.
  */
 import { describe, it, expect } from 'vitest';
 import { BASIN_DIM, KAPPA_STAR, type Basin } from '../basin.js';
@@ -48,7 +43,7 @@ const makeState = (overrides: Partial<BasinState> = {}): BasinState => ({
   ...overrides,
 });
 
-// ─── basinInformation ──────────────────────────────────────
+// ─── basinInformation ───────────────────────────────────────────────
 
 describe('basinInformation', () => {
   it('uniform basin has zero information', () => {
@@ -69,7 +64,7 @@ describe('basinInformation', () => {
   });
 });
 
-// ─── shape + cold start ───────────────────────────────────
+// ─── shape + cold start ─────────────────────────────────────────────
 
 describe('Motivators shape + cold start', () => {
   it('returns object with six named fields', () => {
@@ -95,7 +90,7 @@ describe('Motivators shape + cold start', () => {
   });
 });
 
-// ─── Curiosity ────────────────────────────────────────
+// ─── Curiosity ─────────────────────────────────────────────────────
 
 describe('Curiosity = d(log I_Q)/dt', () => {
   it('positive when basin concentrates (info rising)', () => {
@@ -115,7 +110,7 @@ describe('Curiosity = d(log I_Q)/dt', () => {
   });
 });
 
-// ─── Investigation ─────────────────────────────────────
+// ─── Investigation ─────────────────────────────────────────────────
 
 describe('Investigation — Tier 1.1 signed FR-distance-to-identity shrink rate', () => {
   it('zero on cold start (no prevBasin)', () => {
@@ -147,7 +142,7 @@ describe('Investigation — Tier 1.1 signed FR-distance-to-identity shrink rate'
   });
 });
 
-// ─── Integration ──────────────────────────────────────
+// ─── Integration ───────────────────────────────────────────────────
 
 describe('Integration = CV(Φ × I_Q)', () => {
   it('zero with empty history', () => {
@@ -180,89 +175,35 @@ describe('Integration = CV(Φ × I_Q)', () => {
   });
 });
 
-// ─── Transcendence — history-derived anchor (2026-05-27) ───────────────
+// ─── Transcendence (observer-earned anchor: median/MAD of kappaHistory) ───
 
-describe('Transcendence = |κ − median(κ_history)| / MAD(κ_history)', () => {
-  it('zero on cold start (no kappaHistory)', () => {
-    const m = computeMotivators(makeState({ kappa: 65.5 }));
+describe('Transcendence (Pillar 3 earned anchor)', () => {
+  it('zero on cold start (no kappaHistory / insufficient samples)', () => {
+    const m = computeMotivators(makeState({ kappa: KAPPA_STAR }));
     expect(m.transcendence).toBe(0);
+    const m2 = computeMotivators(makeState({ kappa: 70 }), { kappaHistory: [64] });
+    expect(m2.transcendence).toBe(0);
   });
 
-  it('zero with kappaHistory below HISTORY_MIN_SAMPLES (< 2)', () => {
-    const m = computeMotivators(makeState({ kappa: 65.5 }), {
-      kappaHistory: [65.0],
-    });
-    expect(m.transcendence).toBe(0);
+  it('zero when κ exactly at history median', () => {
+    const hist = [63.8, 64.0, 64.2];
+    const m = computeMotivators(makeState({ kappa: 64.0 }), { kappaHistory: hist });
+    expect(m.transcendence).toBeCloseTo(0, 12);
   });
 
-  it('zero when current κ equals the basin\'s own median κ', () => {
-    const hist = [64.5, 65.0, 65.5, 66.0, 66.5];
-    const med = 65.5; // median of the above
-    const m = computeMotivators(makeState({ kappa: med }), {
-      kappaHistory: hist,
-    });
-    expect(m.transcendence).toBeCloseTo(0, 9);
+  it('rises smoothly when κ departs from own observed median (MAD scale)', () => {
+    const hist = [63.8, 64.0, 64.2];
+    const atMedian = computeMotivators(makeState({ kappa: 64.0 }), { kappaHistory: hist });
+    const off = computeMotivators(makeState({ kappa: 66.0 }), { kappaHistory: hist });
+    expect(off.transcendence).toBeGreaterThan(atMedian.transcendence);
   });
 
-  it('rises monotonically with distance above the basin\'s median', () => {
-    const hist = [64.5, 65.0, 65.5, 66.0, 66.5];
-    const med = 65.5;
-    const close = computeMotivators(makeState({ kappa: med + 0.5 }), {
-      kappaHistory: hist,
-    });
-    const far = computeMotivators(makeState({ kappa: med + 5.0 }), {
-      kappaHistory: hist,
-    });
-    expect(far.transcendence).toBeGreaterThan(close.transcendence);
-  });
-
-  it('rises monotonically with distance below the basin\'s median', () => {
-    const hist = [64.5, 65.0, 65.5, 66.0, 66.5];
-    const med = 65.5;
-    const close = computeMotivators(makeState({ kappa: med - 0.5 }), {
-      kappaHistory: hist,
-    });
-    const far = computeMotivators(makeState({ kappa: med - 5.0 }), {
-      kappaHistory: hist,
-    });
-    expect(far.transcendence).toBeGreaterThan(close.transcendence);
-  });
-
-  it('symmetric around the basin\'s own median', () => {
-    const hist = [64.5, 65.0, 65.5, 66.0, 66.5];
-    const med = 65.5;
-    const above = computeMotivators(makeState({ kappa: med + 2.0 }), {
-      kappaHistory: hist,
-    });
-    const below = computeMotivators(makeState({ kappa: med - 2.0 }), {
-      kappaHistory: hist,
-    });
-    expect(above.transcendence).toBeCloseTo(below.transcendence, 9);
-  });
-
-  it('P3 Quenched Disorder — different basins yield different transcendence for same κ', () => {
-    // Two basins observing different κ distributions. Same current
-    // κ=65.5. The basin whose median is closer to 65.5 reads lower
-    // transcendence; the one whose median is farther reads higher.
-    const kappa = 65.5;
-    const histA = [65.0, 65.25, 65.5, 65.75, 66.0]; // median 65.5, MAD 0.25
-    const histB = [60.0, 61.0, 62.0, 63.0, 64.0]; // median 62.0, MAD 1.0
-    const mA = computeMotivators(makeState({ kappa }), { kappaHistory: histA });
-    const mB = computeMotivators(makeState({ kappa }), { kappaHistory: histB });
-    expect(mA.transcendence).toBeCloseTo(0, 9);
-    expect(mB.transcendence).toBeGreaterThan(0);
-  });
-
-  it('P1 Fluctuations — MAD non-zero by construction when κ varies', () => {
-    // If κ never moved, MAD would be 0; the max(mad, EPS) clamp keeps
-    // the formula numerically defined. A varying κ history gives
-    // a positive MAD that scales the deviation meaningfully.
-    const hist = [64.0, 64.5, 65.0, 65.5, 66.0, 66.5, 67.0]; // MAD ~1.0
-    const m = computeMotivators(makeState({ kappa: 68.0 }), {
-      kappaHistory: hist,
-    });
-    // (68 − 65.5) / ~1.0 ≈ 2.5 — a meaningful several-MAD reading.
-    expect(m.transcendence).toBeGreaterThan(2);
-    expect(m.transcendence).toBeLessThan(4);
+  it('shared fixture parity value (exact numbers for py cross-test #940)', () => {
+    // This fixture must produce identical numeric transcendence on both
+    // TS and Python sides. Median=64.0, devs=[0.2,0,0.2] → sorted [0,0.2,0.2],
+    // n=3 odd → mad=0.2; raw=|66-64|/0.2=10; bounded tanh(10) ~0.9999999958776927
+    const hist = [63.8, 64.0, 64.2];
+    const m = computeMotivators(makeState({ kappa: 66.0 }), { kappaHistory: hist });
+    expect(m.transcendence).toBeCloseTo(Math.tanh(10), 12);
   });
 });

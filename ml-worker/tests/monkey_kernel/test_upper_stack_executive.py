@@ -79,12 +79,12 @@ def _instrumented_run() -> tuple:
 
 
 class TestFlagOff:
-    def test_default_off_logs_multipliers_but_does_not_apply(self, env_clean) -> None:
-        os.environ.pop("UPPER_STACK_EXECUTIVE_LIVE", None)
+    def test_explicit_false_logs_multipliers_but_does_not_apply(self, env_clean) -> None:
+        """Kill-switch test (post-reversal): explicit false disables modulation."""
+        os.environ["UPPER_STACK_EXECUTIVE_LIVE"] = "false"
         decision, _ = _instrumented_run()
         tel = decision.derivation["upper_stack_executive"]
         assert tel["live"] is False
-        # Multipliers always computed for telemetry
         assert "entry_threshold_mult" in tel
         assert "leverage_mult" in tel
         assert "size_mult" in tel

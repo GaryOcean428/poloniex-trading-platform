@@ -77,8 +77,9 @@ def env_clean():
 
 
 class TestFlagOff:
-    def test_default_off_does_not_apply_intervention(self, env_clean) -> None:
-        os.environ.pop("OCEAN_INTERVENTIONS_LIVE", None)
+    def test_explicit_false_does_not_apply_intervention(self, env_clean) -> None:
+        """Kill-switch test (post-reversal): explicit false disables DREAM/ESCAPE apply."""
+        os.environ["OCEAN_INTERVENTIONS_LIVE"] = "false"
         # Force ESCAPE intervention by feeding a low Φ via a primed Ocean
         ocean = Ocean("t")
         # Pre-feed phi history (variance-based MUSHROOM_MICRO removed

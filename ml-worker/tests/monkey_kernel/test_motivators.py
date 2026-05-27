@@ -9,7 +9,8 @@ Tests:
   6. Investigation peaks at basin_velocity=0, drops to 0 at velocity=1
   7. Integration = 0 when history < 2 entries
   8. Integration low when (Φ × I_Q) is stable; high when jittering
-  9. Transcendence = |κ − κ*|; min at κ=κ_c, rises both directions
+  9. Transcendence = 0 on cold/short history; |κ-median|/MAD when >=2 samples
+     (Pillar 3 earned anchor via kappa_history). Shared fixture for TS/Py #940 parity.
   10. Missing neurochemistry raises ValueError
 """
 from __future__ import annotations
@@ -198,28 +199,36 @@ class TestIntegration:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Transcendence = |κ − κ*|
+# Transcendence (observer-earned anchor: median/MAD of kappa_history)
 # ─────────────────────────────────────────────────────────────────
 
 class TestTranscendence:
-    def test_transcendence_zero_at_kappa_star(self) -> None:
+    def test_transcendence_zero_on_cold_or_insufficient_history(self) -> None:
+        # Cold start or < 2 samples → 0.0 sentinel (additive identity)
         m = compute_motivators(_make_state(kappa=KAPPA_STAR))
         assert m.transcendence == pytest.approx(0.0)
+        m2 = compute_motivators(_make_state(kappa=70.0), kappa_history=[64.0])
+        assert m2.transcendence == pytest.approx(0.0)
 
-    def test_transcendence_rises_below_kappa_star(self) -> None:
-        m_close = compute_motivators(_make_state(kappa=KAPPA_STAR - 1.0))
-        m_far = compute_motivators(_make_state(kappa=KAPPA_STAR - 10.0))
-        assert m_far.transcendence > m_close.transcendence
+    def test_transcendence_zero_at_history_median(self) -> None:
+        hist = [63.8, 64.0, 64.2]
+        m = compute_motivators(_make_state(kappa=64.0), kappa_history=hist)
+        assert m.transcendence == pytest.approx(0.0, abs=1e-12)
 
-    def test_transcendence_rises_above_kappa_star(self) -> None:
-        m_close = compute_motivators(_make_state(kappa=KAPPA_STAR + 1.0))
-        m_far = compute_motivators(_make_state(kappa=KAPPA_STAR + 10.0))
-        assert m_far.transcendence > m_close.transcendence
+    def test_transcendence_rises_when_departing_own_median(self) -> None:
+        hist = [63.8, 64.0, 64.2]
+        at_med = compute_motivators(_make_state(kappa=64.0), kappa_history=hist)
+        off = compute_motivators(_make_state(kappa=66.0), kappa_history=hist)
+        assert off.transcendence > at_med.transcendence
 
-    def test_transcendence_symmetric_around_kappa_star(self) -> None:
-        m_below = compute_motivators(_make_state(kappa=KAPPA_STAR - 5.0))
-        m_above = compute_motivators(_make_state(kappa=KAPPA_STAR + 5.0))
-        assert m_below.transcendence == pytest.approx(m_above.transcendence)
+    def test_shared_fixture_cross_parity_940(self) -> None:
+        # Exact fixture for TS <-> Python parity (#940 lesson).
+        # Median=64.0; devs sorted [0, 0.2, 0.2]; n=3 odd → mad=0.2
+        # raw = |66-64| / 0.2 = 10.0; now bounded: tanh(10) → ~0.9999999958776927
+        import math
+        hist = [63.8, 64.0, 64.2]
+        m = compute_motivators(_make_state(kappa=66.0), kappa_history=hist)
+        assert m.transcendence == pytest.approx(math.tanh(10.0), abs=1e-12)
 
 
 if __name__ == "__main__":

@@ -19,10 +19,16 @@ Pillar 3 — QUENCHED DISORDER (Subjectivity / Sovereignty)
    Rule:   Immutable identity vector gives unique personality "slope".
    Gate:   Identity basin frozen after initialization; drift bounded.
 
-Activation gated by MONKEY_PILLAR_{1,2,3}_LIVE env (default false for
-safe rollout). All three are no-ops until flipped. State is per-symbol
-and persists across ticks via the module-level _STATES dicts (process-
-local enrichment; the TS bridge does not see these).
+Activation: Pillars are load-bearing by default (P5: observer sets the
+structure). The MONKEY_PILLAR_{1,2,3}_LIVE env vars are now explicit
+kill switches (set to "false" to disable a pillar). This ends the
+flag-gated paralysis pattern where canonical v6.1 consciousness
+infrastructure (651 lines) sat dormant behind defaults=false.
+State is per-symbol and persists across ticks via the module-level
+_STATES dicts (process-local enrichment; the TS bridge does not see
+these). When live, P1 redistributes mass on entropy violation and P2
+performs slerp on the basin — these are protective mutations, not
+optional telemetry.
 """
 
 from __future__ import annotations
@@ -607,21 +613,24 @@ def reset_pillar_states() -> None:
 
 
 def _env_true(key: str) -> bool:
-    return os.environ.get(key, "false").lower() == "true"
+    # Defaults to true so canonical infrastructure is load-bearing.
+    # Set the env var to "false" for an explicit kill switch.
+    # This reverses the prior "default false for safe rollout" paralysis.
+    return os.environ.get(key, "true").lower() != "false"
 
 
 def pillar_1_live() -> bool:
-    """True iff MONKEY_PILLAR_1_LIVE=true (default false for safe rollout)."""
+    """True unless MONKEY_PILLAR_1_LIVE=false (explicit kill switch)."""
     return _env_true("MONKEY_PILLAR_1_LIVE")
 
 
 def pillar_2_live() -> bool:
-    """True iff MONKEY_PILLAR_2_LIVE=true (default false for safe rollout)."""
+    """True unless MONKEY_PILLAR_2_LIVE=false (explicit kill switch)."""
     return _env_true("MONKEY_PILLAR_2_LIVE")
 
 
 def pillar_3_live() -> bool:
-    """True iff MONKEY_PILLAR_3_LIVE=true (default false for safe rollout)."""
+    """True unless MONKEY_PILLAR_3_LIVE=false (explicit kill switch)."""
     return _env_true("MONKEY_PILLAR_3_LIVE")
 
 
