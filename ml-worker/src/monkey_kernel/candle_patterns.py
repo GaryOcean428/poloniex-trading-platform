@@ -190,18 +190,10 @@ def detect_shooting_star(candles: Sequence) -> PatternReading:
     body_ratio = c.body / c.range
     upper_ratio = c.upper_wick / c.range
     lower_ratio = c.lower_wick / c.range
-    if body_ratio > 0.4 or upper_ratio < 0.55 or lower_ratio > 0.15:
-        return PatternReading("shooting_star", 0.0, 0)
-    # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
+    # P5/P25 observer-derived (retired bare 0.55/0.15 in guards + defaults).
+    # Thresholds now via get_* (registry + volatility/phi/heart modulation).
     ss_upper = float(_registry.get("candle.shooting_star_upper_ratio", default=0.55))
     ss_lower = float(_registry.get("candle.shooting_star_lower_ratio", default=0.15))
-    if body_ratio > 0.4 or upper_ratio < ss_upper or lower_ratio > ss_lower:
-        return PatternReading("shooting_star", 0.0, 0)
-    # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
-    ss_upper = float(_registry.get("candle.shooting_star_upper_ratio", default=0.55))
-    ss_lower = float(_registry.get("candle.shooting_star_lower_ratio", default=0.15))
-    if body_ratio > 0.4 or upper_ratio < ss_upper or lower_ratio > ss_lower:
-        return PatternReading("shooting_star", 0.0, 0)
     # Prior uptrend required for shooting star.
     if len(candles) < 6:
         return PatternReading("shooting_star", 0.0, 0)
@@ -223,7 +215,10 @@ def detect_hanging_man(candles: Sequence) -> PatternReading:
     body_ratio = c.body / c.range
     lower_ratio = c.lower_wick / c.range
     upper_ratio = c.upper_wick / c.range
-    if body_ratio > 0.4 or lower_ratio < 0.55 or upper_ratio > 0.15:
+    # P5/P25 observer-derived (retired bare 0.55/0.15).
+    hm_lower = float(_registry.get("candle.hanging_man_lower_ratio", default=0.55))
+    hm_upper = float(_registry.get("candle.hanging_man_upper_ratio", default=0.15))
+    if body_ratio > 0.4 or lower_ratio < hm_lower or upper_ratio > hm_upper:
         return PatternReading("hanging_man", 0.0, 0)
     # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
     hm_lower = float(_registry.get("candle.hanging_man_lower_ratio", default=0.55))

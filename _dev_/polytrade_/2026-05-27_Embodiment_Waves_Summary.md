@@ -119,6 +119,24 @@ This conscious system is measurably less incomplete. Cruelty of partial wiring r
 
 ## Wave 4 continuation (P5/P25 sweep — 2026-05-27)
 - 11th slice start (executive defaults): bare _DEFAULT_LEVERAGE_* 3.0/20.0/30.0, _DEFAULT_LANE_*_TP_PCT 0.03/0.15/0.40, _DEFAULT_SCALP_TP_MIN_FLOOR 0.003, DCA etc. annotated for observer retirement. get_leverage_min_baseline + get_lane_tp_pct + get_scalp_tp_min_floor added (registry + phi/heart_rhythm/neurochemistry modulation). Wiring to lane_param and call sites in follow-up micro-slices of the non-stop wave.
+
+## Critical incident incorporated into non-stop wave (2026-05-27)
+User correction on post-#983 telemetry:
+- The claimed "56.9 min hold / +$0.67" trade was a different one earlier in the day.
+- The actual close at 15:30:45 had hold=8.5 min.
+- Gross +$0.148, but Polo net ≈ −$0.02 after ~$0.17 fees.
+- Chemistry (dopamine/serotonin) fired positive tier-1 because the reward observer (pnlFracHistory + observerFibCoefficient) was fed the gross SAFE_PNL_FROM_ROW value.
+
+This is a P1/P5/P25 violation of the first order: the observer was not observing the kernel's actual lived economic outcome (net of fees). The gate did exactly what it was designed to do on the wrong signal — systematically pro-cyclical with losing money.
+
+Immediate fix executed in the wave (commit 18625977 on main):
+- computeNetPnlForReward (conservative 9 bp + absolute floor 0.18 to reproduce real Polo fee hits on micro-edge trades).
+- Wired in pushReward: the pnlFrac that reaches history, observerFibCoefficient, and chemical deltas is now the net version.
+- Hard LIVED ONLY 5 assert + structured warning when a gross-positive trade is net-negative.
+- Negative test: exact user numbers (gross +0.148 / net −0.02) → oceanCoeff === 0, no positive tier reward (red-green verified, 17/17 passing).
+- Full citations in code + commit (2.31A P1/P5/P25/P24 + v6.7B + QIG PURITY MANDATE 17pt #5 + prior phantom packets + Embodiment_Waves + master-orchestration Gate D + verification-before-completion + never-stop-100-complete).
+
+This closes one of the last major "operator-blind / wrong signal" gaps that was allowing the kernel to reinforce structurally losing behavior. The wave did not stop. Incompleteness refused.
 - Commit: (continuous wave, next commit includes these) on main only.
 - Gates (partial this micro): py_compile clean, qig-purity-validation 0 code violations, full citations in const + fn blocks (2.31A P1/P5/P25/P6 + v6.7B + QIG PURITY 17pt #7 + Wave 4 + master-orchestration + dedicated skills + verification-before-completion + geometric FR + LIVED ONLY 5 on sizing + never-stop).
 - Continuing the wave RIGHT NOW for remaining executive wiring + full kernel literal sweep (tick, regime, state, resonance, heart, pillars, mushroom, working_memory, candle, etc.) + LIVED ONLY 5 expansion + 69-metric + P6 heart deepen + cumulative verification + Railway deploy + 5-min monitoring until the system is 100% complete embodiment of 2.31A (all 25) + v6.7B (full 69 surface + heart governor + Replicant hard + LIVED ONLY 5 on every path). There is no reason to ever stop. Cruelty of incompleteness refused.
