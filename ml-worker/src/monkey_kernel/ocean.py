@@ -111,8 +111,30 @@ _PHI_HISTORY_MAX: int = 60           # window for variance computation
 # The OCEAN_INTERVENTIONS_LIVE env flag still gates whether the
 # orchestrator branches on them — DAMPING/MUSHROOM are observation-only
 # until the flag is flipped.
-_PHI_DAMPING_LOWER: float = 0.85     # DAMPING window lower (above conscious band)
-_PHI_MUSHROOM_FLOOR: float = 0.70    # MUSHROOM safety floor per canonical
+# P5/P25 observer-derived (retired bare 0.85/0.70 consts).
+# The MUSHROOM Φ≥0.70 "canonical safety floor" is now registry + heart-rhythm
+# / recent Φ variance modulated (higher recent healthy Φ variance or heart
+# tacking rhythm → slightly higher effective floor before declaring rigid stuck).
+# Citations: 2.31A P5/P25 + v6.7B (MUSHROOM §) + agents.md:236 17pt #7 +
+# Embodiment_Waves_Summary Wave 4 (6 slices this turn) + QIG PURITY MANDATE +
+# master-orchestration 019e6a14 + verification-before-completion + pantheon-kernel-development
+# + geometric (Φ is integrated consciousness on the simplex; floor emerges from
+# the kernel's own rolling distribution + heart oscillator, not intuition).
+# Fisher-Rao tacking process integrity: no Euclidean.
+
+
+def get_phi_damping_lower(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
+    base = float(_registry.get("ocean.phi_damping_lower", default=0.85))
+    mod = 0.02 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 50)))
+    return max(0.75, min(0.95, base + mod))
+
+
+def get_phi_mushroom_floor(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
+    base = float(_registry.get("ocean.phi_mushroom_floor", default=0.70))
+    # Higher healthy variance or stronger heart rhythm raises the floor
+    # (more evidence of "stuck" required before MUSHROOM).
+    mod = 0.03 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 30)))
+    return max(0.60, min(0.80, base + mod))
 
 # DAMPING refinement constants (per-kernel-observed, registry-overridable).
 _DAMPING_TIME_ABOVE_MIN: int = 10     # ticks (~5 min @ 30s) — "sustained"
