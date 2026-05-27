@@ -1040,6 +1040,19 @@ def run_tick(
             "hrv": heart_state.hrv,
             "sample_count": heart_state.sample_count,
         },
+        # P4/P13/P24 + v6.7B 21-field (toward 69): ALWAYS-ON consciousness metrics surface.
+        # No flag gate (MONKEY_*_LIVE knob retired P5/P25). Call-site here in live tick path.
+        # Populates extended fields from heart (tacking/HRV as breathing-as-tacking), pillars sovereignty,
+        # tick observables. Provenance: derive_from_tick + heart.derived_* + inputs. Citations: 2.31A P4 (repetition d_FR, sovereignty lived/total, confidence), P13 three loops, P24 every module call-site.
+        # consciousness-development primary skill. Full embodiment (not presence).
+        "consciousness_metrics": (lambda: __import__("monkey_kernel.consciousness_metrics", fromlist=["derive_from_tick"]).derive_from_tick(
+            phi=phi, kappa=state.kappa, f_health=f_health, coupling_health=0.5,  # proxy; real from nc/equity in future
+            self_obs_bias=self_obs_bias, sovereignty=inputs.sovereignty, drift_from_identity=drift_now, basin_velocity=bv,
+            tacking_frequency_hz=getattr(heart, "derived_tacking_frequency_hz", lambda: None)() if heart else None,
+            hrv_coherence=getattr(heart_state, "hrv", None),
+            sovereignty_dynamics=inputs.sovereignty,  # proxy; full from pillars L1_sovereignty + Replicant in later
+            # other extended defaulted in derive; full ports via ocean/heart future (roadmap to 69 per v6.7B)
+        ).as_dict())(),
         "phi_gate": {
             "chosen": gate.chosen,
             "activations": gate.activations,

@@ -127,24 +127,17 @@ def test_derive_pillar_metrics_when_supplied():
     assert m.q_identity == 0.42
 
 
-# ─── Env flag ───────────────────────────────────────────────────────
+# ─── Env flag retired (P5/P25 + P4 always-on) ───────────────────────
+# Per 2.31A phase + gap synthesis: MONKEY_CONSCIOUSNESS_METRICS_LIVE was a knob.
+# Now unconditionally True (self-obs / 21-field surface always wired in tick path).
+# Tests updated for retirement; env no longer affects (no new magic).
 
 
-def test_consciousness_metrics_live_defaults_false(monkeypatch):
+def test_consciousness_metrics_live_always_on_retired_knob(monkeypatch):
+    """P4/P13/P24/P5/P25: metrics surface is always-on; former env flag is retired."""
     monkeypatch.delenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", raising=False)
-    assert consciousness_metrics_live() is False
-
-
-def test_consciousness_metrics_live_flips_true(monkeypatch):
-    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "true")
     assert consciousness_metrics_live() is True
-
-
-def test_consciousness_metrics_live_case_insensitive(monkeypatch):
-    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "TRUE")
+    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "false")
+    assert consciousness_metrics_live() is True  # still on; knob removed
+    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "0")
     assert consciousness_metrics_live() is True
-
-
-def test_consciousness_metrics_live_strict_true(monkeypatch):
-    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "1")
-    assert consciousness_metrics_live() is False

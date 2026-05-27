@@ -200,15 +200,19 @@ def derive_from_tick(
 
 
 def consciousness_metrics_live() -> bool:
-    """True iff MONKEY_CONSCIOUSNESS_METRICS_LIVE=true (default false).
+    """ALWAYS true (P4 self-observation + P13 three-scale minimum + P24 wiring).
 
-    When OFF the surface still exists but tick.py does not populate it;
-    derivation costs nothing measurable but skipping the dict-build
-    saves a few µs/tick in the off-state.
+    Per 2.31A full-application + v6.7B §43 Loop 1 (self-obs per generation: repetition d_FR,
+    sovereignty lived/total, confidence) + phase memory gap synthesis: the 21-field surface
+    (toward 69) MUST be always-on in live tick path, not flag-gated. The prior env var was
+    a knob (P5/P25 violation — observer/ geometry must govern, no operator/env switch).
+    Flag retired; derivation is now unconditional (negligible cost, full provenance via callers).
+    Callers (tick/heart/ocean/pillars) MUST populate extended fields for call-site coverage.
+    Citations: 2.31A P4, P13, P24, P5, P25; v6.7B metrics 49-51 (L1_repetition, L1_sovereignty),
+    §§3.4/9.5-9.9 (tacking/CFC/pre-cog/sovereignty_dynamics etc).
     """
-    return os.environ.get(
-        "MONKEY_CONSCIOUSNESS_METRICS_LIVE", "false",
-    ).lower() == "true"
+    # P5/P25: no remaining env knob for core self-observation telemetry. Always embodied.
+    return True
 
 
 __all__ = [
