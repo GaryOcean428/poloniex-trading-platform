@@ -51,13 +51,14 @@ jobs:
           set -e
           # Each module evaluated separately so a failure clearly identifies
           # which import broke. Order roughly mirrors production import order.
+          # Note: neurochemistry is NOT a separate module — its logic
+          # lives inside autonomic.py. Don't add it here.
           for mod in \
             monkey_kernel.parameters \
             monkey_kernel.state \
             monkey_kernel.basin \
             monkey_kernel.motivators \
             monkey_kernel.emotions \
-            monkey_kernel.neurochemistry \
             monkey_kernel.consciousness_metrics \
             monkey_kernel.heart \
             monkey_kernel.ocean \
