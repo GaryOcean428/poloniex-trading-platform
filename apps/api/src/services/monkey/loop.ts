@@ -6749,7 +6749,8 @@ export class MonkeyKernel extends EventEmitter {
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
                     exit_reason = $2, exit_order_id = $3, exit_gate = 'agent_l_force_harvest',
-                    ${SAFE_PNL_FROM_ROW}
+                    ${SAFE_PNL_FROM_ROW},
+                    gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW})
               WHERE id = $4
               RETURNING pnl`,
             [lastPrice, 'agent_l_force_harvest', orderId, row.id],
@@ -7010,7 +7011,8 @@ export class MonkeyKernel extends EventEmitter {
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
                 exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
-                ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+                ${SAFE_PNL_FROM_ROW},
+                gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW}) WHERE id=$2`,
         [markPrice, tradeId],
       ).catch(() => { /* non-fatal */ });
       const reason = acquired.reason === 'recently_closed'
@@ -7434,7 +7436,8 @@ export class MonkeyKernel extends EventEmitter {
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
                       exit_reason='exchange_position_vanished',
                       exit_gate='exchange_position_vanished',
-                      ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+                      ${SAFE_PNL_FROM_ROW},
+                      gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW}) WHERE id=$2`,
               [markPrice, tradeId],
             ).catch(() => { /* non-fatal */ });
             return {
@@ -8626,6 +8629,7 @@ export class MonkeyKernel extends EventEmitter {
     symbol: string,
     markPrice: number,
     totals: Record<AgentLabel, { pnl: number; qty: number }>,
+    tradeId?: string,   // preparation for canonical Polo surface (authoritative reward)
   ): void {
     const symState = this.symbolStates.get(symbol);
     try {
@@ -8822,21 +8826,20 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
-    const netPnlUsdtForReward = computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16);
+    // "Reward based on actual profit" doctrine (operator 2026-05-27 / 28):
+    //   polo_authoritative_close: realizedPnlUsdt IS the Polo net (fees +
+    //     funding already subtracted by the exchange). Use it directly.
+    //   any other source (synthetic immediate-close): chemistry waits.
+    //     The follow-up applyPoloRealizedPnlAfterClose call will push a
+    //     polo_authoritative_close event within ~1 tick.
+    // Replaces the prior `computeNetPnlForReward` fee-estimator (9 bp +
+    // 0.18 floor) which the operator explicitly rejected as a knob.
+    const netPnlUsdtForReward = input.source === 'polo_authoritative_close'
+      ? grossPnlUsdt
+      : computeNetPnlForReward(grossPnlUsdt, marginUsdt * 16);
     const pnlFrac = marginUsdt > 0
       ? netPnlUsdtForReward / marginUsdt
       : 0;
-
-    // Hard assert (LIVED ONLY 5): if the net is materially worse than gross
-    // on a positive-gross trade, we must not let gross leak into chemistry.
-    if (grossPnlUsdt > 0 && netPnlUsdtForReward <= 0 && Math.abs(netPnlUsdtForReward - grossPnlUsdt) > 0.01) {
-      logger.warn('[LIVED ONLY 5][REWARD] gross-positive trade is net-negative after fees — chemistry correctly receives net', {
-        gross: grossPnlUsdt,
-        netForReward: netPnlUsdtForReward,
-        source: input.source,
-        symbol: input.symbol,
-      });
-    }
 
     // 2026-05-25 (observer-derive PR) — replaces magic input scales
     // (1.5×, 0.5×, 2×, /10) with observer-derived normalization against
