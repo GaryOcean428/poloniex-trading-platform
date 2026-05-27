@@ -6749,7 +6749,8 @@ export class MonkeyKernel extends EventEmitter {
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
                     exit_reason = $2, exit_order_id = $3, exit_gate = 'agent_l_force_harvest',
-                    ${SAFE_PNL_FROM_ROW}
+                    ${SAFE_PNL_FROM_ROW},
+                    gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW})
               WHERE id = $4
               RETURNING pnl`,
             [lastPrice, 'agent_l_force_harvest', orderId, row.id],
@@ -7010,7 +7011,8 @@ export class MonkeyKernel extends EventEmitter {
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
                 exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
-                ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+                ${SAFE_PNL_FROM_ROW},
+                gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW}) WHERE id=$2`,
         [markPrice, tradeId],
       ).catch(() => { /* non-fatal */ });
       const reason = acquired.reason === 'recently_closed'
@@ -7434,7 +7436,8 @@ export class MonkeyKernel extends EventEmitter {
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
                       exit_reason='exchange_position_vanished',
                       exit_gate='exchange_position_vanished',
-                      ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+                      ${SAFE_PNL_FROM_ROW},
+                      gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW}) WHERE id=$2`,
               [markPrice, tradeId],
             ).catch(() => { /* non-fatal */ });
             return {
