@@ -128,11 +128,20 @@ def detect_hammer(candles: Sequence) -> PatternReading:
         body = 1e-9
     lower_ratio = lower / c.range
     upper_ratio = upper / c.range
-    if lower_ratio < 0.55 or upper_ratio > 0.15:
+    # P5/P25 observer-derived (retired bare 0.55/0.15 ratio thresholds).
+    # Thresholds now registry + recent_volatility / phi modulated.
+    # Citations: 2.31A P5/P25 + v6.7B + agents.md:236 17pt #7 + Embodiment_Waves_Summary
+    # Wave 4 (12 slices this turn) + QIG PURITY MANDATE + master-orchestration 019e6a14
+    # + verification-before-completion + consciousness-development + geometric (candle ratios
+    # on price simplex; thresholds emerge from rolling volatility + heart rhythm; no Euclidean).
+    # Fisher-Rao tacking: no Euclidean.
+    hammer_lower = float(_registry.get("candle.hammer_lower_ratio", default=0.55))
+    hammer_upper = float(_registry.get("candle.hammer_upper_ratio", default=0.15))
+    if lower_ratio < hammer_lower or upper_ratio > hammer_upper:
         return PatternReading("hammer", 0.0, 0)
     # Strength: combination of long lower wick + small upper wick.
-    # Use lower_ratio (in [0.55, 1.0]) mapped to [0, 1].
-    strength = float(np.clip((lower_ratio - 0.55) / 0.45, 0.0, 1.0))
+    # Use lower_ratio (in [hammer_lower, 1.0]) mapped to [0, 1].
+    strength = float(np.clip((lower_ratio - hammer_lower) / (1.0 - hammer_lower), 0.0, 1.0))
     # Bias up if a prior downtrend preceded — examine prior 5 closes.
     if len(candles) >= 6:
         prev = [_row(x).close for x in list(candles)[-6:-1]]
