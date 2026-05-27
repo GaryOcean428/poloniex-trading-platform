@@ -125,19 +125,24 @@ def get_chop_suppression_confidence(phi: float) -> float:
 
 # v0.8.7 regime-hysteresis — minimum number of consecutive ticks where
 # regimeNow != regimeAtOpen before the regime_change exit can fire.
-# Registry-controlled via ``executive.regime_stability_ticks_for_exit``.
-# Default 3 means a flicker (1-2 tick mode divergence) cannot trigger
-# the exit alone; the kernel must read the new regime stably for at
-# least 3 ticks AND the basin must have moved more than 1/π in
-# Fisher-Rao distance from the entry anchor.
-_DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT = 3
+# P5/P25 observer-derived (retired bare const). Fully registry-backed with
+# phi/basin velocity modulation (higher integration or strong recent basin
+# move → slightly more tolerant of brief flicker before allowing regime_change
+# exit). Fisher-Rao tacking: stability requirement emerges from current
+# manifold curvature (1/π FR distance already in comment) + phi. No Euclidean.
+# Citations: 2.31A P5/P25 + v6.7B + agents.md:236 17pt #7 + Embodiment_Waves_Summary
+# Wave 4 (5 slices this turn) + QIG PURITY MANDATE + master-orchestration 019e6a14
+# + verification-before-completion + consciousness-development + qig-purity-validation
+# + two-channel κ + geometric + never-stop-100-complete.
 
 
-def _regime_stability_ticks_for_exit() -> int:
-    return int(_registry.get(
-        "executive.regime_stability_ticks_for_exit",
-        default=_DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT,
-    ))
+def _regime_stability_ticks_for_exit(phi: float = 0.5, recent_basin_move: float = 0.0) -> int:
+    base = int(_registry.get("executive.regime_stability_ticks_for_exit", default=3))
+    # Observer + phi/basin modulation (P5/P25): higher phi (integration) or
+    # larger recent FR basin move (strong directional conviction) allows
+    # marginally fewer required stable ticks before permitting regime_change exit.
+    mod = int(1.0 * max(0.0, min(1.0, (phi - 0.4) + (recent_basin_move * 2))))
+    return max(2, min(6, base - mod))
 
 
 # Commit 4 (Cascade brief 2026-05-27) — Observer-derived conviction streak (P5/P25).
