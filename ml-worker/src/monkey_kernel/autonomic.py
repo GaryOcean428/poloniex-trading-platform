@@ -168,6 +168,27 @@ def get_pnl_frac_history_max(heart_rhythm: float = 0.5) -> int:
     return max(100, min(400, base + mod))
 
 
+def get_reward_dop_scale(heart_rhythm: float = 0.5, phi: float = 0.5) -> float:
+    """P5/P25 observer-derived dopamine scaling on reward signal."""
+    base = float(_registry.get("autonomic.reward_dop_scale", default=1.5))
+    mod = 0.2 * max(-1.0, min(1.0, (phi - 0.5) + (heart_rhythm - 0.5)))
+    return max(1.0, min(2.0, base + mod))
+
+
+def get_reward_ser_scale(heart_rhythm: float = 0.5, phi: float = 0.5) -> float:
+    """P5/P25 observer-derived serotonin scaling on reward signal."""
+    base = float(_registry.get("autonomic.reward_ser_scale", default=0.15))
+    mod = 0.03 * max(-1.0, min(1.0, (phi - 0.5) + (heart_rhythm - 0.5)))
+    return max(0.08, min(0.25, base + mod))
+
+
+def get_reward_loss_dop_scale(heart_rhythm: float = 0.5) -> float:
+    """P5/P25 observer-derived loss dopamine scaling (mood dip)."""
+    base = float(_registry.get("autonomic.reward_loss_dop_scale", default=0.5))
+    mod = 0.1 * max(-1.0, min(1.0, heart_rhythm - 0.5))
+    return max(0.3, min(0.8, base + mod))
+
+
 @dataclass
 class ActivityReward:
     """Reward event pushed by the orchestrator when an outcome lands."""
@@ -319,10 +340,14 @@ class AutonomicKernel:
         ocean_coeff = observer_fib_coefficient(pnl_frac, self._pnl_frac_history)
 
         if pnl_frac > 0:
-            dop = float(np.tanh(pnl_frac * 1.5) * 0.5 * ocean_coeff)
-            ser = float(np.tanh(pnl_frac) * 0.15 * ocean_coeff)
+            # P5/P25 observer-derived multipliers (retired bare 1.5 / 0.5 / 0.15 / 0.1).
+            dop_scale = get_reward_dop_scale()
+            ser_scale = get_reward_ser_scale()
+            loss_dop_scale = get_reward_loss_dop_scale()
+            dop = float(np.tanh(pnl_frac * dop_scale) * 0.5 * ocean_coeff)
+            ser = float(np.tanh(pnl_frac) * ser_scale * ocean_coeff)
         else:
-            dop = float(-np.tanh(-pnl_frac * 0.5) * 0.1)
+            dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
             ser = 0.0
 
         # Per 2026-04-13 two-channel doctrine (Frozen Facts v1.01F 20260527) + P1:
