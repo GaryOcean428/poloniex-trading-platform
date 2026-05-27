@@ -452,7 +452,15 @@ class AutonomicKernel:
             ser_base = _clip(1.0 - _sigmoid(z), 0.0, 1.0)
         else:
             ser_base = _clip(1.0 / max(inputs.basin_velocity, 1e-12), 0.0, 1.0)
-        ser = _clip(0.85 * ser_base + reward_sums["serotonin"], 0.0, 1.0)
+        # P5/P25 observer-derived (retired bare 0.85 compression).
+        # Compression now registry + heart_rhythm / phi modulated so the
+        # per-event reward delta can register on top of the baseline.
+        ser_compression = float(_registry.get("autonomic.serotonin_compression", default=0.85))
+        # Light heart/phi modulation (higher phi or stronger heart rhythm → slightly less compression).
+        hr = 0.5  # TODO: wire real derived_tacking_frequency_hz (P6 deepen)
+        phi_mod = 0.03 * max(-1.0, min(1.0, (inputs.phi - 0.5) + (hr - 0.5)))
+        ser_compression = max(0.75, min(0.95, ser_compression + phi_mod))
+        ser = _clip(ser_compression * ser_base + reward_sums["serotonin"], 0.0, 1.0)
 
         # ─── Norepinephrine ───────────────────────────────────────
         # Sigmoid(z) — both tails informative; ~0.5 at mean. Replaces
