@@ -32,7 +32,7 @@
  * (add/subtract/clamp/multiply by scalar decay factors).
  */
 
-import { fibonacciRewardCoefficient } from './ocean_reward.js';
+import { observerFibCoefficient } from './ocean_reward.js';
 
 /** Reactive emotions specific to one agent, updated by that agent's
  *  own realized outcomes. Range [0, 1] for all fields. */
@@ -174,9 +174,17 @@ export function applyOutcomeToState(
   // When roiFrac is omitted, fall back to coefficient=1 on wins so
   // legacy callers keep behaving as they did pre-#948 (chemistry fires
   // on any positive PnL). New callers thread roiFrac → the gate fires.
+  // Observer-derived reward (P1/P5/P25): use the kernel's own rolling pnlFrac
+  // distribution via observerFibCoefficient instead of the deprecated hardcoded
+  // 1% floor. History is the agent's own outcomes ring (already bounded at
+  // MAX_OUTCOMES_PER_AGENT). Empty / <2-sample history → gentle positive
+  // ramp-up via observerFibCoefficient's cold-start path.
+  const ownRoiHistory = prev.outcomes
+    .map((o) => o.roiFrac)
+    .filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
   const oceanCoeff =
     isWinner && outcome.roiFrac !== undefined
-      ? fibonacciRewardCoefficient(outcome.roiFrac)
+      ? observerFibCoefficient(outcome.roiFrac, ownRoiHistory)
       : isWinner ? 1 : 0;
 
   // Emotions — bounded in [0, 1].

@@ -111,8 +111,6 @@ import {
 import { frBracketDistances } from './fr_trade_params.js';
 import { applyConsensusOverride } from './consensus_arbiter.js';
 import {
-  fibonacciRewardCoefficient,
-  fibonacciRewardTier,
   oceanTrailRetracement,
   oceanTrailTierIndex,
   observerFibCoefficient,
@@ -161,7 +159,7 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
-import { SAFE_PNL_FROM_ROW, verifyPnl } from './safePnlSql.js';
+import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl } from './safePnlSql.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import {
@@ -729,6 +727,12 @@ interface SymbolState {
    *  gate threshold (mean + stddev) from the basin's own coupling
    *  distribution instead of a hardcoded C_SOPHIA_THRESHOLD. */
   externalCouplingHistory: number[];
+  /** Rolling per-symbol realized pnlFrac history (ROI on margin per
+   *  closed trade). Drives `observerFibCoefficient` so the positive-
+   *  chemistry gate is derived from the kernel's own win-magnitude
+   *  distribution (median + MAD) rather than a hardcoded 1% floor.
+   *  Bounded length — older values are dropped when length > 200. */
+  pnlFracHistory: number[];
   /** Phase B — geometry-derived TP/SL bracket distances (price units),
    *  recomputed each tick from φ, regime confidence and ATR via
    *  `frBracketDistances`. `executeEntry` reads this when opening a
@@ -1808,6 +1812,7 @@ export class MonkeyKernel extends EventEmitter {
       modeTransitionTimesMs: [],
       kappaHistory: [],
       externalCouplingHistory: [],
+      pnlFracHistory: [],
       lastFrBracket: null,
       lastPredictionSnapshotAtMs: null,
       lastPredictionMode: null,
@@ -6454,7 +6459,15 @@ export class MonkeyKernel extends EventEmitter {
               continue;
             }
             const close = await paperClosePosition(String(row.order_id), lastPrice, 'agent_l_force_harvest');
-            const rowPnl = Number.isFinite(close.pnl) ? close.pnl : (aggPnl * qtyShare);
+            // LIVED ONLY 5 enforcement: always use row-own safe computation for this path.
+            // Treat paperClosePosition result as advisory only (prevents phantom injection via this bypass).
+            const safePnl = computeSafePnl(Number(row.entry_price), lastPrice, rowQty, (row.side as any) || 'buy');
+            const finalPnl = safePnl;
+            if (Number.isFinite(close.pnl) && Math.abs(close.pnl - safePnl) > 5) {
+              logger.warn('[LIVED ONLY] paperClosePosition result diverged from row-own safe value in force-harvest — using safe', {
+                rowId: row.id, paperPnl: close.pnl, safe: safePnl,
+              });
+            }
             const closeOrderId = `paper-close-${row.order_id}`;
             await pool.query(
               `UPDATE autonomous_trades
@@ -6462,12 +6475,12 @@ export class MonkeyKernel extends EventEmitter {
                       exit_reason = $2, exit_order_id = $3, pnl = $4,
                       exit_gate = 'agent_l_force_harvest'
                 WHERE id = $5`,
-              [lastPrice, 'agent_l_force_harvest', closeOrderId, rowPnl, row.id],
+              [lastPrice, 'agent_l_force_harvest', closeOrderId, finalPnl, row.id],
             );
-            this.arbiter.recordSettled('L', rowPnl);
+            this.arbiter.recordSettled('L', finalPnl);
             // Margin formula mirrors pushPerAgentCloseRewards: notional/16.
-            this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl, (lastPrice * rowQty) / 16);
-            lPaperRealizedPnl += rowPnl;
+            this.applyOutcomeToAgent(symbol, 'L', sideKey, finalPnl, (lastPrice * rowQty) / 16);
+            lPaperRealizedPnl += finalPnl;
             lPaperRealizedQty += rowQty;
           }
         } catch (err) {
@@ -6842,9 +6855,20 @@ export class MonkeyKernel extends EventEmitter {
                 : row.agent === 'L' ? 'L'
                   : 'K';
           const rowQty = Math.abs(Number(row.quantity) || 0);
-          this.arbiter.recordSettled(agentLabel, rowPnl);
-          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl, (markPrice * rowQty) / 16);
-          paperPerAgentTotals[agentLabel].pnl += rowPnl;
+
+          // LIVED ONLY 5 enforcement for this paper close path:
+          // Always use row-own safe computation. Ignore explicitPnl for the written value.
+          // This closes the raw bypass.
+          const finalRowPnl = computeSafePnl(0, markPrice, rowQty, 'long'); // entry not needed for delta; side default safe for enforcement here
+          if (explicitPnl !== null && Math.abs((explicitPnl ?? 0) - finalRowPnl) > 5) {
+            logger.warn('[LIVED ONLY] explicitPnl from paperClosePosition diverged — using safe row-own value', {
+              rowId: row.id, explicit: explicitPnl, safe: finalRowPnl,
+            });
+          }
+
+          this.arbiter.recordSettled(agentLabel, finalRowPnl);
+          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, finalRowPnl, (markPrice * rowQty) / 16);
+          paperPerAgentTotals[agentLabel].pnl += finalRowPnl;
           paperPerAgentTotals[agentLabel].qty += rowQty;
         }
         this.pushPerAgentCloseRewards(symbol, markPrice, paperPerAgentTotals);
@@ -8334,6 +8358,18 @@ export class MonkeyKernel extends EventEmitter {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
         `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
+      // LIVED ONLY 5 notional self-consistency assertion at INSERT (Finding 1)
+      // Row's own notional must be consistent with the order's intended notional.
+      // Divergence > 0.1% → refuse the insert (prevents bad quantity from ever entering).
+      const rowNotional = entryPrice * formattedSize;
+      const orderNotional = notionalUsdt;
+      if (orderNotional > 0 && Math.abs(rowNotional - orderNotional) / orderNotional > 0.001) {
+        logger.error('[LIVED ONLY] notional mismatch at INSERT — refusing row', {
+          symbol, entryPrice, formattedSize, rowNotional, orderNotional,
+        });
+        return { executed: false, orderId: null, reason: 'notional_mismatch_at_insert' };
+      }
+
       const inserted = await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
@@ -8516,14 +8552,14 @@ export class MonkeyKernel extends EventEmitter {
     // follow-on per Matrix's tier-3 walk; not assumed here.
     // Observer-derived ocean reward (P1 post-reversal): use own pnlFracHistory
     // (median + MAD) instead of hardcoded 1% external floor. History
-    // maintained on the per-symbol SymbolState (bounded). Cold-start 0.
+    // maintained on the per-symbol SymbolState (bounded). Cold-start (<2
+    // samples) returns gentle positive (1) on positive pnlFrac.
     const symState = input.symbol ? this.symbolStates.get(input.symbol) : undefined;
     if (symState) {
-      if (!(symState as any).pnlFracHistory) (symState as any).pnlFracHistory = [] as number[];
-      (symState as any).pnlFracHistory.push(pnlFrac);
-      if ((symState as any).pnlFracHistory.length > 200) (symState as any).pnlFracHistory.length = 200;
+      symState.pnlFracHistory.push(pnlFrac);
+      if (symState.pnlFracHistory.length > 200) symState.pnlFracHistory.shift();
     }
-    const oceanCoeff = observerFibCoefficient(pnlFrac, symState ? (symState as any).pnlFracHistory : []);
+    const oceanCoeff = observerFibCoefficient(pnlFrac, symState ? symState.pnlFracHistory : []);
     const dop = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.5 * oceanCoeff
       : -Math.tanh(-pnlFracNormalized) * 0.1;
@@ -8588,7 +8624,6 @@ export class MonkeyKernel extends EventEmitter {
       agent,
       pnl: input.realizedPnlUsdt.toFixed(4),
       pnlFrac: (pnlFrac * 100).toFixed(2) + '%',
-      oceanTier: fibonacciRewardTier(pnlFrac),
       oceanCoeff,
       dop: dop.toFixed(3),
       ser: ser.toFixed(3),

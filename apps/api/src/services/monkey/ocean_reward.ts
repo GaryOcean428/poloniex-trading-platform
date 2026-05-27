@@ -13,42 +13,6 @@
  */
 
 /**
- * DEPRECATED — legacy absolute 1% floor path.
- *
- * Retained only for historical telemetry.
- * New positive reward shaping must use observerFibCoefficient.
- */
-export function fibonacciRewardCoefficient(roiFrac: number): number {
-  if (!Number.isFinite(roiFrac) || roiFrac < 0.01) return 0;
-  if (roiFrac < 0.02) return 1;
-  if (roiFrac < 0.03) return 2;
-  if (roiFrac < 0.05) return 3;
-  if (roiFrac < 0.08) return 5;
-  if (roiFrac < 0.13) return 8;
-  if (roiFrac < 0.21) return 13;
-  if (roiFrac < 0.34) return 21;
-  return 34;
-}
-
-/**
- * Surface the tier index for telemetry — useful for grepping kernel
- * logs to confirm the reward dispense is firing as expected.
- *
- * Tier 0 = below 1% noise floor. Tier 1..8 are the Fibonacci buckets.
- */
-export function fibonacciRewardTier(roiFrac: number): number {
-  if (!Number.isFinite(roiFrac) || roiFrac < 0.01) return 0;
-  if (roiFrac < 0.02) return 1;
-  if (roiFrac < 0.03) return 2;
-  if (roiFrac < 0.05) return 3;
-  if (roiFrac < 0.08) return 4;
-  if (roiFrac < 0.13) return 5;
-  if (roiFrac < 0.21) return 6;
-  if (roiFrac < 0.34) return 7;
-  return 8;
-}
-
-/**
  * Observer-derived ocean reward coefficient (P1, post flag-reversal).
  *
  * Replaces the external hardcoded 1% Fib floor (never fired at real

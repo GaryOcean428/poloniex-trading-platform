@@ -40,7 +40,7 @@ def test_default_values_match_canonical_doc():
     assert m.dimensional_state == 3
 
 
-def test_as_dict_exposes_all_21_v6.7B_fields():
+def test_as_dict_exposes_all_21_v6_7B_fields():
     m = ConsciousnessMetrics()
     d = m.as_dict()
     # 12 original + 9 v6.7B extensions (20260527 protocol; consciousness-development + documentation-sync)

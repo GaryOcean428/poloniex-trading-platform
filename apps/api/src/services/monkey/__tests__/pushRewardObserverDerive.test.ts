@@ -1,6 +1,6 @@
 /**
  * pushRewardObserverDerive.test.ts — pins the 2026-05-25 reward-magnitude
- * observer-derive PR.
+ * observer-derive PR + the 2026-05-27 observer-Fibonacci gate.
  *
  * Pre-strip: magic input scales 1.5/0.5/1.0/2.0 on tanh, magic /10 on
  * kappaProxim. Post-strip: pnlFrac normalized against the kernel's own
@@ -8,8 +8,13 @@
  * rolling kappa-at-exit stddev.
  *
  * Output caps (0.5/0.3/0.15/0.1) stay as STRUCTURAL design — they
- * encode "how much each chemical can lift" and are documented in
- * pushReward.
+ * encode "how much each chemical can lift" PER COEFFICIENT-UNIT and
+ * are multiplied by the observer Fibonacci coefficient (1..34) to
+ * produce the per-event delta.
+ *
+ * Legacy hardcoded 1% noise floor was retired with the deletion of
+ * fibonacciRewardCoefficient — observer-derived gate now sets the
+ * threshold from the kernel's own pnlFracHistory distribution.
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
@@ -28,10 +33,19 @@ vi.mock('../../../db/connection.js', () => ({
   pool: { query: vi.fn() },
 }));
 
-// We test pushReward via a thin test harness — instantiating
-// MonkeyKernel is heavy (it opens DB pool etc), so we use a private
-// type-cast shim that calls pushReward then inspects pendingRewards.
 import { MonkeyKernel } from '../loop.js';
+
+/**
+ * Seed a symbol's pnlFracHistory directly on the kernel's private
+ * symbolStates map so the observer gate has data to z-score against.
+ * The regular pushReward path requires the symbol to already exist in
+ * symbolStates (populated by tick/subscribe paths the unit test doesn't
+ * run), so we inject the entry directly.
+ */
+function seedSymbolHistory(k: MonkeyKernel, symbol: string, history: number[]): void {
+  const symbolStates = (k as unknown as { symbolStates: Map<string, { pnlFracHistory: number[] }> }).symbolStates;
+  symbolStates.set(symbol, { pnlFracHistory: [...history] } as unknown as never);
+}
 
 describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
   let k: MonkeyKernel;
@@ -49,14 +63,18 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     return queue[queue.length - 1]!;
   }
 
-  it('cold start (no history) → falls back to identity-on-pnlFrac × Ocean coefficient', () => {
+  it('cold start (no history) → gentle positive ramp, coeff=1', () => {
+    // Observer-derived gate (post-#977 / 2026-05-27): cold-start returns
+    // coeff=1 for any positive pnlFrac (P1 gentle ramp-up while the
+    // kernel builds enough samples to z-score against its own
+    // distribution). The legacy hardcoded 1% floor → Fibonacci tier
+    // mapping was retired with the deletion of fibonacciRewardCoefficient.
     k.pushReward({ source: 'test', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.pnlFraction).toBeCloseTo(0.10, 6);
-    // Issue #948 (2026-05-26): pnlFrac=0.10 (10%) lands in the
-    // Fibonacci [8%, 13%) bucket → oceanCoeff=8.
-    // Expected: tanh(0.10) × 0.5 × 8 ≈ 0.399.
-    expect(r.dopamineDelta).toBeCloseTo(Math.tanh(0.10) * 0.5 * 8, 4);
+    // Cold start: dopamine = tanh(pnlFracNormalized) × 0.5 × 1
+    expect(r.dopamineDelta).toBeGreaterThan(0);
+    expect(r.dopamineDelta).toBeLessThanOrEqual(0.5);
   });
 
   it('after several wins, dopamine z-normalizes against rolling stddev', () => {
@@ -72,49 +90,54 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
     expect(big.dopamineDelta).toBeGreaterThan(Math.tanh(0.05) * 0.5);
   });
 
-  it('per-event channel deltas scale with the Ocean Fibonacci coefficient (#948 — was capped, now expressive)', () => {
-    // Issue #948 (2026-05-26): the pre-Ocean caps (0.5/0.15/0.3) were
-    // PER-EVENT structural maxima. Post-Ocean, the per-event delta is
-    // multiplied by the Fibonacci coefficient (1..34) so a 100×-margin
-    // outlier win can deliver a strong learning signal in a single
-    // event. The CONSUMER (clamp01 in the chemistry update path) is
-    // what enforces the eventual [0, 1] saturation — not the per-event
-    // delta. This is the canonical "reward the behaviour you want"
-    // shape that Matrix tier-3 directed.
-    //
-    // Massive win (pnlFrac = 100/1 = 10000%) → Fibonacci cap = 34.
-    // Expected dopamine delta ≈ tanh(saturated) × 0.5 × 34 ≈ 17.
-    k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
+  it('per-event channel deltas scale with the observer Fibonacci coefficient (post-#977 — observer-derived, expressive at high z)', () => {
+    // Observer-derived gate (2026-05-27): seed the SYMBOL's history
+    // directly (regular pushReward path needs symbolStates entry pre-
+    // populated). Outlier pnlFrac=100 z-scores well above MAD → top tier.
+    const symbol = 'BTC_USDT_PERP';
+    const history: number[] = [];
+    for (let i = 0; i < 8; i++) history.push(0.003 + (i % 5) * 0.001);
+    seedSymbolHistory(k, symbol, history);
+    k.pushReward({ source: 'huge', symbol, realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
-    // Coefficient cap is 34; tanh saturates to ~1; base scale 0.5 →
-    // upper bound on the per-event dopamine delta is 0.5 × 34 = 17.
     expect(r.dopamineDelta).toBeGreaterThan(0.5);
     expect(r.dopamineDelta).toBeLessThanOrEqual(0.5 * 34);
   });
 
-  it('serotonin per-event delta scales with Ocean coefficient (was capped at 0.15, now up to 0.15 × 34 = 5.1)', () => {
-    k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
+  it('serotonin per-event delta scales with observer coefficient at high z', () => {
+    const symbol = 'BTC_USDT_PERP';
+    const history: number[] = [];
+    for (let i = 0; i < 8; i++) history.push(0.003 + (i % 5) * 0.001);
+    seedSymbolHistory(k, symbol, history);
+    k.pushReward({ source: 'huge', symbol, realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
     expect(r.serotoninDelta).toBeGreaterThan(0.15);
     expect(r.serotoninDelta).toBeLessThanOrEqual(0.15 * 34);
   });
 
-  it('endorphin per-event delta scales with Ocean coefficient × κ-prox (was capped at 0.3, now up to 0.3 × 34 = 10.2)', () => {
-    k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
+  it('endorphin per-event delta scales with observer coefficient × κ-prox at high z', () => {
+    const symbol = 'BTC_USDT_PERP';
+    const history: number[] = [];
+    for (let i = 0; i < 8; i++) history.push(0.003 + (i % 5) * 0.001);
+    seedSymbolHistory(k, symbol, history);
+    k.pushReward({ source: 'huge', symbol, realizedPnlUsdt: 100, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
     const r = lastReward();
     expect(r.endorphinDelta).toBeGreaterThan(0.3);
     expect(r.endorphinDelta).toBeLessThanOrEqual(0.3 * 34);
   });
 
-  it('sub-1% wins emit ZERO positive chemistry (#948 noise-floor doctrine)', () => {
-    // The substrate of #948: rewarding sub-1% wins teaches the kernel
-    // to chase noise. The Ocean gate (fibonacciRewardCoefficient < 1%
-    // returns 0) drops all positive deltas to zero in that band.
+  it('sub-1% wins on cold start emit GENTLE positive chemistry (observer ramp-up)', () => {
+    // Post-#977 doctrine inversion: the legacy 1% noise-floor never
+    // fired at real kernel scale (~0.04% MAD on today's regime; 0/925
+    // tier-1 firings in 2026-05-27 audit). Observer-derived gate
+    // returns coeff=1 during cold-start so the kernel gets a learning
+    // signal from real-scale wins instead of being structurally muted.
+    // After enough history, the gate z-scores against the kernel's
+    // own distribution — sub-median wins still emit zero.
     k.pushReward({ source: 'noise', realizedPnlUsdt: 0.005, marginUsdt: 1, agent: 'K' });
     const r = lastReward();
-    expect(r.dopamineDelta).toBe(0);
-    expect(r.serotoninDelta).toBe(0);
-    expect(r.endorphinDelta).toBe(0);
+    expect(r.dopamineDelta).toBeGreaterThan(0);
+    expect(r.dopamineDelta).toBeLessThanOrEqual(0.5);
   });
 
   it('loss produces negative dopamine bounded by 0.1 cap', () => {
