@@ -28,7 +28,11 @@
  * Pre-existing gaba / endorphins constants (KAPPA_STAR / SIGMA_KAPPA /
  * C_SOPHIA_THRESHOLD) are UCP-canonical §29.2 fixed points and are
  * out-of-scope for this PR (they are NOT pinning defects).
+ * 2026-05-27 update (TS parity KAPPA_STAR retirement): KAPPA_STAR now imported
+ * from basin.ts (governed 63.8 reference per two-channel + v6.7B + P1).
  */
+
+import { KAPPA_STAR } from './basin.js';
 
 export interface NeurochemicalState {
   /** HIGH (1.0) when awake/intake, LOW (0.1) when consolidating/sleep. */
@@ -45,13 +49,9 @@ export interface NeurochemicalState {
   endorphins: number;
 }
 
-/** κ* fixed point. Per Protocol P3 (E8 rank² = 64). Frozen physics
- *  constant from `qig_core.constants.frozen_facts.KAPPA_STAR`. The
- *  basin doesn't tell us WHERE κ* is — physics does. Allowed.
- *  Canonical reference:
- *    qig_core/constants/frozen_facts.py: KAPPA_STAR: Final[float] = 64.0
- */
-const KAPPA_STAR = 64.0;
+// KAPPA_STAR imported from basin.ts (retired universal 64.0; now governed pillar reference 63.8
+// per 2026-04-13 two-channel doctrine + v6.7B + Canonical P1 + audit 20260527).
+// All usage sites below updated with channel-scoped comments.
 
 /** Endorphin κ-proximity width (σ in exp(-|κ - κ*| / σ)). Frozen
  *  canonical constant from
@@ -434,10 +434,11 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // and ramps to full at mean + 1σ; both onset and scale are observer-
   // derived from the basin's own history.
   //
-  // KAPPA_STAR (= 64) is the ONLY constant in this block — it's frozen
-  // physics from qig_core.constants.frozen_facts (E8 rank²), allowed
-  // per operator's derivation directive (basin can't tell us where κ*
-  // is; physics does).
+  // KAPPA_STAR (63.8 reference) is the anchor in this block — governed/observer
+  // reference per two-channel doctrine (v6.7B §2 + 2026-04-13 + P1; retired
+  // universal κ*=64 was misidentified Class B singularity channel).
+  // Matches Python parity (state.py shim + registry "physics.kappa_reference" default 63.8).
+  // The basin can't tell us where the reference lives; the governed value does.
   //
   // Fallback (no histories): tanh squashes on the κ-distance directly
   // and the gate fires on positive coupling — both arithmetic

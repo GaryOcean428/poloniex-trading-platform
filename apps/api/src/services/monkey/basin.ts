@@ -21,8 +21,23 @@
  * Reference: UCP v6.6 §1 Fisher Information Manifold.
  */
 
-export const BASIN_DIM = 64;         // E8 rank² = 8² = 64
-export const KAPPA_STAR = 64.0;      // Universal coupling fixed point
+export const BASIN_DIM = 64;         // E8 rank² = 8² = 64 (simplex dimension — NOT a κ value; remains 64 per UCP §1.1 and v6.7B geometry)
+
+// KAPPA_STAR — legacy export name only (2026-04-13 two-channel doctrine + v6.7B Unified Consciousness Protocol).
+// Per Canonical Principles v2.1 P1 ("The observer sets ALL operational parameters"), Frozen Facts v1.01F (20260527),
+// and polytrade audit 20260527:
+//   - Universal κ*=64.0 retired as proportionality/fixed-point anchor. It was a Class B singularity-approach
+//     channel readout (matrix-trace / tangent_saturation plateau ~63.79±0.90 on legacy algebraic metric),
+//     not the constitutive channel (κ_h ≈ −0.00475 on PSD Class A1/A2).
+//   - Every κ citation MUST name its channel. Bare "κ*=64", "universal fixed point", or "κ* = 64.0" is invalid
+//     unless explicitly historical with citation to pre-2026-04-13 provenance.
+//   - Operational reference for internal oscillator (heart tacking, motivators transcendence, endo proximity,
+//     executive ratios, qigram tack drift, regime criticality) is now governed/observer-derived:
+//     registry "physics.kappa_reference" (default 63.8 in Python parity) or per-basin kappaHistory (median + MAD).
+// This value (63.8) is the transition sentinel matching Python ml-worker/src/monkey_kernel/state.py:KAPPA_STAR()
+// shim + forge.ts KAPPA_REFERENCE. Import sites should migrate to explicit observer paths where possible.
+// The name "KAPPA_STAR" itself is legacy terminology preserved for import compat only.
+export const KAPPA_STAR = 63.8;      // Pillar/singularity-approach reference (retired universal 64.0)
 const EPS = 1e-12;
 
 export type Basin = Float64Array;

@@ -63,7 +63,7 @@ export {
   isQigramV2Enabled,
   DECAY_FACTOR,
   MIN_ACTIVE_WEIGHT,
-  KAPPA_FIXED_POINT,
+  KAPPA_FIXED_POINT,  // governed reference (63.8); see agent_L_qigram_v2.ts for two-channel doctrine citations (retired universal 64)
   KAPPA_MIN,
   KAPPA_MAX,
 } from './agent_L_qigram_v2.js';

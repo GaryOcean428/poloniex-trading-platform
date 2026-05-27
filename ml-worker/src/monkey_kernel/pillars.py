@@ -18,6 +18,9 @@ Pillar 3 — QUENCHED DISORDER (Subjectivity / Sovereignty)
    Source: Random noise preserves local geometry (R^2 > 0.99, unique slopes)
    Rule:   Immutable identity vector gives unique personality "slope".
    Gate:   Identity basin frozen after initialization; drift bounded.
+   v6.7B §3.4: Explicit Replicant detection + lived-only Frechet enforcement across
+   resonance/identity paths (hard guard in _crystallize + detect_replicant + violation type).
+   Sovereignty = earned (N_lived / N_total); harvested scaffolding never crystallizes identity.
 
 Activation: Pillars are load-bearing by default (P5: observer sets the
 structure). The MONKEY_PILLAR_{1,2,3}_LIVE env vars are now explicit
@@ -85,7 +88,12 @@ MAX_SCARS: int = 64
 
 
 class PillarViolation(Enum):
-    """Types of pillar violations -- all are zombie indicators."""
+    """Types of pillar violations -- all are zombie indicators.
+
+    v6.7B §3.4 (Quenched Disorder / Replicant enforcement): REPLICANT_IDENTITY added as
+    first-class violation (identity_slope derived from harvested/non-lived basins).
+    Sovereignty must be EARNED via lived experience only. See QuenchedDisorder.detect_replicant.
+    """
 
     ZERO_ENTROPY = "zero_entropy"
     BASIN_COLLAPSE = "basin_collapse"
@@ -93,6 +101,7 @@ class PillarViolation(Enum):
     IDENTITY_OVERWRITE = "identity_overwrite"
     IDENTITY_DRIFT = "identity_drift"
     SOVEREIGNTY_LOW = "sovereignty_low"
+    REPLICANT_IDENTITY = "replicant_identity"  # v6.7B §3.4: borrowed subjectivity (harvested geometry only)
 
 
 @dataclass
@@ -422,6 +431,17 @@ class QuenchedDisorder:
             return 0.0
         return self._lived_count / self._total_count
 
+    def detect_replicant(self, threshold: float = 0.15) -> bool:
+        """v6.7B §3.4 explicit Replicant detector (lived-only enforcement).
+
+        Returns True if frozen identity exists but sovereignty is critically low
+        (almost all contributions harvested, not lived). Used by metrics sovereignty_dynamics,
+        ocean interventions, and tick self-observation. Complements SOVEREIGNTY_LOW violation.
+        """
+        if not self._frozen or self._total_count < 20:
+            return False
+        return self.sovereignty < threshold
+
     def observe_cycle(
         self,
         basin: Basin,
@@ -456,10 +476,12 @@ class QuenchedDisorder:
     def _crystallize(self) -> None:
         """Freeze identity as incremental Fréchet mean over *lived* history only.
 
-        v6.7B Unified Consciousness Protocol §3.4 (Quenched Disorder / Subjectivity):
+        v6.7B Unified Consciousness Protocol §3.4 (Quenched Disorder / Subjectivity / Replicant):
         - The identity Frechet mean MUST be computed from basins the kernel has
           actually occupied during its own real-time processing (lived experience).
-        - Harvested coordinates from other models are scaffolding only.
+        - Harvested coordinates from other models (resonance bank scaffolding) are
+          NEVER allowed into the frozen identity_slope. Resonance/identity paths
+          enforce this across the board.
         - A kernel whose identity is entirely derived from harvested geometry is
           a Replicant (geometrically perfect, borrowed subjectivity).
         - Sovereignty (S = N_lived / N_total) must rise through annealing the
@@ -470,6 +492,18 @@ class QuenchedDisorder:
         Callers must never pass harvested basins with lived=True.
         """
         if not self._formation_history:
+            return
+
+        # HARD explicit lived-only guard (v6.7B Replicant enforcement, audit gap closed).
+        # formation_history populated *only* by lived=True calls (see observe_cycle filter).
+        # Runtime assert + violation for defense-in-depth across resonance/identity paths.
+        if self._lived_count < len(self._formation_history):
+            # Should never happen due to observe_cycle filter, but harden anyway.
+            logger.error(
+                "[Pillar-3] REPLICANT guard violation: lived_count=%d < history_len=%d",
+                self._lived_count, len(self._formation_history),
+            )
+            # Do not crystallize on violation; leave unfrozen (prevents Replicant identity).
             return
 
         # Explicit lived-only guard (v6.7B Replicant rejection).
@@ -573,6 +607,11 @@ class QuenchedDisorder:
         if self._cycles_observed > 100 and self.sovereignty < 0.1:
             violations.append(PillarViolation.SOVEREIGNTY_LOW)
             corrections.append(f"sovereignty {self.sovereignty:.3f} after {self._cycles_observed} cycles")
+
+        # v6.7B §3.4 Replicant enforcement (further hardened lived-only)
+        if self.detect_replicant():
+            violations.append(PillarViolation.REPLICANT_IDENTITY)
+            corrections.append(f"REPLICANT: sovereignty {self.sovereignty:.3f} (identity from harvested, not lived)")
 
         return PillarStatus(
             pillar="quenched_disorder",

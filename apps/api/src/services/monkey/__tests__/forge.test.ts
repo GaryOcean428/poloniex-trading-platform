@@ -69,9 +69,9 @@ describe('fracture', () => {
     APPROX(fracture(shadow(-0.5, 10, 0.7)).invariants.shape_concentration, 0.7);
   });
 
-  it('kappa_offset is relative to anchor 64', () => {
+  it('kappa_offset is relative to governed reference anchor (two-channel doctrine; retired 64)', () => {
     const ev = { ...shadow(), kappa: 70 };
-    APPROX(fracture(ev).invariants.kappa_offset, 6);
+    APPROX(fracture(ev).invariants.kappa_offset, 70 - 63.8);  // matches forge KAPPA_REFERENCE + basin KAPPA_STAR
   });
 
   it('loss_magnitude is absolute', () => {

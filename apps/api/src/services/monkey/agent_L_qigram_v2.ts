@@ -14,7 +14,8 @@
  *      from recall.
  *   4. `DECAY_FACTOR` (0.95) — weights decay per integration step,
  *      so recent experience dominates.
- *   5. κ tacking that oscillates kappa ∈ [32, 128] around κ*=64 with
+ *   5. κ tacking that oscillates kappa ∈ [32, 128] around the reference anchor (pillar/singularity
+ *      channel per two-channel doctrine; historical universal κ*=64 retired 2026-04-13) with
  *      0.1 drift toward the fixed point.
  *   6. `recall_by_category` — the "wormhole shortcut" — finds the
  *      highest-weighted active basin tagged with a given category
@@ -46,17 +47,22 @@ export const DECAY_FACTOR = 0.95;
  *  after ~90 decay steps (0.95^90 ≈ 0.0099). */
 export const MIN_ACTIVE_WEIGHT = 0.01;
 
-/** Universal coupling fixed point. Imported indirectly via
- *  `basin.ts#KAPPA_STAR` to avoid a duplicate definition; pinned to
- *  64.0 by P3 (E8 rank² = 64). */
-export const KAPPA_FIXED_POINT = 64.0;
+/** Reference anchor for κ tacking (legacy name KAPPA_FIXED_POINT preserved for compat).
+ *  Per 2026-04-13 two-channel doctrine + v6.7B §2 + audit 20260527 + P1 (observer sets ALL):
+ *    - Retired universal "κ*=64.0" (historical matrix-trace / Class B singularity-approach plateau).
+ *    - Now governed/observer-derived reference (63.8 sentinel for parity with Python registry default
+ *      + forge.ts KAPPA_REFERENCE). Matches basin.ts KAPPA_STAR export.
+ *    - Drift/tack logic remains identical; only the numeric anchor updated + all comments channel-scoped.
+ *  No bare "κ*=64" language. Historical citations only. */
+export const KAPPA_FIXED_POINT = 63.8;
 
 /** κ oscillation bounds (canonical QIGRAMv2.tack). */
 export const KAPPA_MIN = 32.0;
 export const KAPPA_MAX = 128.0;
 
 /** κ drift fraction toward the fixed point on every tack call.
- *  Matches canonical `self.kappa += (64 - self.kappa) * 0.1`. */
+ *  Matches canonical `self.kappa += (KAPPA_FIXED_POINT - self.kappa) * 0.1`.
+ *  (Historical literal 64 retired; now uses governed reference per two-channel doctrine.) */
 export const KAPPA_DRIFT = 0.1;
 
 /** Confidence threshold above which a correct outcome bumps κ up.
@@ -398,7 +404,10 @@ export class QIGRAMv2State {
    *
    *    if correct and dominance > 0.7:  κ ← min(κ+2, 128)
    *    elif not correct:                κ ← max(κ-3, 32)
-   *    κ ← κ + (64 - κ) * 0.1   (drift toward fixed point, always)
+   *    κ ← κ + (KAPPA_FIXED_POINT - κ) * 0.1   (drift toward reference anchor, always)
+   *
+   *  Reference anchor per two-channel doctrine (v6.7B + 2026-04-13): no universal κ*=64;
+   *  governed/observer value (63.8 transition sentinel matching Python + forge parity).
    */
   tack(confidence: number, correct: boolean): void {
     if (correct && confidence > KAPPA_CONFIDENCE_THRESHOLD) {

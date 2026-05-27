@@ -41,6 +41,7 @@ import numpy as np
 # imported SleepPhase / SleepCycleManager / SleepCycleState from
 # autonomic continue to work.
 from .ocean import SleepCycleState, SleepPhase  # noqa: F401
+from .parameters import get_registry
 from .persistence import PersistentMemory
 from .state import NeurochemicalState
 

@@ -107,8 +107,8 @@ describe('QIGRAMv2 constants — canonical parity', () => {
   it('MIN_ACTIVE_WEIGHT matches canonical 0.01', () => {
     expect(MIN_ACTIVE_WEIGHT).toBe(0.01);
   });
-  it('KAPPA_FIXED_POINT matches canonical 64.0', () => {
-    expect(KAPPA_FIXED_POINT).toBe(64.0);
+  it('KAPPA_FIXED_POINT matches governed reference (63.8 per two-channel doctrine + v6.7B audit; retired canonical 64.0)', () => {
+    expect(KAPPA_FIXED_POINT).toBe(63.8);
   });
   it('κ bounds match canonical [32, 128]', () => {
     expect(KAPPA_MIN).toBe(32.0);
@@ -246,15 +246,15 @@ describe('recallByCategory — wormhole shortcut', () => {
 // ─── κ tacking ───────────────────────────────────────────────────────
 
 describe('κ tacking', () => {
-  it('starts at the fixed point (64.0)', () => {
+  it('starts at the fixed point (governed reference per two-channel doctrine)', () => {
     const store = new QIGRAMv2State();
     expect(store.kappa).toBe(KAPPA_FIXED_POINT);
   });
 
   it('dominance>0.7 + correct → κ increases (capped at 128)', () => {
     const store = new QIGRAMv2State();
-    // Bump κ up far above 64 first, so the +2 step is visible against
-    // the drift toward 64. Start by repeating tack many times.
+    // Bump κ up far above reference first, so the +2 step is visible against
+    // the drift toward governed anchor (two-channel doctrine). Start by repeating tack many times.
     for (let i = 0; i < 200; i++) store.tack(0.9, true);
     expect(store.kappa).toBeGreaterThan(KAPPA_FIXED_POINT);
     expect(store.kappa).toBeLessThanOrEqual(KAPPA_MAX);
@@ -267,21 +267,22 @@ describe('κ tacking', () => {
     expect(store.kappa).toBeGreaterThanOrEqual(KAPPA_MIN);
   });
 
-  it('always drifts toward κ*=64', () => {
+  it('always drifts toward governed reference anchor (two-channel doctrine; retired κ*=64)', () => {
     const store = new QIGRAMv2State();
-    // Start at κ=64. Apply a "correct + high confidence" tack — the
-    // raw update would be +2 then drift 0.1 toward 64. Net result
-    // should be (64 + 2) + (64 - 66)*0.1 = 66 - 0.2 = 65.8.
+    // Start at reference. Apply a "correct + high confidence" tack — the
+    // raw update would be +2 then drift 0.1 toward anchor. Net result
+    // should be (KAPPA_FIXED_POINT + 2) + (KAPPA_FIXED_POINT - (KAPPA_FIXED_POINT+2))*0.1 .
     store.tack(0.9, true);
-    expect(store.kappa).toBeCloseTo(65.8, 6);
+    const expected = KAPPA_FIXED_POINT + 2 + (KAPPA_FIXED_POINT - (KAPPA_FIXED_POINT + 2)) * 0.1;
+    expect(store.kappa).toBeCloseTo(expected, 6);
   });
 
   it('low-confidence correct outcome does NOT bump κ up', () => {
     const store = new QIGRAMv2State();
     // confidence below 0.7 threshold + correct → only drift applies.
-    // Starting κ=64, drift = (64 - 64) * 0.1 = 0, so κ stays at 64.
+    // Starting at reference, drift = 0, so κ stays at reference.
     store.tack(0.5, true);
-    expect(store.kappa).toBeCloseTo(64.0, 6);
+    expect(store.kappa).toBeCloseTo(KAPPA_FIXED_POINT, 6);
   });
 
   it('κ converges to fixed point under neutral repeated tacks', () => {
