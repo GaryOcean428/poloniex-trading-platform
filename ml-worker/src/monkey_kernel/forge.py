@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from .bus_events import KernelEvent
+from .parameters import get_registry
 from .state import BASIN_DIM
 
 if TYPE_CHECKING:

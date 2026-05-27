@@ -97,15 +97,20 @@ describe('predictionChemistryDeltas', () => {
     expect(d.dopamineDelta).toBeCloseTo(0.190, 2);
   });
 
-  it('negative dop when direction-match is worse than chance', () => {
+  it('zero dop when direction-match is worse than chance (anti-windup, predictionRewardEmitter.ts:208)', () => {
+    // Surgical anti-windup: persistent anti-correlation
+    // (directionMatchRate < CHANCE_RATE) returns dopamineDelta=0
+    // instead of bleeding negative chemistry forever. Restores the
+    // channel as soon as the predictor recovers to at least chance.
     const d = predictionChemistryDeltas({
       n: 20,
       directionMatchRate: 0.1,
       within1SigmaRate: 0.7,
       madResidualNormalized: 0.6745,
     });
-    expect(d.dopamineDelta).toBeLessThan(0);
-    expect(d.dopamineDelta).toBeCloseTo(-0.190, 2);
+    expect(d.dopamineDelta).toBe(0);
+    expect(d.serotoninDelta).toBe(0);
+    expect(d.source).toMatch(/anti_correlated/);
   });
 
   it('dop bounded by DOPAMINE_CAP=0.5 even at perfect prediction', () => {

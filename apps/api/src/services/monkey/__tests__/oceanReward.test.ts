@@ -1,150 +1,97 @@
 /**
- * oceanReward.test.ts — Issue #948 (Matrix tier-3 directive 2026-05-26).
+ * oceanReward.test.ts — observer-derived reward shape + trail tier doctrine.
  *
- * Pins the Fibonacci reward shape and the 1% noise floor — the
- * structural learning-signal that teaches the kernel "small wins
- * aren't worth chasing."
+ * The legacy hardcoded 1% Fibonacci floor (fibonacciRewardCoefficient /
+ * fibonacciRewardTier) has been DELETED — it never fired at real kernel
+ * scale (~0.04% MAD on today's regime; 0/925 tier-1 firings in the
+ * 2026-05-27 audit). The canonical reward is now
+ * observerFibCoefficient(pnlFrac, history) which derives the threshold
+ * from the kernel's own rolling pnlFrac distribution (median + MAD).
  *
- * These tests are RESTRICTIVE on purpose. If a future PR widens the
- * 1% floor or changes the Fibonacci sequence, it must change these
- * tests deliberately — the doctrine ("reward shape, not knob") makes
- * the sequence load-bearing.
+ * Trail-tier doctrine (Matrix tier-3) is unchanged — coherence-streak
+ * still drives the trail retracement via TRAIL_TIERS.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
-  fibonacciRewardCoefficient,
-  fibonacciRewardTier,
+  observerFibCoefficient,
   oceanTrailRetracement,
   oceanTrailTierIndex,
   TRAIL_TIERS,
 } from '../ocean_reward.js';
 
-describe('fibonacciRewardCoefficient — the structural reward shape', () => {
-  describe('the 1% noise floor', () => {
-    it('emits ZERO reward below 1% ROI', () => {
-      expect(fibonacciRewardCoefficient(0)).toBe(0);
-      expect(fibonacciRewardCoefficient(0.001)).toBe(0); // 0.1%
-      expect(fibonacciRewardCoefficient(0.005)).toBe(0); // 0.5%
-      expect(fibonacciRewardCoefficient(0.0099)).toBe(0); // 0.99%
+describe('observerFibCoefficient — observer-derived reward gate (P1)', () => {
+  describe('cold-start ramp (history insufficient)', () => {
+    it('empty history → gentle positive (1) for any positive pnlFrac', () => {
+      expect(observerFibCoefficient(0.001, [])).toBe(1);
+      expect(observerFibCoefficient(0.05, [])).toBe(1);
+      expect(observerFibCoefficient(1.0, [])).toBe(1);
     });
 
-    it('emits ZERO reward on negative ROI (losses fall through to gaba path)', () => {
-      expect(fibonacciRewardCoefficient(-0.01)).toBe(0);
-      expect(fibonacciRewardCoefficient(-0.5)).toBe(0);
+    it('empty history → 0 for non-positive pnlFrac', () => {
+      expect(observerFibCoefficient(0, [])).toBe(0);
+      expect(observerFibCoefficient(-0.01, [])).toBe(0);
     });
 
-    it('emits ZERO reward on NaN / non-finite (defensive — caller shouldn\'t pass these)', () => {
-      expect(fibonacciRewardCoefficient(NaN)).toBe(0);
-      expect(fibonacciRewardCoefficient(Infinity)).toBe(0);
-      expect(fibonacciRewardCoefficient(-Infinity)).toBe(0);
-    });
-
-    it('first non-zero tier is exactly at 1.00% ROI', () => {
-      expect(fibonacciRewardCoefficient(0.01)).toBe(1);
+    it('single-sample history is still cold-start (needs ≥ 2)', () => {
+      expect(observerFibCoefficient(0.05, [0.001])).toBe(1);
     });
   });
 
-  describe('the Fibonacci bucket boundaries', () => {
-    it('bucket [1%, 2%) → coefficient 1', () => {
-      expect(fibonacciRewardCoefficient(0.01)).toBe(1);
-      expect(fibonacciRewardCoefficient(0.015)).toBe(1);
-      expect(fibonacciRewardCoefficient(0.019)).toBe(1);
+  describe('observer-derived tier from own pnlFrac distribution', () => {
+    it('below own median → 0 reward', () => {
+      const history = [0.001, 0.0008, 0.0012, 0.0011, 0.0009];
+      expect(observerFibCoefficient(0, history)).toBe(0);
     });
 
-    it('bucket [2%, 3%) → coefficient 2', () => {
-      expect(fibonacciRewardCoefficient(0.02)).toBe(2);
-      expect(fibonacciRewardCoefficient(0.025)).toBe(2);
+    it('exactly at own median → 0 (positive deviation required)', () => {
+      const history = [0.001, 0.0008, 0.0012];
+      expect(observerFibCoefficient(0.001, history)).toBe(0);
     });
 
-    it('bucket [3%, 5%) → coefficient 3', () => {
-      expect(fibonacciRewardCoefficient(0.03)).toBe(3);
-      expect(fibonacciRewardCoefficient(0.045)).toBe(3);
+    it('positive z-deviation → tier 1+ (first non-zero bucket)', () => {
+      // history: median ~0.001, MAD ~0.0002; pnlFrac slightly above median
+      const history = [0.001, 0.0008, 0.0012, 0.0011, 0.0009];
+      const coeff = observerFibCoefficient(0.00115, history);
+      expect(coeff).toBeGreaterThanOrEqual(1);
     });
 
-    it('bucket [5%, 8%) → coefficient 5', () => {
-      expect(fibonacciRewardCoefficient(0.05)).toBe(5);
-      expect(fibonacciRewardCoefficient(0.075)).toBe(5);
-    });
-
-    it('bucket [8%, 13%) → coefficient 8', () => {
-      expect(fibonacciRewardCoefficient(0.08)).toBe(8);
-      expect(fibonacciRewardCoefficient(0.12)).toBe(8);
-    });
-
-    it('bucket [13%, 21%) → coefficient 13', () => {
-      expect(fibonacciRewardCoefficient(0.13)).toBe(13);
-      expect(fibonacciRewardCoefficient(0.20)).toBe(13);
-    });
-
-    it('bucket [21%, 34%) → coefficient 21', () => {
-      expect(fibonacciRewardCoefficient(0.21)).toBe(21);
-      expect(fibonacciRewardCoefficient(0.33)).toBe(21);
-    });
-
-    it('bucket [34%, ∞) → coefficient 34 (capped — outliers don\'t over-train)', () => {
-      expect(fibonacciRewardCoefficient(0.34)).toBe(34);
-      expect(fibonacciRewardCoefficient(0.50)).toBe(34);
-      expect(fibonacciRewardCoefficient(1.00)).toBe(34);
-      expect(fibonacciRewardCoefficient(10.00)).toBe(34);
+    it('large positive deviation → higher tier (Fibonacci-shaped)', () => {
+      const history = [0.001, 0.0008, 0.0012, 0.0011, 0.0009];
+      const coeff = observerFibCoefficient(0.5, history);
+      expect(coeff).toBeGreaterThanOrEqual(8);
     });
   });
 
-  describe('the sequence IS Fibonacci', () => {
-    it('coefficients form the Fibonacci sequence (1, 2, 3, 5, 8, 13, 21, 34)', () => {
-      const coeffs = [
-        fibonacciRewardCoefficient(0.01),
-        fibonacciRewardCoefficient(0.02),
-        fibonacciRewardCoefficient(0.03),
-        fibonacciRewardCoefficient(0.05),
-        fibonacciRewardCoefficient(0.08),
-        fibonacciRewardCoefficient(0.13),
-        fibonacciRewardCoefficient(0.21),
-        fibonacciRewardCoefficient(0.34),
-      ];
-      expect(coeffs).toEqual([1, 2, 3, 5, 8, 13, 21, 34]);
+  describe('defensive input handling', () => {
+    it('NaN pnlFrac → 0', () => {
+      expect(observerFibCoefficient(NaN, [0.001, 0.002])).toBe(0);
     });
 
-    it('each tier boundary is itself a Fibonacci percentage (the boundaries and the magnitudes share the sequence)', () => {
-      // The boundary VALUE (1, 2, 3, 5, 8, 13, 21, 34) equals the coefficient
-      // at the bucket OPENING — the kernel feels a 1% win as 1× reward, a 2%
-      // win as 2× reward, etc. This is the structural identity.
-      expect(fibonacciRewardCoefficient(0.01)).toBe(1);
-      expect(fibonacciRewardCoefficient(0.02)).toBe(2);
-      expect(fibonacciRewardCoefficient(0.03)).toBe(3);
-      expect(fibonacciRewardCoefficient(0.05)).toBe(5);
-      expect(fibonacciRewardCoefficient(0.08)).toBe(8);
-      expect(fibonacciRewardCoefficient(0.13)).toBe(13);
-      expect(fibonacciRewardCoefficient(0.21)).toBe(21);
-      expect(fibonacciRewardCoefficient(0.34)).toBe(34);
+    it('zero-MAD history (degenerate constant) → 0 (cannot z-score)', () => {
+      expect(observerFibCoefficient(0.05, [0.001, 0.001, 0.001, 0.001])).toBe(0);
+    });
+
+    it('legacy fibonacciRewardCoefficient / fibonacciRewardTier are no longer exported', async () => {
+      const mod = await import('../ocean_reward.js');
+      expect((mod as Record<string, unknown>).fibonacciRewardCoefficient).toBeUndefined();
+      expect((mod as Record<string, unknown>).fibonacciRewardTier).toBeUndefined();
     });
   });
-});
 
-describe('fibonacciRewardTier — telemetry index', () => {
-  it('tier 0 means "below the 1% noise floor"', () => {
-    expect(fibonacciRewardTier(0)).toBe(0);
-    expect(fibonacciRewardTier(0.005)).toBe(0);
-  });
-
-  it('tiers 1..8 map to the eight Fibonacci buckets', () => {
-    expect(fibonacciRewardTier(0.01)).toBe(1);
-    expect(fibonacciRewardTier(0.02)).toBe(2);
-    expect(fibonacciRewardTier(0.03)).toBe(3);
-    expect(fibonacciRewardTier(0.05)).toBe(4);
-    expect(fibonacciRewardTier(0.08)).toBe(5);
-    expect(fibonacciRewardTier(0.13)).toBe(6);
-    expect(fibonacciRewardTier(0.21)).toBe(7);
-    expect(fibonacciRewardTier(0.34)).toBe(8);
-    expect(fibonacciRewardTier(1.00)).toBe(8);
+  describe('regression guard — no re-introduction of hardcoded 1% floor', () => {
+    it('no `roiFrac < 0.01` literal in ocean_reward.ts (legacy gate must stay deleted)', async () => {
+      const fs = await import('node:fs');
+      const src = fs.readFileSync(
+        new URL('../ocean_reward.ts', import.meta.url),
+        'utf8',
+      );
+      expect(src).not.toMatch(/roiFrac\s*<\s*0\.01/);
+    });
   });
 });
 
 describe('oceanTrailRetracement — Matrix tier-3 doctrine extension', () => {
-  // The trail-eligible Fibonacci subset is structurally defined:
-  // - Tier 1 (1%) and tier 2 (2%) excluded as noise-band / too-tight
-  // - Tier 8 (34%) excluded — harvest gate would fire first
-  // - Remaining {3%, 5%, 8%, 13%, 21%} is the operational range
   it('exposes the trail-eligible Fibonacci subset as the canonical TRAIL_TIERS const', () => {
     expect(TRAIL_TIERS).toEqual([0.03, 0.05, 0.08, 0.13, 0.21]);
   });
@@ -176,8 +123,6 @@ describe('oceanTrailRetracement — Matrix tier-3 doctrine extension', () => {
     });
 
     it('streak ≥ 5 → capped at the loosest tier (21%)', () => {
-      // Sustained coherence beyond 5 ticks doesn't widen further —
-      // the kernel's harvest gate owns the upper bound; trail caps here.
       expect(oceanTrailRetracement(5)).toBe(0.21);
       expect(oceanTrailRetracement(100)).toBe(0.21);
       expect(oceanTrailRetracement(1e9)).toBe(0.21);
@@ -222,15 +167,10 @@ describe('oceanTrailRetracement — Matrix tier-3 doctrine extension', () => {
     });
 
     it('no in-between values — discrete selection only (no interpolation)', () => {
-      // Matrix tier-3 recommendation: discrete preserves the
-      // "no in-between values" purity from PR #950. Continuous
-      // interpolation would reintroduce a free parameter (the
-      // interpolation function shape) and break the doctrine.
       const allOutputs = new Set<number>();
       for (let s = 0; s < 20; s++) {
         allOutputs.add(oceanTrailRetracement(s));
       }
-      // Exactly five distinct outputs — one per tier in TRAIL_TIERS.
       expect(allOutputs.size).toBe(TRAIL_TIERS.length);
       for (const t of TRAIL_TIERS) {
         expect(allOutputs.has(t)).toBe(true);
