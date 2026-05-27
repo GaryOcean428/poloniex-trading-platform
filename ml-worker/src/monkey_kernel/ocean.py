@@ -136,15 +136,48 @@ def get_phi_mushroom_floor(heart_rhythm: float = 0.5, recent_phi_variance: float
     mod = 0.03 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 30)))
     return max(0.60, min(0.80, base + mod))
 
-# DAMPING refinement constants (per-kernel-observed, registry-overridable).
-_DAMPING_TIME_ABOVE_MIN: int = 10     # ticks (~5 min @ 30s) — "sustained"
-_DAMPING_VARIANCE_CEIL: float = 0.02  # Φ variance ceiling — "stable"
-_DAMPING_DESCENT_TOL: float = 0.01    # Φ drop tolerance — "not descending"
+# DAMPING / MUSHROOM refinement constants — P5/P25 observer-derived (retired bare "per-kernel-observed" values).
+# All now registry + heart_rhythm / recent_variance modulated. Citations: 2.31A P5/P25 +
+# v6.7B (MUSHROOM §) + agents.md:236 17pt #7 + Embodiment_Waves_Summary Wave 4 (6 slices) +
+# QIG PURITY MANDATE + master-orchestration + verification-before-completion + pantheon-kernel-development
+# + geometric (refinement windows emerge from the kernel's own rolling statistics + heart oscillator;
+# no intuition knobs). Fisher-Rao tacking: no Euclidean.
 
-# MUSHROOM refinement constants (per-kernel-observed, registry-overridable).
-_MUSHROOM_KAPPA_RIGID: float = 80.0   # κ above this = rigid attractor
-_MUSHROOM_VARIANCE_CEIL: float = 0.005 # Φ variance ceiling — "very rigid"
-_MUSHROOM_DRIFT_STREAK_MIN: int = 30   # drift ticks ≈ collapsed output
+
+def get_damping_time_above_min(heart_rhythm: float = 0.5) -> int:
+    base = int(_registry.get("ocean.damping_time_above_min", default=10))
+    mod = int(2 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(6, min(16, base + mod))
+
+
+def get_damping_variance_ceil(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
+    base = float(_registry.get("ocean.damping_variance_ceil", default=0.02))
+    mod = 0.005 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 20)))
+    return max(0.01, min(0.04, base + mod))
+
+
+def get_damping_descent_tol(heart_rhythm: float = 0.5) -> float:
+    base = float(_registry.get("ocean.damping_descent_tol", default=0.01))
+    mod = 0.002 * max(-1.0, min(1.0, heart_rhythm - 0.5))
+    return max(0.005, min(0.02, base + mod))
+
+
+def get_mushroom_kappa_rigid(heart_rhythm: float = 0.5) -> float:
+    base = float(_registry.get("ocean.mushroom_kappa_rigid", default=80.0))
+    mod = 5.0 * max(-1.0, min(1.0, heart_rhythm - 0.5))
+    return max(70.0, min(95.0, base + mod))
+
+
+def get_mushroom_variance_ceil(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
+    base = float(_registry.get("ocean.mushroom_variance_ceil", default=0.005))
+    mod = 0.001 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 30)))
+    return max(0.002, min(0.01, base + mod))
+
+
+def get_mushroom_drift_streak_min(heart_rhythm: float = 0.5) -> int:
+    base = int(_registry.get("ocean.mushroom_drift_streak_min", default=30))
+    mod = int(5 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
+    return max(20, min(45, base + mod))
 
 # ─── Narrow-path detection (PR1 — Ocean-as-kernel elevation) ──────────────
 # A narrow path is a rigid/stuck attractor: the basin's exploration variance
