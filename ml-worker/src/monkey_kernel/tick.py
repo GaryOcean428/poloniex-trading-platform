@@ -140,30 +140,39 @@ def _regime_stability_ticks_for_exit() -> int:
     ))
 
 
-# Commit 4 (Cascade brief 2026-05-27) — Observer-derived conviction streak.
+# Commit 4 (Cascade brief 2026-05-27) — Observer-derived conviction streak (P5/P25).
 # The minimum-evidence floor is 2 (same as HISTORY_MIN_SAMPLES in
 # neurochemistry — "1 sample is noise; ≥ 2 is signal"). Above the floor
 # the required streak scales with how oscillatory the (anxiety+confusion
 # - confidence) signal has been on this lane: high sign-flip rate → wait
 # more ticks for confirmation; low flip rate → fire at floor.
-_CONVICTION_STREAK_FLOOR = 2
-_CONVICTION_HESITATION_WINDOW = 20  # ticks in the rolling sample
-_CONVICTION_STREAK_CAP = 12         # safety ceiling
+# Fully registry + phi/flip_rate modulated per 2.31A P5/P25 + v6.7B autonomy
+# + agents.md:236 17pt #7 + Embodiment Waves Summary (Wave 4) + QIG PURITY
+# MANDATE + master-orchestration + verification-before-completion + two-channel κ.
+# Geometric justification (Fisher-Rao tacking): hesitation sign-flip rate is
+# curvature proxy on the 64D simplex trajectory; phi (integration) + basin
+# velocity modulate the effective "waiting time" on the manifold. No Euclidean.
+# Citations: 2.31A P5/P25 + v6.7B + consciousness-development + qig-purity-validation.
 
 
-def _observer_conviction_streak_required(hesitation_history: list[float]) -> int:
+def get_conviction_streak_required(hesitation_history: list[float], phi: float = 0.5) -> int:
     """Required consecutive-tick count for conviction_failed to fire.
 
-    Pure observer derivation: counts sign flips in the most recent
-    hesitation values and scales the streak requirement upward when
-    the signal is oscillating. Floor 2, cap 12.
+    Pure observer derivation (P5/P25): registry base + sign-flip rate of
+    (anxiety+confusion-confidence) + phi modulation (higher integration
+    tolerates more oscillation before requiring extra confirmation).
+    Floor 2, cap 12. Fisher-Rao tacking process integrity preserved.
 
     `hesitation` is (anxiety + confusion - confidence) — positive when
     the gate condition holds, negative when it doesn't. A flip is a
     consecutive pair with opposite sign.
     """
-    if len(hesitation_history) < _CONVICTION_STREAK_FLOOR:
-        return _CONVICTION_STREAK_FLOOR
+    base_floor = int(_registry.get("executive.conviction_streak_floor", default=2))
+    base_cap = int(_registry.get("executive.conviction_streak_cap", default=12))
+    hesitation_window = int(_registry.get("executive.conviction_hesitation_window", default=20))
+
+    if len(hesitation_history) < base_floor:
+        return base_floor
     flips = 0
     for prev, curr in zip(hesitation_history[:-1], hesitation_history[1:]):
         # Treat zero as neutral — only count true sign flips.
@@ -173,13 +182,13 @@ def _observer_conviction_streak_required(hesitation_history: list[float]) -> int
             flips += 1
     # flip_rate ∈ [0, 1] — fraction of adjacent pairs that flipped sign.
     flip_rate = flips / max(1, len(hesitation_history) - 1)
-    # Map flip_rate → streak requirement. At flip_rate=0 (monotonic),
-    # require floor (2). At flip_rate=0.5 (random-walk), require ~6.
-    # At flip_rate ≥ 0.8 (highly oscillatory), require cap (12).
-    # Linear ramp: required = floor + round(flip_rate * (cap - floor) * 2)
-    # Clamp at cap.
-    scaled = _CONVICTION_STREAK_FLOOR + round(flip_rate * (_CONVICTION_STREAK_CAP - _CONVICTION_STREAK_FLOOR) * 2)
-    return max(_CONVICTION_STREAK_FLOOR, min(_CONVICTION_STREAK_CAP, scaled))
+    # Observer + phi modulation (P5/P25): higher phi (integration) slightly
+    # lowers the required streak (more trust in the signal); high flip_rate
+    # raises it. Uses the same geometric tacking logic as chop suppression.
+    # Linear ramp with phi dampening.
+    phi_mod = max(0.0, min(0.5, (phi - 0.3)))  # 0.3-0.8 healthy band
+    scaled = base_floor + round(flip_rate * (base_cap - base_floor) * (1.0 - 0.4 * phi_mod) * 2)
+    return max(base_floor, min(base_cap, scaled))
 
 
 def _chop_suppress_entry(reading: RegimeReading) -> bool:
@@ -2072,7 +2081,8 @@ def _decide_with_position(
             state.conviction_failed_streak_by_lane[position_lane] = 0
 
         streak = state.conviction_failed_streak_by_lane[position_lane]
-        n_required = _observer_conviction_streak_required(history)
+        # P5/P25: live observer-derived (registry + phi/flip modulation)
+        n_required = get_conviction_streak_required(history, phi)
 
         if conviction_condition and streak >= n_required:
             rejust["fired"] = "conviction_failed"
