@@ -167,9 +167,7 @@ class OceanState:
                        canonical 3-phase geometry machine (qig-core §30).
                        Telemetry-only when MONKEY_SLEEP_3PHASE_LIVE=true;
                        None otherwise. Observation-only — does not drive
-    """
-
-    behaviour. Dream/consolidate hooks are deferred.
+                       behaviour. Dream/consolidate hooks are deferred.
       coherence      : float  [0, 1]
                        basin self-coherence (1 - normalised entropy)
       spread         : float  [0, π/2]
