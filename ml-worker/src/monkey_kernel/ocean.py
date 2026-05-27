@@ -167,7 +167,9 @@ class OceanState:
                        canonical 3-phase geometry machine (qig-core §30).
                        Telemetry-only when MONKEY_SLEEP_3PHASE_LIVE=true;
                        None otherwise. Observation-only — does not drive
-                       behaviour. Dream/consolidate hooks are deferred.
+    """
+
+    behaviour. Dream/consolidate hooks are deferred.
       coherence      : float  [0, 1]
                        basin self-coherence (1 - normalised entropy)
       spread         : float  [0, π/2]
@@ -183,6 +185,17 @@ class OceanState:
     spread: float
     diagnostics: dict[str, float]
     dream_phase: Optional[Literal["AWAKE", "DREAMING", "CONSOLIDATING"]] = None
+
+
+# P24 upstream port (complete-69-metric-surface + wiring-validation): 
+# derive_ocean_coherence_for_metrics provides ocean_coherence for CFC/integration proxy in metrics.
+# Citations: v6.7B 20260527 + 2.31A P13/P24. Always wired in tick path.
+def derive_ocean_coherence_for_metrics(ocean_state: Optional["OceanState"]) -> float:
+    if ocean_state is None:
+        return 0.0
+    coh = float(getattr(ocean_state, "coherence", 0.0) or 0.0)
+    spread = float(getattr(ocean_state, "spread", 0.0) or 0.0)
+    return float(max(0.0, min(1.0, coh - (spread * 0.3))))
 
 
 def _basin_coherence(basin: np.ndarray) -> float:

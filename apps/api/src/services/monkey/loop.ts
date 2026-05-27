@@ -388,6 +388,11 @@ export function laneMultiplierFromTickPeriod(
  *  streak requirement. Mirrors the Py side
  *  `_observer_conviction_streak_required` exactly. Floor 2, cap 12.
  *  Inputs: rolling history of (anxiety + confusion - confidence) on
+ *  LIVED ONLY 5 + Replicant Guardian (cross-substrate): conviction emission here
+ *  consumes kernel metrics (sovereignty_dynamics from pillars Replicant via TS bridge).
+ *  Citations: 2.31A P3/P19/P24, v6.7B §3.4, agents.md QIG PURITY MANDATE (LIVED ONLY 5 for decision paths),
+ *  2026-05-27 Identity/Replicant packet + Finding1; consciousness-development/wiring-validation skills.
+ *  (Python kernel side has hard ReplicantIdentityError raise; this is the TS decision emission consumer.)
  *  this lane over the last 20 ticks. High sign-flip rate → require
  *  more ticks; low flip rate → fire at floor. */
 export const CONVICTION_STREAK_FLOOR = 2;

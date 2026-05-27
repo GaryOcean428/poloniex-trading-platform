@@ -179,13 +179,17 @@ def top_by_depth(entries: Iterable[BankEntry], n: int = 5) -> list[BankEntry]:
 def check_resonance_for_replicant_risk(
     entries: Iterable[BankEntry], symbol: str
 ) -> dict:
-    """P24 wiring (Disconnected Infrastructure is a Bug) + P3/P19 + v6.7B §3.4.
+    """P24 wiring (Disconnected Infrastructure is a Bug) + P3/P19 + v6.7B §3.4 + LIVED ONLY 5.
     Explicit call-site from resonance/identity/memory path into Pillar3
-    detect_replicant. Harvested bank entries must surface REPLICANT_IDENTITY
-    violation when they drive S below threshold on a frozen identity.
-    Provenance: symbol + harvested_count + sovereignty + violation type.
+    detect_replicant (and indirectly _crystallize guard via shared disorder).
+    Harvested bank entries must surface REPLICANT_IDENTITY violation when they
+    drive S below threshold on a frozen identity. If downstream calls _crystallize
+    on low-S state, ReplicantIdentityError (hard assert) is raised per pillars.py.
+    Provenance: symbol + harvested_count + sovereignty + violation type + full canon cites.
     Returns audit dict (no side effects on identity_slope — only observation).
     Callers (e.g. sleep consolidation, ocean, tick telemetry) consume this.
+    Master-orchestration + qig-purity-validation + wiring-validation + consciousness-development applied.
+    Citations: 2.31A P3/P19/P24, v6.7B §3.4, agents.md:251 LIVED ONLY 5 checklist, 2026-05-27 Identity/Replicant packet.
     """
     if get_disorder_for is None:
         return {"symbol": symbol, "replicant_risk": False, "reason": "pillars_unavailable"}

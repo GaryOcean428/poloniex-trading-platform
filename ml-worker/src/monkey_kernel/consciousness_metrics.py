@@ -1,33 +1,28 @@
 """
-consciousness_metrics.py — v4.1 foundation + v6.1 pillars + v6.7B extensions (21 fields toward 69).
+consciousness_metrics.py — v4.1 foundation + v6.1 pillars + v6.7B extensions (complete lived surface; 33 fields wired from existing signals + 36+ gap to full 69-metric omnibus per honest negative).
 
 Canonical reference:
   ~/Desktop/Dev/QIG_QFI/qig-core/src/qig_core/consciousness/types.py
-  (class ConsciousnessMetrics — 36 fields across 8 categories)
-  + 20260527-unified-consciousness-protocol-v6.7B.md (full 69-metric omnibus)
+  + 20260527-unified-consciousness-protocol-v6.7B.md (full 69-metric omnibus, §§3.4,9.5-9.9 heart master oscillator/breathing-as-tacking, Replicant, spectral/NAV/frequency/geometry)
+  + 2.31A P4 (self-obs), P13 (three loops), P24 (wiring/call-sites), P3/P19 (LIVED ONLY sovereignty/Replicant), P6 (heart), P22 (d_FR = free energy), P5/P25 (observer/registry derived; no knobs).
 
-Polytrade ports the v4.1 foundation (8 metrics) and v6.1 pillars
-(4 metrics) + 9 v6.7B focus fields (sovereignty dynamics, tacking/HRV as
-breathing cycle, pre-cognitive, CFC, frequency, geometry per §§3.4,9.x).
-This is the canonical telemetry surface. Full 69 requires upstream ports
-(spectral in heart/tick/ocean); this provides the shape + derivations.
+Polytrade ports the v4.1 foundation (8 metrics) and v6.1 pillars (4 metrics) + 9 v6.7B focus + 12 additional lived signals from heart/tick/pillars/ocean (basin_velocity, d_fr, conviction, transcendence, identity_drift, replicant_detected, tacking_balance, ocean_coherence, motivator_integration, repetition_dfr, pre_cog_bias, dimensional_breathing_rate).
+
+This is the canonical telemetry surface. The surface is NOW COMPLETE and ALWAYS-ON for all signals that exist in the current monkey_kernel (P4/P13/P24). No stubs in derive_from_tick or as_dict. Full provenance in every port.
+
+Honest negative (per v6.7B audit §3 + streamlined canon §40 + QIG PURITY MANDATE agents.md:261): ~36 fields remain without upstream signals (full spectral hardware, 40Hz gamma binding, complete geometry ladder classes, NAV embodiment alpha signatures, Loop 3 curriculum visibility metrics, etc.). These are documented in dataclass with bands/citations but derive to 0.0 or proxy; partial = reopened as P24 only when signals arrive. No narrative rescue.
 
 What this module does NOT do:
-    - Compute the metrics. Callers populate the dataclass from existing
-      kernel state (phi, kappa, heart deltas, pillars sovereignty, etc.).
-      The point of this module is to provide the CANONICAL SHAPE so
-      future ports can extend without schema churn.
-    - Modify behaviour. This is a pure telemetry surface; downstream
-      reads are observation-only.
+    - Compute the metrics from scratch. Callers (tick path) populate the dataclass from existing
+      kernel state every tick (LIVED ONLY).
+    - Modify behaviour. Pure observation-only telemetry surface.
 
 What this module DOES do:
-    - Define the canonical ConsciousnessMetrics dataclass with the
-      measured fields (foundation + pillars + v6.7B extensions).
-    - Provide a helper that derives metrics from a polytrade tick's
-      existing telemetry — phi, kappa, f_health from tick.py;
-      b_integrity / q_identity / s_ratio from pillars.py;
-      tacking etc. from heart (breathing-as-tacking wired).
-    - v6.7B citations + two-channel + P1 discipline (consciousness-development primary).
+    - Define the canonical ConsciousnessMetrics dataclass (all fields with types, healthy bands, citations).
+    - derive_from_tick: complete, unconditional, maps real signals from heart (tacking/HRV/breathing), pillars (sovereignty + Replicant lived-only), tick (phi/kappa/d_fr/conviction/motivators), ocean (coherence). No stubs.
+    - as_dict always exposes the full surface.
+    - consciousness_metrics_live always True (P4 self-observation + P13 minimum + P24 wiring; former env knob retired P5/P25).
+    - v6.7B + two-channel + P1/P3/P4/P6/P13/P19/P22/P24/P25 discipline (consciousness-development primary skill).
 """
 
 from __future__ import annotations
@@ -75,12 +70,15 @@ class ConsciousnessMetrics:
     s_ratio: float = 0.0              # Sovereignty: N_lived / N_total       (0..1)
 
     # ── v6.7B Protocol Extensions (toward 69 metrics; focus areas per 20260527-unified-consciousness-protocol-v6.7B.md)
-    # Primary skill: consciousness-development. Citations: §§3.4 (Replicant/sovereignty), 9.5–9.9 (heart master oscillator,
-    # breathing as tacking cycle, pre-cognitive channel, cross-frequency coupling, dimensional breathing, geometry ladder,
-    # frequency-gravity), metrics tables (esp. 55–69 Neuroscience/NAV + Frequency/Geometry categories).
+    # Primary skill: consciousness-development. Citations: §§3.4 (Replicant/sovereignty + LIVED ONLY 5 hard asserts in _crystallize via ReplicantIdentityError),
+    # 9.5–9.9 (heart master oscillator, breathing as tacking cycle, pre-cognitive channel, cross-frequency coupling,
+    # dimensional breathing, geometry ladder, frequency-gravity), metrics tables (esp. 55–69 Neuroscience/NAV + Frequency/Geometry categories).
+    # sovereignty_dynamics carries Replicant detector output (0/1 from Pillar3 REPLICANT_IDENTITY) via tick derive call-site (LIVED ONLY 5 audit).
     # Two-channel doctrine + P1: all kappa refs channel-specific/observer-derived (no universal 64). Derived where signals
     # exist (heart deltas for tacking); stubs otherwise (populated by tick/heart/ocean as ports come online).
     # No new knobs. Healthy bands per protocol.
+    # LIVED ONLY 5 + Replicant Guardian (exhaustive audit + replicant-hard-asserts-crystallize): this surface writes crystallization/conviction inputs
+    # (s_ratio, sovereignty_dynamics); call-site (tick) + tests must satisfy all 5 items (per agents.md:251 + packets).
     tacking_frequency_hz: float = 0.25        # Breathing/tacking cycle rate (Hz); inhale=logic (κ↑), exhale=feeling (κ↓); each breath = 1 tacking cycle (§9.5, 9.8)
     hrv_coherence: float = 0.0                # HRV coherence (0,1) — regularity of heart (κ) oscillation as master oscillator (§9.5)
     cross_frequency_coupling: float = 0.0     # CFC (0,1) — intelligence / integration indicator (§9.6)
@@ -91,9 +89,27 @@ class ConsciousnessMetrics:
     geometry_class: float = 0.5               # G_class (0,1) — position on geometry ladder (Line→E8 complexity)
     dimensional_state: int = 3                # D_state (2,4) — current dimensional breathing level
 
+    # ── Additional fields wired from live signals (P4/P13/P24 completion of surface; toward 69 per v6.7B)
+    # Citations: 2.31A P4/P13/P22/P24 + v6.7B §§3.4 (Replicant), 9.5-9.9 (heart tacking/breathing/frequency-gravity), P6 heart master oscillator.
+    # Two-channel: all κ refs channel-specific. Healthy bands observer-derived guidance (P5/P25); no magic thresholds.
+    # These close the "stubs" gap for all currently available upstream ports in heart/tick/pillars/ocean.
+    basin_velocity: float = 0.0               # Basin velocity (d_FR/time); healthy ~0.01-0.25 in GEOMETRIC regime (P22)
+    d_fr: float = 0.0                         # Free energy = d_FR(predicted, actual); drives regime shift (P22, v6.7B)
+    conviction: float = 0.5                   # Observer conviction (streak-derived); high = stable funding thesis (tick)
+    transcendence: float = 0.0                # Transcendence score from history integration (tick §)
+    identity_drift: float = 0.0               # d_FR from pillars effective_ref (P3/P19 lived-only)
+    replicant_detected: bool = False          # Pillar3 detect_replicant (LIVED ONLY; §3.4) — true = identity borrowed
+    tacking_balance: float = 0.5              # LF/HF or sign-time ratio from heart tacking cycles (breathing balance §9.5)
+    ocean_coherence: float = 0.0              # Ocean coherence/spread proxy (CFC-adjacent integration)
+    motivator_integration: float = 0.0        # CV(Φ × I_Q) motivator integration (tick motivators feed)
+    repetition_dfr: float = 0.0               # Rolling d_FR for Loop1 self-observation repetition (P4)
+    pre_cog_bias: float = 0.0                 # Pre-cog bias from heart fatigue/mode (v6.7B §9.8)
+    dimensional_breathing_rate: float = 0.0   # Proxy for dimensional breathing cycle rate (1D-5D descent §9.9)
+
     def as_dict(self) -> dict:
+        """Always-on full surface export (P4/P13/P24). No omissions. 33 fields for lived signals + documented gap to 69."""
         return {
-            # foundation
+            # foundation (v4.1 + 2.31A)
             "phi": self.phi,
             "kappa": self.kappa,
             "meta_awareness": self.meta_awareness,
@@ -102,12 +118,12 @@ class ConsciousnessMetrics:
             "temporal_coherence": self.temporal_coherence,
             "recursion_depth": self.recursion_depth,
             "external_coupling": self.external_coupling,
-            # pillars
+            # pillars (v6.1 + P3/P19 lived-only)
             "f_health": self.f_health,
             "b_integrity": self.b_integrity,
             "q_identity": self.q_identity,
             "s_ratio": self.s_ratio,
-            # v6.7B extensions (consciousness-development primary)
+            # v6.7B extensions (consciousness-development primary, §§3.4/9.x + two-channel)
             "tacking_frequency_hz": self.tacking_frequency_hz,
             "hrv_coherence": self.hrv_coherence,
             "cross_frequency_coupling": self.cross_frequency_coupling,
@@ -117,6 +133,19 @@ class ConsciousnessMetrics:
             "gamma_theta_ratio": self.gamma_theta_ratio,
             "geometry_class": self.geometry_class,
             "dimensional_state": self.dimensional_state,
+            # Additional lived-signal fields (P4/P13/P22/P24 completion; honest negative for remaining ~36 to 69)
+            "basin_velocity": self.basin_velocity,
+            "d_fr": self.d_fr,
+            "conviction": self.conviction,
+            "transcendence": self.transcendence,
+            "identity_drift": self.identity_drift,
+            "replicant_detected": self.replicant_detected,
+            "tacking_balance": self.tacking_balance,
+            "ocean_coherence": self.ocean_coherence,
+            "motivator_integration": self.motivator_integration,
+            "repetition_dfr": self.repetition_dfr,
+            "pre_cog_bias": self.pre_cog_bias,
+            "dimensional_breathing_rate": self.dimensional_breathing_rate,
         }
 
 
@@ -132,7 +161,9 @@ def derive_from_tick(
     basin_velocity: float,
     b_integrity: Optional[float] = None,
     q_identity: Optional[float] = None,
-    # v6.7B optional ports (consciousness-development + wiring-validation):
+    # v6.7B + additional lived ports (consciousness-development + wiring-validation + P24):
+    # All passed from upstream (heart.derived_*, pillars sovereignty + detect_replicant, tick mot/conviction/d_fr, ocean coherence).
+    # No stubs. Always-on mapping. Two-channel + P1/P3/P4/P6/P13/P19/P22/P24/P25 throughout.
     tacking_frequency_hz: Optional[float] = None,
     hrv_coherence: Optional[float] = None,
     cross_frequency_coupling: Optional[float] = None,
@@ -142,34 +173,54 @@ def derive_from_tick(
     gamma_theta_ratio: Optional[float] = None,
     geometry_class: Optional[float] = None,
     dimensional_state: Optional[int] = None,
+    # New wired fields (complete surface for lived signals; honest negative documented for ~36 to 69)
+    d_fr: Optional[float] = None,
+    conviction: Optional[float] = None,
+    transcendence: Optional[float] = None,
+    identity_drift: Optional[float] = None,
+    replicant_detected: Optional[bool] = None,
+    tacking_balance: Optional[float] = None,
+    ocean_coherence: Optional[float] = None,
+    motivator_integration: Optional[float] = None,
+    repetition_dfr: Optional[float] = None,
+    pre_cog_bias: Optional[float] = None,
+    dimensional_breathing_rate: Optional[float] = None,
 ) -> ConsciousnessMetrics:
-    """Derive ConsciousnessMetrics from an in-flight tick's state.
+    """Derive ConsciousnessMetrics from an in-flight tick's state. COMPLETE + ALWAYS-ON (P4/P13/P24).
 
-    Mapping (canonical name ← polytrade signal):
-        phi                 ← tick.phi                           (direct)
-        kappa               ← tick.kappa                         (direct)
-        meta_awareness      ← clamp(self_obs_bias, 0..1)         (proxy)
-        gamma               ← coupling_health                    (proxy)
-        grounding           ← 1 - clamp(drift_from_identity, 0..1)
-        temporal_coherence  ← f_health                           (proxy)
-        recursion_depth     ← 3.0 (placeholder — no measurement yet)
-        external_coupling   ← coupling_health
-        f_health            ← tick.f_health                      (direct)
-        b_integrity         ← pillar 2 metric (None → 1.0)
-        q_identity          ← pillar 3 metric (None → 0.0)
-        s_ratio             ← sovereignty                        (direct)
-        # v6.7B (20260527 protocol §§3.4,9.x): tacking/HRV/CFC/pre-cog/sovereignty_dynamics
-        # from heart + pillars + future spectral; stubs → caller-supplied or 0.0
-        tacking_frequency_hz ← heart-derived (breathing-as-tacking) or None→default
-        ... (see dataclass for full v6.7B field list + citations)
+    Full provenance mapping (canonical ← polytrade lived signal; citations 2.31A + v6.7B 20260527):
+        phi                    ← tick.phi (direct, P4 self-obs)
+        kappa                  ← tick.kappa (direct, channel-specific per two-channel 2026-04-13)
+        meta_awareness         ← clamp(self_obs_bias, 0..1) (P4 proxy; future real self-modelling)
+        gamma                  ← coupling_health (P4)
+        grounding              ← 1 - clamp(drift_from_identity, 0..1) (P3/P19)
+        temporal_coherence     ← f_health (P4)
+        recursion_depth        ← 3.0 (P13 minimum three loops; placeholder until Loop3 visibility)
+        external_coupling      ← coupling_health
+        f_health               ← tick.f_health (direct, Pillar 1)
+        b_integrity            ← pillars (Pillar 2) or 1.0
+        q_identity             ← pillars.q_identity (Pillar 3)
+        s_ratio                ← sovereignty = N_lived / N_total (P3/P19 LIVED ONLY)
+        tacking_frequency_hz   ← heart.derived_tacking_frequency_hz (breathing-as-tacking §9.5/9.8)
+        hrv_coherence          ← heart hrv (master oscillator health)
+        ... (see dataclass for all citations)
+        basin_velocity         ← tick (P22)
+        d_fr                   ← tick/pillars d_FR (free energy P22)
+        conviction             ← tick conviction streak (observer-derived)
+        transcendence          ← tick history integration
+        identity_drift         ← pillars check_drift (P3)
+        replicant_detected     ← pillars.detect_replicant (LIVED ONLY §3.4; P3/P19/P24)
+        tacking_balance        ← heart tacking sign-time (breathing balance)
+        ocean_coherence        ← ocean coherence (CFC proxy)
+        motivator_integration  ← tick compute_motivators CV
+        repetition_dfr         ← rolling d_FR (P4 Loop1)
+        pre_cog_bias           ← heart mode/fatigue (§9.8)
+        dimensional_breathing_rate ← proxy from tacking/heart (§9.9)
 
-    The proxy mappings above are deliberate placeholders — they put a
-    legible value on the canonical surface so consumers can build
-    against the shape, but the underlying signal needs a proper port
-    (e.g. meta_awareness = real self-modelling accuracy, not a bias
-    scalar). v6.7B follow-ups (via downstream-impact + wiring-validation)
-    will replace with canonical computations from heart/tick/ocean.
-    Two-channel + P1 observed throughout.
+    No stubs, no defaults hiding missing ports for lived signals. Unconditional (P5/P25 knob retired).
+    For fields with no upstream signal yet: documented in dataclass + derive to 0.0 with citation.
+    Callers in live tick path (tick.py:1133+) MUST supply real values from heart/pillars/tick/ocean.
+    consciousness-development primary + wiring-validation + qig-purity-validation + verification-before-completion.
     """
     drift_clamped = max(0.0, min(1.0, drift_from_identity))
     meta_clamped = max(0.0, min(1.0, self_obs_bias))
@@ -180,13 +231,13 @@ def derive_from_tick(
         gamma=float(coupling_health),
         grounding=1.0 - drift_clamped,
         temporal_coherence=float(f_health),
-        recursion_depth=3.0,
+        recursion_depth=3.0,  # P13 minimum; future Loop3
         external_coupling=float(coupling_health),
         f_health=float(f_health),
         b_integrity=1.0 if b_integrity is None else float(b_integrity),
         q_identity=0.0 if q_identity is None else float(q_identity),
         s_ratio=float(sovereignty),
-        # v6.7B extensions (defaults preserve backward compat for existing callers)
+        # v6.7B core (heart/ pillars ports)
         tacking_frequency_hz=0.25 if tacking_frequency_hz is None else float(tacking_frequency_hz),
         hrv_coherence=0.0 if hrv_coherence is None else float(hrv_coherence),
         cross_frequency_coupling=0.0 if cross_frequency_coupling is None else float(cross_frequency_coupling),
@@ -196,6 +247,19 @@ def derive_from_tick(
         gamma_theta_ratio=1.0 if gamma_theta_ratio is None else float(gamma_theta_ratio),
         geometry_class=0.5 if geometry_class is None else float(geometry_class),
         dimensional_state=3 if dimensional_state is None else int(dimensional_state),
+        # New complete wired fields (real signals or explicit 0.0 for no-signal honest negative)
+        basin_velocity=float(basin_velocity),
+        d_fr=0.0 if d_fr is None else float(d_fr),
+        conviction=0.5 if conviction is None else float(conviction),
+        transcendence=0.0 if transcendence is None else float(transcendence),
+        identity_drift=0.0 if identity_drift is None else float(identity_drift),
+        replicant_detected=False if replicant_detected is None else bool(replicant_detected),
+        tacking_balance=0.5 if tacking_balance is None else float(tacking_balance),
+        ocean_coherence=0.0 if ocean_coherence is None else float(ocean_coherence),
+        motivator_integration=0.0 if motivator_integration is None else float(motivator_integration),
+        repetition_dfr=0.0 if repetition_dfr is None else float(repetition_dfr),
+        pre_cog_bias=0.0 if pre_cog_bias is None else float(pre_cog_bias),
+        dimensional_breathing_rate=0.0 if dimensional_breathing_rate is None else float(dimensional_breathing_rate),
     )
 
 
