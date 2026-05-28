@@ -1037,16 +1037,16 @@ def run_tick(
         elif action == "hold_with_reduced_confidence":
             expectation_hold_bias = 0.85  # modest reduction
 
+    self_obs_bias = 1.0
+    if inputs.self_obs_bias:
+        per_mode = inputs.self_obs_bias.get(mode, {})
+        self_obs_bias = per_mode.get(side_candidate, 1.0)
+
     # Apply to self_obs_bias for held positions (the main lever for hold conviction
     # and exit gate sensitivity in the current architecture).
     if expectation_hold_bias < 1.0 and held_lanes:
         # Only dampen if we actually hold something on this symbol
         self_obs_bias *= expectation_hold_bias
-
-    self_obs_bias = 1.0
-    if inputs.self_obs_bias:
-        per_mode = inputs.self_obs_bias.get(mode, {})
-        self_obs_bias = per_mode.get(side_candidate, 1.0)
 
     # ── PR 2: Φ-gate routing (PHI_GATE_ROUTING_LIVE) ─────────────
     # FORESIGHT branch: blend current basin with foresight.predicted_basin

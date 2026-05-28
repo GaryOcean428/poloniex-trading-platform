@@ -4191,7 +4191,7 @@ export class MonkeyKernel extends EventEmitter {
         // candle buffer (computed near line 2112).
         const lookbackN = Math.min(50, Math.max(2, ohlcv.length - 1));
         const recentReturns: number[] = [];
-        for (let i = ohlcv.length - lookbackN; i < ohlcv.length; i++) {
+        for (let i = Math.max(1, ohlcv.length - lookbackN); i < ohlcv.length; i++) {
           const prev = ohlcv[i - 1]?.close;
           const curr = ohlcv[i]?.close;
           if (prev && curr && prev > 0 && curr > 0) {

@@ -95,7 +95,7 @@ class ExpectationDecision:
 
 
 def expectation_bubble_live() -> bool:
-    """Master kill switch. Default ON. When ******, the call site reads
+    """Master kill switch. Default ON. When disabled, the call site reads
     ``action='allow'`` and falls back to its existing logic.
 
     This is an explicit operator kill switch for incident response.
@@ -256,6 +256,7 @@ def evaluate_expectation(
         logger.warning(
             "[expectation_bubble] qig_warp.WarpBubble.qig_regime failed "
             "(h=%.3f J=%.3f): %s", h, j, exc,
+            exc_info=True,
         )
         return _allow_fallback(
             tape_trend=tape_trend,
