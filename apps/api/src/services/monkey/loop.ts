@@ -160,6 +160,13 @@ import {
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
 import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl, checkNotionalConsistency, computeNetPnlForReward } from './safePnlSql.js';
+import {
+  getOutcomeRingStats,
+  computeBreakEvenNotionalFloor,
+  computeKellyFraction,
+  chemistryBoundedModulator,
+  computeObserverLossFloorRoi,
+} from './outcomeRingStats.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import {
@@ -220,6 +227,7 @@ import { foresightVeto } from './per_agent_foresight.js';
 import {
   clampNewContractsToCap,
   kernelDerivedContractCap,
+  kellyPrimaryContractCap,
   VENUE_CONTRACTS_CEILING,
 } from './positionContractsBound.js';
 
@@ -3808,6 +3816,16 @@ export class MonkeyKernel extends EventEmitter {
         // Phase B2: skipped when bracketActive — the synthetic bracket
         // (Gate 0) owns profit-taking under the commit-and-revise model.
         if (!exitFired && !bracketActive) {
+          // Commit 9 — Fix C: observer-derived harvest floor (operator
+          // brief 2026-05-28). Suppress harvest when proposed exit ROI
+          // is below the kernel's own observed loss-magnitude floor so
+          // winners run to commensurate size. Pure observer; uses ring
+          // we may have already fetched for sizing.
+          const ringForHarvest = await getOutcomeRingStats({
+            agent: 'K',  // executive harvest path is K-scoped (see L3076 entry agent)
+            lane: heldLane as LaneType,
+          });
+          const observerLossFloorRoi = computeObserverLossFloorRoi(ringForHarvest);
           const harvest = shouldProfitHarvest(
             unrealizedPnl,
             lanePeak,
@@ -3816,6 +3834,10 @@ export class MonkeyKernel extends EventEmitter {
             heldSide,
             basinState,
             laneStreak,
+            undefined, // peakGivebackMinPct — keep default
+            undefined, // peakGivebackThreshold — keep default
+            undefined, // tapeFlipStreakRequired — keep default
+            observerLossFloorRoi,
           );
           derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: lanePeak, tradeId, lane: heldLane };
           if (harvest.value) {
@@ -8154,7 +8176,30 @@ export class MonkeyKernel extends EventEmitter {
       // fall back to venue ceiling (8000) when caller hasn't supplied
       // equity yet. Old call sites that don't thread the new observables
       // keep working at the venue-ceiling level.
-      const cap = req.availableEquityUsdt && req.availableEquityUsdt > 0
+      //
+      // Commit 8 — Fix B (operator brief 2026-05-28): Kelly-primary
+      // cap as the canonical sizing signal when the kernel has earned
+      // a positive edge in its own outcome ring; chemistry-cap stays
+      // as the cold-start fallback when Kelly says 0 (no edge yet OR
+      // insufficient data). Whichever is LARGER wins — we never
+      // structurally collapse sizing below either path's own answer.
+      const ringStatsForCap = await getOutcomeRingStats({
+        agent: (req.agent ?? 'K'),
+        lane: (req.lane ?? 'swing') as LaneType,
+      });
+      const kellyFraction = computeKellyFraction(ringStatsForCap);
+      const chemMod = chemistryBoundedModulator(req.dopamine ?? 0.5, req.gaba ?? 0.5);
+      const kellyCap = (req.availableEquityUsdt && req.availableEquityUsdt > 0 && kellyFraction > 0)
+        ? kellyPrimaryContractCap({
+            availableEquityUsdt: req.availableEquityUsdt,
+            markPrice: req.entryPrice,
+            contractSize: symbolLotSize,
+            leverage: req.leverage,
+            kellyFraction,
+            chemistryModulator: chemMod,
+          })
+        : 0;
+      const chemistryCap = req.availableEquityUsdt && req.availableEquityUsdt > 0
         ? kernelDerivedContractCap({
             availableEquityUsdt: req.availableEquityUsdt,
             markPrice: req.entryPrice,
@@ -8165,6 +8210,48 @@ export class MonkeyKernel extends EventEmitter {
             gaba: req.gaba ?? 0.5,
           })
         : VENUE_CONTRACTS_CEILING;
+      // Take the LARGER of Kelly-derived and chemistry-derived caps.
+      // Kelly = "what I've earned"; chemistry = "what I'm feeling".
+      // Either path's positive answer is valid; collapsing to the
+      // minimum was the structural bug.
+      const earnedOrFeltCap = Math.max(kellyCap, chemistryCap);
+
+      // Commit 7 — Fix A: break-even notional floor (operator brief
+      // 2026-05-28). When the kernel's own outcome ring shows fees
+      // dominating wins on small fills, lift the cap so the kernel
+      // sizes at least to where the typical win nets positive after
+      // its own observed fee hit. Pure observer derivation — no knob.
+      // Self-deactivates: only binds when chemistryCap is BELOW the
+      // break-even point; as chemistry recovers and chemistryCap grows
+      // above the floor, the floor stops mattering.
+      const ringStats = await getOutcomeRingStats({
+        agent: (req.agent ?? 'K'),
+        lane: (req.lane ?? 'swing') as LaneType,
+      });
+      const notionalFloor = computeBreakEvenNotionalFloor(ringStats);
+      const floorContracts = notionalFloor > 0 && symbolLotSize > 0 && req.entryPrice > 0
+        ? Math.ceil((notionalFloor / req.entryPrice) / symbolLotSize)
+        : 0;
+      const cap = Math.min(VENUE_CONTRACTS_CEILING, Math.max(earnedOrFeltCap, floorContracts));
+      if (floorContracts > 0 && cap > earnedOrFeltCap) {
+        logger.info('[Monkey] break-even floor binding — sizing lifted above kernel-derived cap', {
+          symbol, agent: req.agent ?? 'K', lane: req.lane ?? 'swing',
+          kellyCap, chemistryCap, earnedOrFeltCap, floorContracts, effectiveCap: cap,
+          kellyFraction: kellyFraction.toFixed(3),
+          chemistryModulator: chemMod.toFixed(3),
+          avgFeePerRoundTrip: ringStats?.avgFeePerRoundTrip.toFixed(4),
+          avgWinRoiNotional: ringStats?.avgWinRoiNotional.toFixed(6),
+          notionalFloorUsdt: notionalFloor.toFixed(2),
+        });
+      } else if (kellyCap > chemistryCap) {
+        logger.info('[Monkey] Kelly cap dominates chemistry cap (earned > felt)', {
+          symbol, agent: req.agent ?? 'K', lane: req.lane ?? 'swing',
+          kellyCap, chemistryCap,
+          kellyFraction: kellyFraction.toFixed(3),
+          chemistryModulator: chemMod.toFixed(3),
+        });
+      }
+
       const clampedNewContracts = clampNewContractsToCap(
         newContracts, currentContracts, cap,
       );

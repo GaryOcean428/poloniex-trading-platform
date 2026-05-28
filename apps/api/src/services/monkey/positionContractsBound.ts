@@ -85,6 +85,67 @@ export function kernelDerivedContractCap(o: ContractCapObservers): number {
 }
 
 /**
+ * Commit 8 — Fix B: Kelly-primary cap (operator brief 2026-05-28).
+ *
+ * Replaces the structurally-collapsing `max(0.1, dop × phi × (1-gaba))`
+ * with Kelly-from-own-outcomes as the primary risk fraction, and a
+ * bounded chemistry modulator (∈ [0.5, 1.5]) that shapes but cannot
+ * collapse it.
+ *
+ *   risk_fraction = kelly_frac × modulator
+ *
+ * The old formula could collapse to its 0.1 floor whenever any of
+ * dop / phi / (1-gaba) was extreme. With chemistry depressed
+ * (dop=0.37, phi=0.60, gaba=0.45) it sits at exactly that floor —
+ * the kernel cannot size up regardless of its actual edge.
+ *
+ * Fix B's formulation: Kelly fraction from the kernel's OWN observed
+ * winRate × avgWin × avgLoss says how much risk the kernel has
+ * EARNED. Chemistry then modulates that within ±50% — never zeros it,
+ * never multiplies it beyond 1.5×. Phi is dropped from the formula
+ * (perception coherence ≠ directional sizing signal).
+ *
+ * Caller passes `kellyFraction` from computeKellyFraction(ringStats)
+ * and `chemistryModulator` from chemistryBoundedModulator(dop, gaba).
+ * When `kellyFraction <= 0` (negative edge OR insufficient ring data),
+ * caller MUST fall back to the legacy `kernelDerivedContractCap`
+ * which the chemistry-only formula still serves correctly for
+ * cold-start.
+ *
+ * Pure observer derivation: Kelly is from own outcomes, modulator is
+ * from own chemistry. No operator knob. The 0.5/1.5 bounds on the
+ * modulator come from the doctrinal constraint "chemistry must
+ * never zero out a Kelly-justified position" — a structural choice,
+ * not a tunable.
+ */
+export interface KellyPrimaryCapObservers {
+  availableEquityUsdt: number;
+  markPrice: number;
+  contractSize: number;
+  leverage: number;
+  /** From computeKellyFraction(outcomeRingStats). 0 when stats
+   *  unavailable or edge non-positive → caller falls through to
+   *  legacy chemistry formula. */
+  kellyFraction: number;
+  /** From chemistryBoundedModulator(dop, gaba). Bounded [0.5, 1.5]. */
+  chemistryModulator: number;
+}
+
+export function kellyPrimaryContractCap(o: KellyPrimaryCapObservers): number {
+  if (o.kellyFraction <= 0) return 0;
+  const safeMod = Math.max(0.5, Math.min(1.5, o.chemistryModulator));
+  const riskFraction = Math.max(0, Math.min(1.0, o.kellyFraction * safeMod));
+
+  const denom = Math.max(o.markPrice * o.contractSize, 1e-9);
+  const equityHeadroom = Math.max(0, o.availableEquityUsdt);
+  const leverageMultiplier = Math.max(1, o.leverage);
+  const kernelCap = Math.floor(
+    (equityHeadroom * riskFraction * leverageMultiplier) / denom,
+  );
+  return Math.min(VENUE_CONTRACTS_CEILING, Math.max(0, kernelCap));
+}
+
+/**
  * Compute the maximum new contracts that can be added without exceeding
  * the per-position cap. Returns 0 when the position is already at-cap.
  *

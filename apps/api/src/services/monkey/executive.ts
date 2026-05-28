@@ -710,12 +710,46 @@ export function shouldProfitHarvest(
   peakGivebackMinPct: number = 0.01,
   peakGivebackThreshold: number = 0.30,
   tapeFlipStreakRequired: number = 3,
+  /**
+   * Commit 9 — Fix C: observer-derived loss-floor (operator brief 2026-05-28).
+   * When the kernel's own outcome ring shows a loss/win magnitude ratio
+   * above 2× (the 2026-05-28 6h audit value), this gate suppresses the
+   * "take small profit now" path until the proposed exit is commensurate
+   * with the kernel's typical loss magnitude — winners run instead of
+   * getting harvested at fee-dominated ROI levels.
+   *
+   * Pass the value of `computeObserverLossFloorRoi(ringStats)` from
+   * outcomeRingStats.ts. Defaults to 0 (no floor → harvest unrestricted,
+   * preserves all legacy callers).
+   *
+   * SAFETY: this floor only gates the trailing-harvest / abs-USD-harvest
+   * paths inside this function. Hard SL, bracket TP, directional-
+   * disagreement exits, stale_bleed, conviction_failed, regime_change,
+   * phi_collapse are NEVER affected — they fire from different code
+   * paths regardless of this parameter.
+   */
+  observerLossFloorRoi: number = 0,
 ): ExecutiveDecision<boolean> {
   if (notionalUsdt <= 0) {
     return { value: false, reason: 'no position', derivation: {} };
   }
   const currentFrac = unrealizedPnlUsdt / notionalUsdt;
   const peakFrac = Math.max(peakPnlUsdt, 0) / notionalUsdt;
+
+  // Commit 9 — Fix C: observer-derived loss-floor gate.
+  // Suppress harvest when the proposed exit ROI is below the kernel's
+  // OWN floor (commensurate with median loss, never below fee break-
+  // even). Lets winners run to where they actually justify the
+  // round-trip cost given the kernel's observed loss distribution.
+  // Safety exits (hard SL, bracket, conviction, regime, phi, stale_bleed,
+  // directional_disagreement) fire elsewhere and are unaffected.
+  if (observerLossFloorRoi > 0 && currentFrac > 0 && currentFrac < observerLossFloorRoi) {
+    return {
+      value: false,
+      reason: `below_observer_loss_floor: roi ${(currentFrac * 100).toFixed(4)}% < floor ${(observerLossFloorRoi * 100).toFixed(4)}%`,
+      derivation: { currentFrac, observerLossFloorRoi, gatedByObserverFloor: 1 },
+    };
+  }
 
   // Activation floor — peak must have been meaningful before the trailing
   // stop can fire. Scales with dopamine: recent wins → harvest earlier.
