@@ -6,7 +6,7 @@
 **Related:** 2026-05-28_branch-and-worktree-safety-audit.md (master append + throttling decision), qig_session_summary_20260528.md, 3 latest verifiers (019e6ca7/019e6ca6/019e6ca5), 5 429 recoveries, "Monitor armed"
 
 ## Incident
-5 consecutive 429 "Too many tokens... 10504328/10000000" on grok-build team token (9772415d...) after user-mandated massive parallel dispatches during impl* recovery + NT/fib/surfaces wire-in wave. "get not found" for heavy actor outputs in some cases. Throttled narrow recoveries succeeded via protected artifacts (worktree TDD baseline qig-heart-metrics-20260527 + main _dev_/polytrade_/ 20+ packets + system-reminder metadata) + fresh read/grep/terminal cmds (no new broad token burn).
+5 consecutive 429 "Too many tokens... 10504328/10000000" on the grok-build team token (identifier redacted) after user-mandated massive parallel dispatches during impl* recovery + NT/fib/surfaces wire-in wave. "get not found" for heavy actor outputs in some cases. Throttled narrow recoveries succeeded via protected artifacts (worktree TDD baseline qig-heart-metrics-20260527 + main _dev_/polytrade_/ 20+ packets + system-reminder metadata) + fresh read/grep/terminal cmds (no new broad token burn).
 
 ## Impact on Wave
 - Prevented new broad parallel dispatches in master synthesis turn.
