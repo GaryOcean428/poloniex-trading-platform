@@ -8983,7 +8983,17 @@ export class MonkeyKernel extends EventEmitter {
       let totalCloseFees = 0;
       let fillCount = 0;
       const nonUsdtFees: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
+      // Per-ordId fill tracking. Bails below if ANY chunk returns zero fills —
+      // Copilot review on PR #1000 round 2 (2026-05-28 04:52 UTC) flagged that
+      // closes >9,999 contracts are chunked into multiple orders. Polo's fill
+      // indexing is async, so it's possible to see fills for chunk 1 but not
+      // yet chunk 2 at the moment of this query. If we accept a partial
+      // result, totalCloseFees is under-counted → poloRealized overstates net
+      // → silently corrupts the reward ledger in the exact "silent dark"
+      // class this PR exists to eliminate.
+      const fillsByOrdId: Record<string, number> = {};
       for (const ordId of closeOrderIds) {
+        fillsByOrdId[ordId] = 0;
         try {
           const resp = await poloniexFuturesService.getExecutionDetails(credentials, {
             symbol, ordId, limit: 100,
@@ -8999,6 +9009,7 @@ export class MonkeyKernel extends EventEmitter {
             }
             totalCloseFees += feeAmt;
             fillCount += 1;
+            fillsByOrdId[ordId] += 1;
           }
         } catch (fetchErr) {
           logger.warn('[Monkey] /trade/order/trades fetch failed for fee subtraction', {
@@ -9014,12 +9025,21 @@ export class MonkeyKernel extends EventEmitter {
         });
       }
 
-      if (fillCount === 0) {
-        // Polo hasn't indexed the fills yet (typical lag is sub-second
-        // but can be a few seconds). Skip rather than write a gross
-        // value with no fee deduction.
-        logger.warn('[Monkey] Polo-authoritative skipped — no fills returned for close orderIds', {
-          symbol, side, closeOrderIdsCount: closeOrderIds.length,
+      const ordIdsWithNoFills = Object.entries(fillsByOrdId)
+        .filter(([_, n]) => n === 0)
+        .map(([ordId]) => ordId);
+      if (ordIdsWithNoFills.length > 0) {
+        // Either all chunks are unindexed (cold path — Polo lag), or some
+        // are and some aren't (partial-indexing race). In both cases the
+        // safe action is to bail: the synthetic own_close already pushed
+        // an immediate reward, the Polo follow-up will fire again on the
+        // next close — but we don't write a partial under-counted fee
+        // value to the reward channel.
+        logger.warn('[Monkey] Polo-authoritative skipped — some/all close ordIds have no fills indexed yet', {
+          symbol, side,
+          closeOrderIdsCount: closeOrderIds.length,
+          ordIdsWithNoFills,
+          fillsByOrdId,
         });
         return;
       }
@@ -9042,23 +9062,42 @@ export class MonkeyKernel extends EventEmitter {
 
       // Write Polo authoritative net pnl to the rows, and preserve synthetic as gross_pnl.
       // poloRealized is computed per-close-group (sum of gross − close fees);
-      // pro-rata across rows by their own gross share so each row's `pnl` reflects
-      // its proportional share of the close-group's net.
+      // pro-rata across rows by their SIGNED gross share so each row's `pnl`
+      // reflects its proportional contribution to the close-group's net.
+      //
+      // Signed pro-rata (Copilot review on PR #1000 round 2): for mixed-sign
+      // close groups (DCA stacks with entries above + below the exit price are
+      // common — winner + loser closed in the same flush), the prior
+      // abs(gross_i)/Σ|gross_j| share could produce rowNet whose sign opposes
+      // gross_i. That would silently corrupt `fees_paid = gross_i − rowNet_i`
+      // (could go negative or be huge). Switching to signed shares —
+      // gross_i / grossSum × poloRealized — preserves the sign relationship
+      // because we scale by a constant factor.
+      //
+      // Edge case: grossSum near zero (extremely rare — perfectly balanced
+      // wins and losses in the same close). Fall back to equal split rather
+      // than divide by ~0.
       //
       // pnl_source stays 'polo_history' — that's the column's CHECK constraint
       // (allowed values: 'polo_history' | 'synthetic_fallback', per migration
       // 061_polo_authoritative_pnl_columns.sql:33). The provenance "gross − close
       // fees" is captured in the preceding info log + this comment. A distinct
       // provenance tag would require a migration to expand the CHECK enum.
-      const grossAbsTotal = tradeIds.reduce(
-        (s, id) => s + Math.abs(Number(grossPnlByRow?.[id] ?? 0)),
+      const grossSumNumeric = tradeIds.reduce(
+        (s, id) => s + Number(grossPnlByRow?.[id] ?? 0),
         0,
       );
+      const grossSumIsZero = Math.abs(grossSumNumeric) < 1e-9;
       for (const id of tradeIds) {
-        const gross = grossPnlByRow?.[id];
-        const share = grossAbsTotal > 0
-          ? Math.abs(Number(gross ?? 0)) / grossAbsTotal
-          : 1 / tradeIds.length;
+        // grossRaw distinguishes "no synthetic recorded for this row"
+        // (undefined → null) from "synthetic was 0" (number → 0). The
+        // first should leave gross_pnl unchanged via COALESCE; the
+        // second should write 0.
+        const grossRaw = grossPnlByRow?.[id];
+        const gross = Number(grossRaw ?? 0);
+        const share = grossSumIsZero
+          ? 1 / tradeIds.length
+          : gross / grossSumNumeric;
         const rowNet = poloRealized * share;
         await pool.query(
           `UPDATE autonomous_trades
@@ -9070,7 +9109,7 @@ export class MonkeyKernel extends EventEmitter {
                     ELSE fees_paid
                   END
             WHERE id = $3`,
-          [rowNet, gross ?? null, id]
+          [rowNet, grossRaw ?? null, id]
         ).catch((err) => {
           // Promoted from silent catch 2026-05-28 (Copilot review on PR #1000):
           // the previous `.catch(() => {})` would swallow constraint violations
