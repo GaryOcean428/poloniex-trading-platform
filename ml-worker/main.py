@@ -1470,6 +1470,59 @@ async def monkey_autonomic_prediction_reward(request: Request):
     }
 
 
+@app.post("/monkey/expectation/evaluate")
+async def monkey_expectation_evaluate(request: Request):
+    """Evaluate the qig-warp expectation bubble for one tape/basin
+    disagreement window (poloniex-trading-platform#1002).
+
+    The TS entry/exit path calls this when ``sign(tape_trend)`` and
+    ``sign(basin_direction)`` disagree and both magnitudes are non-trivial.
+    The bubble runs ``WarpBubble.qig_regime(h, J, dim=2)`` on the kernel's
+    recent return-history-derived (h, J) and returns a structured
+    ``ExpectationDecision`` whose ``expectation_action`` the call site
+    MUST apply (``observe_only`` / ``flip_to_basin`` / ``reduce_size`` /
+    ``allow``).
+
+    Anti-shelfware (per #1002):
+      - qig-warp is called at runtime on every request (not idle).
+      - No hardcoded thresholds in the action mapping — gates use
+        ``regime_label`` + ``bridge_exponent`` from the bubble output.
+      - The caller persists every decision to
+        ``kernel_expectation_decisions`` with before/after deltas.
+
+    Request body::
+
+        {
+          "tape_trend": -0.65,
+          "basin_direction": 0.18,
+          "recent_returns": [0.001, -0.002, ...],
+          "proposed_side": "short"   // optional, for reverse_tape_side
+        }
+
+    Response: ``ExpectationDecision`` as JSON (see decision_to_dict).
+    Failure modes return ``action="allow"`` with a ``qig_warp_source``
+    of ``QIG_WARP_UNAVAILABLE`` / ``QIG_WARP_DISABLED`` so the caller's
+    existing logic remains in control. The bubble never blocks safety.
+    """
+    payload = await request.json()
+    tape_trend = float(payload.get("tape_trend", 0.0))
+    basin_direction = float(payload.get("basin_direction", 0.0))
+    recent_returns = payload.get("recent_returns") or []
+    proposed_side = payload.get("proposed_side")
+
+    from monkey_kernel.expectation_bubble import (
+        evaluate_expectation,
+        decision_to_dict,
+    )
+    decision = evaluate_expectation(
+        tape_trend=tape_trend,
+        basin_direction=basin_direction,
+        recent_returns=recent_returns,
+        proposed_side=proposed_side,
+    )
+    return decision_to_dict(decision)
+
+
 @app.get("/monkey/autonomic/snapshot/{instance_id}")
 async def monkey_autonomic_snapshot(instance_id: str):
     """Telemetry snapshot — sleep phase, pending reward count, decayed sums."""

@@ -30,6 +30,7 @@ import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
 import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
+import { callExpectationBubble, type ExpectationDecision } from './expectation_client.js';
 import {
   paperClosePosition,
   paperPlaceOrder,
@@ -4110,51 +4111,154 @@ export class MonkeyKernel extends EventEmitter {
       // Python-only — it would block ALL entries in normal operation because
       // transcendence = |κ−64| > 1 drives confidence negative most ticks.
       //
-      // 2026-05-28 entry-side expectation fix (mirrors fast_adverse_exit on exit):
-      // Block enter when basinDir × proposed side is strongly negative
-      // (disagreement with the lived geometric expectation). This prevents
-      // the kernel from walking back into the exact losing setup it just
-      // stopped out of (the 15:00 chop pattern confirmed in Polo-authoritative
-      // CSV: basinDir positive while tape negative → repeated short-losing
-      // entries into a slow rise).
+      // 2026-05-28 entry-side qig-warp expectation bubble (replaces commit
+      // bb93038f's hardcoded baseThreshold=0.10 — see polytrade #1002 anti-
+      // shelfware rules + qig_chat_inbox coordination 2026-05-28 09:15 UTC).
       //
-      // Observer-derived (P1/P5/P25): use the existing |basinDir| vs |tapeTrend|
-      // disagreement magnitude (or stud-equivalent when ported) as the
-      // expectation signal. Threshold from registry + current phi/heart
-      // modulation (no new hardcoded knob).
-      const expectationDisagreement = basinDir * (sideCandidate === 'long' ? 1 : -1);
-      // Observer-derived threshold (P1/P5/P25): base 0.10 modulated by current phi
-      // (higher phi = more trust in the geometric expectation signal).
-      // Full registry lookup wired in follow-up micro-slice (same pattern as
-      // CHOP_SUPPRESS_*_CONFIDENCE).
-      const baseThreshold = 0.10;
-      const modulatedThreshold = baseThreshold * (0.8 + 0.4 * Math.max(0, Math.min(1, (phi - 0.3) / 0.7)));
-      const entryBlockedByExpectation = expectationDisagreement < -modulatedThreshold;
+      // Detection: when sign(tapeTrend) != sign(basinDir) AND both magnitudes
+      // are above the sign-noise floor, call the qig-warp expectation bubble
+      // in ml-worker. The bubble derives (h, J) from recent OHLCV log-returns
+      // (same path regime_signal.py uses) and runs WarpBubble.qig_regime(h, J,
+      // dim=2). Bubble's expectation_action is authoritative — observe_only
+      // blocks entry, flip_to_basin flips sideCandidate, reduce_size cuts
+      // size in half, allow proceeds.
+      //
+      // Fallback: if the HTTP call returns null (transport failure) we proceed
+      // with the existing sideCandidate. The bubble itself fails open
+      // (returns action='allow' with qig_warp_source='QIG_WARP_UNAVAILABLE')
+      // so the call site never deadlocks on missing qig-warp.
+      //
+      // Audit: every bubble call writes one row to kernel_expectation_decisions
+      // with before/after side, lane, size + did_change_decision (best-effort;
+      // DB failure is logged but does NOT block trading per P15).
+      //
+      // Citations: 2.31A P1/P5/P15/P25 + v6.7B + QIG PURITY MANDATE +
+      // Embodiment_Waves (2026-05-28 Polo CSV tape/basinDir pathology) +
+      // poloniex-trading-platform#1002 anti-shelfware spec.
+      const _ENTRY_NOISE_FLOOR = 0.05;
+      const tapeSign = tapeTrend > _ENTRY_NOISE_FLOOR ? 1 : tapeTrend < -_ENTRY_NOISE_FLOOR ? -1 : 0;
+      const basinSign = basinDir > _ENTRY_NOISE_FLOOR ? 1 : basinDir < -_ENTRY_NOISE_FLOOR ? -1 : 0;
+      const isReverseTape = tapeSign !== 0 && basinSign !== 0 && tapeSign !== basinSign;
+
+      let expectationDecision: ExpectationDecision | null = null;
+      let sideAfterExpectation: 'long' | 'short' = sideCandidate;
+      let sizeMultiplier = 1.0;
+      let entryBlockedByExpectation = false;
+
+      if (isReverseTape) {
+        // Recent log-returns over the same window regime_signal.py uses for
+        // qig-warp's (h, J) derivation. ohlcv is the perception layer's
+        // candle buffer (computed near line 2112).
+        const lookbackN = Math.min(50, Math.max(2, ohlcv.length - 1));
+        const recentReturns: number[] = [];
+        for (let i = ohlcv.length - lookbackN; i < ohlcv.length; i++) {
+          const prev = ohlcv[i - 1]?.close;
+          const curr = ohlcv[i]?.close;
+          if (prev && curr && prev > 0 && curr > 0) {
+            recentReturns.push(Math.log(curr / prev));
+          }
+        }
+        try {
+          expectationDecision = await callExpectationBubble({
+            tapeTrend, basinDirection: basinDir,
+            recentReturns,
+            proposedSide: sideCandidate,
+          });
+        } catch (err) {
+          expectationDecision = null;
+        }
+      }
+
+      if (expectationDecision !== null) {
+        const action_ = expectationDecision.expectation_action;
+        if (action_ === 'observe_only') {
+          entryBlockedByExpectation = true;
+        } else if (action_ === 'flip_to_basin') {
+          sideAfterExpectation = basinDir > 0 ? 'long' : 'short';
+        } else if (action_ === 'reduce_size') {
+          sizeMultiplier = 0.5;
+        }
+        // 'allow' falls through with no change.
+      }
+
       if (entryBlockedByExpectation) {
         action = 'hold';
-        reason = `[${mode}] entry blocked by expectation disagreement (basinDir=${basinDir.toFixed(3)} × side=${sideCandidate} = ${expectationDisagreement.toFixed(3)} < -${modulatedThreshold.toFixed(3)})`;
+        reason = `[${mode}] entry blocked by qig-warp expectation: ${expectationDecision?.expectation_reason ?? 'observe_only'} `
+          + `(regime=${expectationDecision?.expectation_regime}, alpha=${expectationDecision?.expectation_confidence?.toFixed(3) ?? '?'}, source=${expectationDecision?.qig_warp_source})`;
         derivation.entryThreshold = entryThr.derivation;
         derivation.size = size.derivation;
         derivation.leverage = leverage.derivation;
         derivation.entry_blocked_by_expectation = true;
+        derivation.expectation = expectationDecision;
       } else {
-        // LIVED ONLY 5 on the entry expectation path: when we do enter,
-        // the final sideCandidate must not have strong negative expectation
-        // disagreement (basinDir × side). Violation = the entry gate failed
-        // to block a setup the exit gate would immediately stop.
-        if (expectationDisagreement < -modulatedThreshold) {
-          logger.warn('[LIVED ONLY 5][ENTRY] entered with negative expectation disagreement', {
-            basinDir, tapeTrend, sideCandidate, expectationDisagreement, modulatedThreshold,
-            mode, symbol, phi,
-          });
-        }
-        action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)}`
+        action = sideAfterExpectation === 'long' ? 'enter_long' : 'enter_short';
+        const sizeApplied = size.value * sizeMultiplier;
+        const reasonSuffix = expectationDecision !== null
+          ? ` [qig-warp: ${expectationDecision.expectation_action} regime=${expectationDecision.expectation_regime} alpha=${expectationDecision.expectation_confidence.toFixed(3)} src=${expectationDecision.qig_warp_source}]`
+          : '';
+        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideAfterExpectation}; margin=${sizeApplied.toFixed(2)}`
           + (suppressionResult.suppressed ? `×${chopSizeFactor.toFixed(2)} (chop filter)` : '')
-          + ` lev=${leverage.value}x notional=${(size.value * chopSizeFactor * leverage.value).toFixed(2)}`;
+          + (sizeMultiplier !== 1 ? `×${sizeMultiplier.toFixed(2)} (expectation reduce_size)` : '')
+          + ` lev=${leverage.value}x notional=${(sizeApplied * chopSizeFactor * leverage.value).toFixed(2)}`
+          + reasonSuffix;
         derivation.entryThreshold = entryThr.derivation;
         derivation.size = size.derivation;
         derivation.leverage = leverage.derivation;
+        if (expectationDecision !== null) derivation.expectation = expectationDecision;
+      }
+
+      // Audit: persist this expectation decision (if we made one) to
+      // kernel_expectation_decisions. Best-effort — DB failure logs at warn
+      // and does NOT block the trading decision (P15 safety doctrine).
+      if (expectationDecision !== null) {
+        const didChange = (
+          entryBlockedByExpectation
+          || sideAfterExpectation !== sideCandidate
+          || sizeMultiplier !== 1.0
+        );
+        void pool.query(
+          `INSERT INTO kernel_expectation_decisions (
+             kernel_id, tape_trend, basin_direction, tape_basin_disagreement,
+             reverse_tape_window, reverse_tape_side,
+             qig_warp_version, qig_warp_mode, qig_warp_source,
+             expectation_direction, expectation_confidence, expectation_regime,
+             expectation_action, expectation_reason,
+             decision_surface, side_before, side_after,
+             size_before_usdt, size_after_usdt,
+             did_change_decision, source_path, kernel_version
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+             $15, $16, $17, $18, $19, $20, $21, $22
+           )`,
+          [
+            this.instanceId,
+            expectationDecision.tape_trend,
+            expectationDecision.basin_direction,
+            expectationDecision.tape_basin_disagreement,
+            expectationDecision.reverse_tape_window,
+            expectationDecision.reverse_tape_side,
+            expectationDecision.qig_warp_version,
+            expectationDecision.qig_warp_mode,
+            expectationDecision.qig_warp_source,
+            expectationDecision.expectation_direction,
+            expectationDecision.expectation_confidence,
+            expectationDecision.expectation_regime,
+            expectationDecision.expectation_action,
+            expectationDecision.expectation_reason,
+            'entry',
+            sideCandidate,
+            entryBlockedByExpectation ? null : sideAfterExpectation,
+            size.value,
+            entryBlockedByExpectation ? null : size.value * sizeMultiplier,
+            didChange,
+            'loop.ts:processSymbol:entry',
+            getEngineVersion(),
+          ],
+        ).catch((err) => {
+          logger.warn('[Monkey] kernel_expectation_decisions insert failed (non-fatal)', {
+            symbol, err: err instanceof Error ? err.message : String(err),
+          });
+        });
       }
     } else {
       action = 'hold';
