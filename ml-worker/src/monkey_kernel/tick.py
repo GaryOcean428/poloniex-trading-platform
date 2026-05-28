@@ -643,6 +643,11 @@ def run_tick(
         is_awake=is_awake,
         woke=woke_this_tick,
         now_ms=now_ms,
+        # Live phi for Grok's Wave-4 ser-compression phi-modulation
+        # (_compute_nc line ~541). Without this the autonomic kernel
+        # would default to 0.5 (neutral) and the modulation has no
+        # signal.
+        phi=phi,
     ))
     nc = ac_result.nc
 
