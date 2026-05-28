@@ -7005,10 +7005,21 @@ export class MonkeyKernel extends EventEmitter {
                   : 'K';
           const rowQty = Math.abs(Number(row.quantity) || 0);
 
-          // LIVED ONLY 5 enforcement for this paper close path:
-          // Always use row-own safe computation. Ignore explicitPnl for the written value.
-          // This closes the raw bypass.
-          const finalRowPnl = computeSafePnl(0, markPrice, rowQty, 'long'); // entry not needed for delta; side default safe for enforcement here
+          // LIVED ONLY 5 enforcement for this paper close path: use the
+          // DB-computed safe pnl. The UPDATE above runs SAFE_PNL_FROM_ROW,
+          // which reads entry_price + quantity + side from the row itself;
+          // `rowPnl` already holds that value (line 7000 above).
+          //
+          // 2026-05-28 hotfix: the previous line here was
+          //   computeSafePnl(0, markPrice, rowQty, 'long')
+          // with a misleading "entry not needed for delta" comment. The
+          // function actually multiplies qty × (exit − entry) × sideSign,
+          // so passing entry=0 produced qty × markPrice = the entire
+          // notional (e.g. 0.005 BTC × $72898 = $364.49 phantom on a
+          // paper close that really earned −$0.01). That phantom was fed
+          // straight into the reward channel and the divergence warning
+          // logged but didn't actually correct anything.
+          const finalRowPnl = rowPnl;
           if (explicitPnl !== null && Math.abs((explicitPnl ?? 0) - finalRowPnl) > 5) {
             logger.warn('[LIVED ONLY] explicitPnl from paperClosePosition diverged — using safe row-own value', {
               rowId: row.id, explicit: explicitPnl, safe: finalRowPnl,
