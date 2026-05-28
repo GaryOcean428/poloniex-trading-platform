@@ -635,6 +635,7 @@ def run_tick(
 
     ac_result = autonomic.tick(AutonomicTickInputs(
         phi_delta=phi_delta,
+        phi=phi,
         basin_velocity=bv,
         surprise=abs(phi_delta) * 2.0,
         quantum_weight=regime_weights["quantum"],

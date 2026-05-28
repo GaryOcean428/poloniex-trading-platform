@@ -237,6 +237,7 @@ class AutonomicTickInputs:
     quantum_weight: float
     kappa: float
     external_coupling: float
+    phi: float = 0.5
     # Sleep state - produced by Ocean.observe(), consumed here as input.
     is_awake: bool = True
     now_ms: Optional[float] = None
