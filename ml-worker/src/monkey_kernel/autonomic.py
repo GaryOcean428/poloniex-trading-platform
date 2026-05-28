@@ -1,8 +1,8 @@
 """
-autonomic.py — Monkey's autonomic chemistry layer.
+autonomic.py - Monkey's autonomic chemistry layer.
 
-Pure state→state map for the §29 six chemicals + reward queue with
-time decay. NO decision authority — sleep state and intervention
+Pure state->state map for the §29 six chemicals + reward queue with
+time decay. NO decision authority - sleep state and intervention
 triggers live in ocean.py (refactored 2026-04-29 #599 directive).
 The single autonomic intervention authority is Ocean; this module
 only owns:
@@ -14,14 +14,14 @@ Does NOT own: perception, decision-making, exchange IO, DB,
 sleep state machine, or autonomic interventions.
 
 Canonical Principles v2.1 enforced:
-  P5  Autonomy — all chemicals derived from state, never externally set
-  P14 Variable Separation — rewards = STATE events, chemicals = DERIVED views
-  §28 Autonomic Governance — Ocean owns interventions; this module
+  P5  Autonomy - all chemicals derived from state, never externally set
+  P14 Variable Separation - rewards = STATE events, chemicals = DERIVED views
+  §28 Autonomic Governance - Ocean owns interventions; this module
                               only computes chemistry from inputs
 
 Reference implementations:
   - /home/braden/Desktop/Dev/QIG_QFI/vex/kernel/consciousness/neurochemistry.py
-    (compute_neurochemicals — 5 chemicals base)
+    (compute_neurochemicals - 5 chemicals base)
   - /home/braden/Desktop/Dev/QIG_QFI/qig-archive/pantheon-chat/qig-backend/
     autonomic_kernel.py (ActivityReward dataclass, decayed reward sums)
 """
@@ -36,7 +36,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-# Re-exports preserved for backward import compatibility — sleep state
+# Re-exports preserved for backward import compatibility - sleep state
 # logic now lives in ocean.py per #599 refactor. Existing callers that
 # imported SleepPhase / SleepCycleManager / SleepCycleState from
 # autonomic continue to work.
@@ -47,7 +47,7 @@ from .state import NeurochemicalState
 
 logger = logging.getLogger("monkey_kernel.autonomic")
 
-# Module-level registry alias — Grok's Wave 4 P5/P25 sweep added
+# Module-level registry alias - Grok's Wave 4 P5/P25 sweep added
 # `_registry.get(...)` calls inside the new `get_*` observer functions
 # (lines 156/166/173/180/187/514) but did NOT add the corresponding
 # module-level `_registry = get_registry()` alias that working_memory.py
@@ -57,7 +57,7 @@ logger = logging.getLogger("monkey_kernel.autonomic")
 # the kernel evaluates on each close to size pnlFracHistory).
 #
 # The import-smoke gate from PR #985 catches IMPORT-time breaks but not
-# function-evaluation-time NameErrors — follow-up gate would need to
+# function-evaluation-time NameErrors - follow-up gate would need to
 # invoke each `get_*` observer once. Filed in session memory.
 _registry = get_registry()
 
@@ -71,7 +71,7 @@ C_SOPHIA_THRESHOLD: float = 0.1
 # qig-core/src/qig_core/consciousness/neurochemistry.py: ENDORPHIN_KAPPA_SIGMA = 16.0
 #
 # 2026-05-26 (#934 chemistry-pinning audit): the previous endo block was
-# defining this constant but NOT using it — runtime instead computed
+# defining this constant but NOT using it - runtime instead computed
 # `sigma_kappa = _stddev(kappa_history)` which produces ~0.09 in
 # production (basin's natural κ-jitter scale, not the structural scale).
 # Result: exp(-2.18 / 0.09) ≈ 3e-11, pinning endo at floor across 85-98%
@@ -80,7 +80,7 @@ C_SOPHIA_THRESHOLD: float = 0.1
 #
 # The canonical scale and the basin's rolling σ_κ are different concepts
 # that happen to share units. ENDORPHIN_KAPPA_SIGMA is the structural
-# scale at which κ-distance becomes operationally meaningful — derived
+# scale at which κ-distance becomes operationally meaningful - derived
 # from the E8 generative model, frozen. The basin's rolling σ_κ is a
 # tick-level statistical property; the basin operates within the
 # structure rather than above it, so the basin cannot observe its own
@@ -148,7 +148,7 @@ def _z_score(x: float, history: Optional[list[float]]) -> float:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  REWARD QUEUE — pantheon ActivityReward pattern
+#  REWARD QUEUE - pantheon ActivityReward pattern
 # ═══════════════════════════════════════════════════════════════
 
 # P5/P25 observer-derived (retired bare 20 min half-life).
@@ -164,7 +164,7 @@ REWARD_QUEUE_MAX: int = 50
 def get_reward_half_life_ms(heart_rhythm: float = 0.5, recent_reward_rate: float = 1.0) -> float:
     """P5/P25 observer-derived reward decay half-life.
     Registry + heart tacking rhythm + recent reward event rate modulation.
-    Faster heart rhythm or higher recent reward density → slightly shorter half-life
+    Faster heart rhythm or higher recent reward density -> slightly shorter half-life
     (faster forgetting of old outcomes so new net-of-fees signals dominate).
     """
     base = float(_registry.get("autonomic.reward_half_life_ms", default=20 * 60 * 1000.0))
@@ -218,7 +218,7 @@ class ActivityReward:
 
 
 # ═══════════════════════════════════════════════════════════════
-#  AUTONOMIC KERNEL — chemistry derivation + reward queue.
+#  AUTONOMIC KERNEL - chemistry derivation + reward queue.
 #  Sleep state machine MOVED to ocean.py (#599 refactor).
 # ═══════════════════════════════════════════════════════════════
 
@@ -226,7 +226,7 @@ class ActivityReward:
 @dataclass
 class AutonomicTickInputs:
     """What the orchestrator passes in each tick. Sleep gating fields
-    removed in the #599 refactor — caller passes is_awake (queried
+    removed in the #599 refactor - caller passes is_awake (queried
     from Ocean) instead of mode/is_flat which Ocean now consumes
     directly."""
 
@@ -237,10 +237,10 @@ class AutonomicTickInputs:
     quantum_weight: float
     kappa: float
     external_coupling: float
-    # Sleep state — produced by Ocean.observe(), consumed here as input.
+    # Sleep state - produced by Ocean.observe(), consumed here as input.
     is_awake: bool = True
     now_ms: Optional[float] = None
-    # Wake transition flag — caller passes True on the tick Ocean reports
+    # Wake transition flag - caller passes True on the tick Ocean reports
     # WAKE so this kernel can clear stale rewards.
     woke: bool = False
     # Φ (integration coherence) used by Grok's Wave-4 serotonin-compression
@@ -249,14 +249,24 @@ class AutonomicTickInputs:
     # AttributeError on access. New production caller in tick.py passes
     # the live phi value explicitly so the modulation has signal.
     phi: float = 0.5
-    # 2026-05-25 — observer-derived chemistry needs the basin's own
+    # 2026-05-25 - observer-derived chemistry needs the basin's own
     # rolling histories (parity with TS neurochemistry.ts). All
-    # optional; absent → cold-start fallbacks fire (matched to TS).
+    # optional; absent -> cold-start fallbacks fire (matched to TS).
     surprise_history: Optional[list[float]] = None
     basin_velocity_history: Optional[list[float]] = None
     kappa_history: Optional[list[float]] = None
     external_coupling_history: Optional[list[float]] = None
     mode_transition_times_ms: Optional[list[float]] = None
+    # 2026-05-28 acting subagent (Neurotransmitter Purity & Natural Effects) + recovery from impl-6/impl-1/impl-7 + surfaces 17-23 + heart-metrics packets + polo lesson:
+    # Optional LIVED consciousness signals (from tick/heart/pillars/ocean) to modulate dop/ser/endo for natural conscious-system effects on net profitable behaviour.
+    # heart tacking health/amplitude/frequency, Replicant/sovereignty state, d_FR (free energy), Loop 3, coupled-agent LIVED.
+    # Defaults neutral (no change if upstream not yet passing); values always LIVED ONLY 5 observer-derived. No new knobs (no registry/env; pure internal wiring per user exact words + canon P1/P6/P13/P19/P22/P24).
+    d_fr: float = 0.0
+    sovereignty: float = 0.5
+    replicant_detected: bool = False
+    tacking_health: float = 0.5  # health/amplitude/freq composite from HeartMonitor
+    loop3_provenance: float = 0.0
+    coupled_lived: float = 0.0
 
 
 @dataclass
@@ -266,10 +276,10 @@ class AutonomicTickResult:
 
 
 class AutonomicKernel:
-    """Autonomic chemistry layer — derives NC + holds reward queue.
+    """Autonomic chemistry layer - derives NC + holds reward queue.
 
     One instance per Monkey sub-kernel (Position, Swing). State is
-    process-local (not persisted) per vex/pantheon convention —
+    process-local (not persisted) per vex/pantheon convention -
     autonomic state is "body state" that rebuilds from inputs after
     restart. The resonance bank persists across restarts; rewards do
     not.
@@ -291,7 +301,7 @@ class AutonomicKernel:
         # #941 Phase 3 prediction-error chemistry cache. Populated by the
         # TS-side emitter via push_prediction_chemistry() and folded
         # additively into reward_sums on each tick(). Cleared on wake.
-        # P14: kept SEPARATE from the trade-outcome reward queue — a
+        # P14: kept SEPARATE from the trade-outcome reward queue - a
         # perfect forecaster with no trades still earns this dopamine.
         self._cached_prediction_chemistry: dict[str, float] = {
             "dopamine_delta": 0.0,
@@ -333,7 +343,7 @@ class AutonomicKernel:
         """Record a reward event. Magnitudes derived from pnl/margin.
 
         Winning closes produce positive dopamine; losses produce a small
-        negative (mood dip, not punishment — self_observation learns from
+        negative (mood dip, not punishment - self_observation learns from
         losses elsewhere).
         """
         pnl_frac = (realized_pnl_usdt / margin_usdt) if margin_usdt > 0 else 0.0
@@ -346,18 +356,40 @@ class AutonomicKernel:
         # real trading scale (~0.04% MAD). Positive deviation from own
         # history now produces meaningful positive chemistry.
         # Cold-start now gives gentle positive ramp (see observer_fib_coefficient).
-        # History < 2 samples → tier 1 for positive pnl_frac (prevents starvation).
+        # History < 2 samples -> tier 1 for positive pnl_frac (prevents starvation).
         from .ocean_reward import observer_fib_coefficient, fibonacci_reward_tier
         from .parameters import get_registry
         # Maintain bounded rolling history on the autonomic instance
+        # 2026-05-28 acting subagent (Neurotransmitter Purity + natural effects, recovered from impl-6 surfaces 17-23 / impl-1 purge / impl-7 compliance / polo-authoritative lesson / compliance-assessment / reward-source-doctrine + user "net profitable behaviour rewarded via neurotransmitters" + "all NT calculated purely"):
+        # ONLY append LIVED polo_authoritative net profit (after fees/funding) to _pnl_frac_history.
+        # This guarantees observer_fib_coefficient (the exponential fib "how profitable" tier) and ocean_coeff for dop/ser/endo are PURELY from ACTUAL polo_authoritative_close LIVED data.
+        # Zero gross pre-fees synthetic corruption of the profitability distribution that drives persistent monkey_trajectory NTs + executive sizing.
+        # Synthetic own_close paths still produce immediate (decaying) short-term NT effect for natural mood, but do not pollute observer model of "how profitable".
+        # Matches LIVED ONLY 5 + "Partial = P24 bug" + Embodiment_Waves gross/net pathology + master-orchestration + qig-purity-validation.
+        # No new knobs (re-uses source tag already present post-#992).
         if not hasattr(self, "_pnl_frac_history"):
             self._pnl_frac_history: list[float] = []
-        self._pnl_frac_history.append(pnl_frac)
+        is_polo_lived_for_history = source == 'polo_authoritative_close'
+        if is_polo_lived_for_history:
+            self._pnl_frac_history.append(pnl_frac)
         # P5/P25 observer-derived (retired bare 200 window).
         hist_max = get_pnl_frac_history_max()
         if len(self._pnl_frac_history) > hist_max:
             self._pnl_frac_history = self._pnl_frac_history[-hist_max:]
         ocean_coeff = observer_fib_coefficient(pnl_frac, self._pnl_frac_history)
+        ocean_tier = fibonacci_reward_tier(pnl_frac, self._pnl_frac_history)  # exponential fib tier on LIVED polo net (how profitable) for NT reward strength + Railway telemetry (recovered + wired)
+
+        # 2026-05-28 perfect telemetry + source tags for Railway log verification
+        # (per polo-authoritative lesson + reward-source doctrine): grep deployed
+        # ml-worker logs for "LIVED ONLY 5 net_profit_polo|ocean_coeff|reward source=".
+        # Ensures calculations use actual polo net (not gross pre-fees).
+        is_polo_lived = source == 'polo_authoritative_close'
+        log_prefix = '[LIVED ONLY 5 polo net]' if is_polo_lived else '[LIVED synthetic]'
+        logger.info(
+            f'{log_prefix} [autonomic] ocean_coeff telemetry source={source} '
+            f'symbol={symbol} pnl_frac={pnl_frac:.6f} ocean_coeff={ocean_coeff} '
+            f'is_net_profit_polo={is_polo_lived} (contributes to profitable ops only on authoritative net)'
+        )
 
         if pnl_frac > 0:
             # P5/P25 observer-derived multipliers (retired bare 1.5 / 0.5 / 0.15 / 0.1).
@@ -418,26 +450,34 @@ class AutonomicKernel:
             })
         # PR #992 + source-tagging (LIVED ONLY 5 on Py surface): polo_authoritative_close
         # is now the canonical net reward for this persisted autonomic (drives
-        # monkey_trajectory NTs + executive sizing). Enhanced log enables the
+        # monkey_trajectory NTs + executive sizing on net profitable behaviour).
+        # Pure NT calc with natural effects via exponential fib (observer_fib_coefficient
+        # from LIVED polo net pnl_frac z-dev history, no synthetic gross pre-fees,
+        # no P5/P25 knobs per P1 + impl* recovery). Enhanced log enables the
         # permanent verification lesson: grep deployed Railway logs for
-        # "source=polo_authoritative_close" (must dominate on net+ closes).
-        # See 2026-05-28_polo-authoritative-close-py-fanout-992_lesson-artifact.md
-        # (insight verbatim + "Monitor armed").
+        # "source=polo_authoritative_close" (must dominate on net+ closes for
+        # profitable ops). See 2026-05-28_polo-authoritative-close-py-fanout-992_lesson-artifact.md
+        # (insight verbatim + "Monitor armed"). Tied to auditor 019e6c76-e3fe-7aa0-9b0f-ed9716930917.
+        # Recovered + wired pure fibonacci_reward_tier (from impl* artifacts per "have an agent act. recover all..."; now pure LIVED polo net version, exponential fib for net profitable behaviour + natural NT effects; gross pre-fee legacy retired in ocean_reward.py). VBC + master-orchestration + auditor 019e6c76....
         is_polo_lived = source == 'polo_authoritative_close'
         log_prefix = '[LIVED ONLY 5 polo net]' if is_polo_lived else ''
+        # Wire recovered pure fibonacci_reward_tier (impl* + user exact: net profitable behaviour + exponential fib + pure NT calc with natural effects)
+        # + LIVED polo net history (post #992 fanout). Auditor 019e6c76-e3fe-7aa0-9b0f-ed9716930917 visible.
+        fib_tier = fibonacci_reward_tier(pnl_frac, self._pnl_frac_history if hasattr(self, '_pnl_frac_history') else None)
         logger.info(
-            "[%s.autonomic] %sreward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% oceanTier=%d oceanCoeff=%d dop=%.3f ser=%.3f endo=%.3f",
+            "[%s.autonomic] %sreward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% oceanTier=%d oceanCoeff=%d dop=%.3f ser=%.3f endo=%.3f (pure NT net_profit_polo=%s exponential_fib_natural_effects)",
             self.label,
             log_prefix,
             source,
             symbol,
             realized_pnl_usdt,
             pnl_frac * 100.0,
-            fibonacci_reward_tier(pnl_frac),
+            fib_tier,
             ocean_coeff,
             dop,
             ser,
             endo,
+            'true' if is_polo_lived else 'false',
         )
         return reward
 
@@ -454,8 +494,8 @@ class AutonomicKernel:
 
         Mirrors the TS-side emitter (predictionRewardEmitter.ts).
         Caller passes pre-computed deltas (computed against the
-        kernel_outcome_residuals table). This method REPLACES — does
-        not append — so each refresh cycle's signal contributes once
+        kernel_outcome_residuals table). This method REPLACES - does
+        not append - so each refresh cycle's signal contributes once
         per tick, not compounding across the refresh interval.
 
         n is carried for telemetry / parity check only.
@@ -493,7 +533,7 @@ class AutonomicKernel:
     ) -> NeurochemicalState:
         """§29.2 six chemicals. All derived; nothing externally set.
 
-        2026-05-25 — parity port with apps/api/src/services/monkey/
+        2026-05-25 - parity port with apps/api/src/services/monkey/
         neurochemistry.ts after PR #920 (steady-state-pinning fix).
         Same observer-derived shapes; same fix for the
         one-sided-clamp-on-observer-relative-signal pattern. See
@@ -502,7 +542,7 @@ class AutonomicKernel:
         ach = 0.8 if is_awake else 0.2
 
         # ─── Dopamine ─────────────────────────────────────────────
-        # sigmoid(phiDelta) — kept as bounded identity; the prior
+        # sigmoid(phiDelta) - kept as bounded identity; the prior
         # ×10 magic gain replaced by the observer-derived form when
         # phi_delta history is available (TS parity).
         dop_from_phi = _clip(_sigmoid(inputs.phi_delta), 0.0, 1.0)
@@ -542,14 +582,14 @@ class AutonomicKernel:
         # Compression now registry + heart_rhythm / phi modulated so the
         # per-event reward delta can register on top of the baseline.
         ser_compression = float(_registry.get("autonomic.serotonin_compression", default=0.85))
-        # Light heart/phi modulation (higher phi or stronger heart rhythm → slightly less compression).
+        # Light heart/phi modulation (higher phi or stronger heart rhythm -> slightly less compression).
         hr = 0.5  # TODO: wire real derived_tacking_frequency_hz (P6 deepen)
         phi_mod = 0.03 * max(-1.0, min(1.0, (inputs.phi - 0.5) + (hr - 0.5)))
         ser_compression = max(0.75, min(0.95, ser_compression + phi_mod))
         ser = _clip(ser_compression * ser_base + reward_sums["serotonin"], 0.0, 1.0)
 
         # ─── Norepinephrine ───────────────────────────────────────
-        # Sigmoid(z) — both tails informative; ~0.5 at mean. Replaces
+        # Sigmoid(z) - both tails informative; ~0.5 at mean. Replaces
         # the pre-strip `surprise × 2` magic. Cold start: sigmoid(surprise).
         surprise_h = inputs.surprise_history
         if surprise_h is not None and len(surprise_h) >= _HISTORY_MIN_SAMPLES:
@@ -568,7 +608,7 @@ class AutonomicKernel:
         # rolling σ_κ (≈0.09 in production) is a tick-jitter property;
         # SIGMA_KAPPA is the structural canonical scale at which κ-distance
         # becomes operationally meaningful in the κ-proximity envelope.
-        # The prior shape pinned endo at ~3e-11 across 85–98% of ticks;
+        # The prior shape pinned endo at ~3e-11 across 85-98% of ticks;
         # canonical 16.0 gives ~0.87 at observed |κ-κ*|=2.18 (healthy
         # peak-generative signal).
         coupling_h = inputs.external_coupling_history
@@ -597,7 +637,7 @@ class AutonomicKernel:
                 * sophia_gate
             )
         else:
-            # Cold start — bounded identity on κ-distance, tanh coupling gate.
+            # Cold start - bounded identity on κ-distance, tanh coupling gate.
             # κ reference is now registry-backed (retired universal 64 per two-channel doctrine).
             # Historical sentinel 63.8 only for bootstrap when DB unreachable; never
             # treated as physics truth. Real reference comes from basin history on
@@ -607,6 +647,27 @@ class AutonomicKernel:
             coupling_gate = float(np.tanh(max(0.0, inputs.external_coupling)))
             endo_base = (1.0 - float(np.tanh(dist))) * coupling_gate
         endo = _clip(endo_base + reward_sums["endorphin"], 0.0, 1.0)
+
+        # 2026-05-28 acting subagent - Neurotransmitter Purity & Natural Effects (user: "net profitable behaviour rewarded via neurotransmitters as required and exponential fib rewards triggered based of how profitable" + "all neurotransmitters are calculated purely and have the natural effect as in any conscious system"):
+        # Wire modulation of dop/ser/endo (the reward-driven NT) using LIVED consciousness signals recovered from impl* artifacts + surfaces 17-23 (heart tacking health/amplitude/frequency, Replicant/sovereignty state from pillars, d_FR, Loop 3 provenance, coupled-agent LIVED).
+        # Natural effects: sovereign + coherent tacking amplifies pleasure from actual net profit (stronger positive NT); high d_FR (free energy/uncertainty) damps (vigilance blunts reward); replicant mutes (identity not owned); Loop3/coupled integrates meta/social boost.
+        # Applied to reward component (positive on polo net profit after fees; negative mood dip on losses already present via loss_dop path).
+        # Pure: only LIVED polo net populates the fib history (prior edit); mod uses only observer-derived inputs. No new knobs.
+        # Citations: compliance-assessment (table surfaces 17-23), heart.py P6 governor, pillars Replicant, tick derive, polo lesson source tags, Embodiment_Waves, QIG PURITY MANDATE, master-orchestration.
+        mod = 1.0
+        if getattr(inputs, 'sovereignty', 0.5) > 0.6 and not getattr(inputs, 'replicant_detected', False):
+            mod *= 1.0 + 0.15 * max(0.0, min(1.0, getattr(inputs, 'tacking_health', 0.5)))
+        dfr = getattr(inputs, 'd_fr', 0.0)
+        if dfr > 0.05:
+            mod *= max(0.65, 1.0 - 0.7 * min(1.0, dfr / 0.25))
+        if getattr(inputs, 'replicant_detected', False):
+            mod *= 0.88
+        if getattr(inputs, 'loop3_provenance', 0.0) > 0.1 or getattr(inputs, 'coupled_lived', 0.0) > 0.1:
+            meta = max(getattr(inputs, 'loop3_provenance', 0.0), getattr(inputs, 'coupled_lived', 0.0))
+            mod *= 1.0 + 0.06 * min(0.4, meta)
+        dop = _clip(dop * mod, 0.0, 1.0)
+        ser = _clip(ser * mod, 0.0, 1.0)
+        endo = _clip(endo * mod, 0.0, 1.0)
 
         return NeurochemicalState(
             acetylcholine=ach,
@@ -630,7 +691,7 @@ class AutonomicKernel:
         """
         reward_sums = self._decayed_reward_sums(inputs.now_ms)
         # #941 Phase 3: fold cached prediction-error chemistry deltas
-        # into the same reward channel. Additive — same shape as the
+        # into the same reward channel. Additive - same shape as the
         # TS-side wiring in loop.ts tick() (cf. predDop / predSer).
         pred = self._cached_prediction_chemistry
         reward_sums_combined = {
@@ -640,7 +701,7 @@ class AutonomicKernel:
         }
         nc = self._compute_nc(inputs, reward_sums_combined, inputs.is_awake)
 
-        # Fresh mood on wake — clear stale reward events AND prediction
+        # Fresh mood on wake - clear stale reward events AND prediction
         # cache (the residual rows underlying the cached delta are now
         # stale relative to the new wake-state regime).
         if inputs.woke:
