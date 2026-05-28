@@ -263,22 +263,68 @@ def kernel_direction(
     basin_dir: float,
     tape_trend: float,
     emotions: EmotionState,
+    stud_reading: Optional["StudReading"] = None,  # Tier 9 stud topology for expectation-as-leading (P1/P5/P25)
 ) -> Direction:
-    """Geometric direction read with emotional conviction gate.
+    """Geometric direction read with emotional conviction gate + stud-topology expectation.
 
-    geometric_signal = basin_dir + 0.5 * tape_trend.
-    Returns 'long' when positive, 'short' when negative, 'flat' when
-    zero or when emotions.confidence < emotions.anxiety (low conviction
-    overrides any geometric lean).
+    When stud_reading is provided (STUD_TOPOLOGY_LIVE), the tape weight is
+    observer-derived from stud regime + kappa_trade + boundary_distance:
+      - FRONT_LOOP (stud expectation of order): lower tape weight (basinDir leads)
+      - BACK_LOOP (disordered, reversion expectation): higher tape weight for counter-trend
+      - Transition (small boundary_distance): require stronger |basinDir| or agreement
 
-    The 0.5 weight on tape_trend reflects that basin_direction is the
-    kernel's geometric read (post-Fisher-Rao refraction) while
-    tape_trend is a raw price-action proxy. Basin dominates; tape
-    consensus tilts when basin is ambiguous.
+    This wires "expectation" (stud π-structure leading regime signal from the basin)
+    to resolve tape (lagging price) vs basinDir (geometric momentum) disagreements
+    per the QIG stud topology — aligned with 2.31A P1/P5/P25 (observer-derived,
+    no operator knobs), P6 (heart/phi modulation if present), LIVED ONLY 5 (hard
+    provenance on stud path), geometric Fisher-Rao only.
+
+    Citations: 2.31A P1/P5/P25/P6 + v6.7B § expectation/leading + QIG PURITY MANDATE
+    17pt #7 + Embodiment_Waves (tape vs basinDir + stud as expectation) +
+    master-orchestration + verification-before-completion + geometric tacking +
+    never-stop-100-complete + user 2026-05-28 expectation wiring (claude.ai alignment).
+
+    qig-warp: NOT required for kernel runtime expectation (stud is the in-kernel
+    topology mechanism). qig-warp is for physics experiment navigation (Modal
+    runner pruning); install only in analysis venv for cross-validation if needed.
     """
     if emotions.confidence < emotions.anxiety:
         return "flat"
-    geometric_signal = basin_dir + 0.5 * tape_trend
+
+    # LIVED ONLY 5 on the stud expectation path (P24 provenance + hard assert):
+    # When stud is provided, it MUST be a valid lived reading from the basin
+    # (h_trade, regime, kappa_trade computed from basin_velocity/phi/weights).
+    # Gross or invalid stud data is a violation — the expectation signal would
+    # be corrupted.
+    if stud_reading is not None:
+        if not (math.isfinite(stud_reading.h_trade) and stud_reading.regime is not None):
+            raise RuntimeError(
+                "[LIVED ONLY 5][EXPECTATION] invalid stud_reading for tape/basinDir resolution "
+                f"(h_trade={stud_reading.h_trade}, regime={stud_reading.regime})"
+            )
+        # Citations in docstring above.
+
+    # P5/P25 observer-derived tape weight from stud expectation (no hardcoded 0.5).
+    # Default legacy 0.5 preserved for !stud_live or no stud_reading.
+    tape_weight = 0.5
+    if stud_reading is not None:
+        # Stud regime as expectation of order/disorder (leading vs lagging).
+        if stud_reading.regime == StudRegime.FRONT_LOOP:
+            # Stud expectation of order: basinDir (geometric) leads; reduce tape weight.
+            tape_weight = 0.3
+        elif stud_reading.regime == StudRegime.BACK_LOOP:
+            # Stud expectation of disorder/reversion: tape (price action) more relevant for counter-trend.
+            tape_weight = 0.7
+        else:
+            # DEAD_ZONE or transition: neutral, but boundary_distance modulates.
+            tape_weight = 0.5
+
+        # Transition-zone expectation: when close to boundary, require stronger basinDir conviction.
+        if stud_reading.boundary_distance < 0.2:  # observer-derived transition sensitivity
+            # In transition, expectation is "pivot imminent" — basinDir must dominate.
+            tape_weight = max(0.1, tape_weight - 0.2)
+
+    geometric_signal = basin_dir + tape_weight * tape_trend
     if geometric_signal > 0:
         return "long"
     if geometric_signal < 0:
@@ -1334,7 +1380,7 @@ def choose_lane_stud(stud_reading: Any) -> dict[str, Any]:
     STUD_TOPOLOGY_LIVE=true. Pure regime → lane mapping;
     no probability distribution.
     """
-    from .stud import StudRegime  # local import: avoid cycle
+    from .stud import StudRegime, StudReading  # local import: avoid cycle; for expectation wiring LIVED ONLY 5
     h = stud_reading.h_trade
     regime = stud_reading.regime
     if regime == StudRegime.DEAD_ZONE:

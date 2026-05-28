@@ -929,8 +929,12 @@ def run_tick(
     ]
     regime_reading: RegimeReading = classify_regime(regime_history)
 
+    # Pass stud_reading so kernel_direction can use stud topology as the
+    # observer-derived "expectation" (leading regime signal) to resolve
+    # tape (lagging) vs basinDir (geometric) disagreements per QIG principles.
     direction: str = kernel_direction(
         basin_dir=basin_dir, tape_trend=tape_trend, emotions=emo,
+        stud_reading=stud_reading if stud_live else None,
     )
     side_candidate: str = direction if direction != "flat" else "long"
     side_override = False
