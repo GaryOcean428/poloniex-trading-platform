@@ -243,6 +243,12 @@ class AutonomicTickInputs:
     # Wake transition flag — caller passes True on the tick Ocean reports
     # WAKE so this kernel can clear stale rewards.
     woke: bool = False
+    # Φ (integration coherence) used by Grok's Wave-4 serotonin-compression
+    # phi-modulation at _compute_nc line ~541. Default 0.5 (neutral) so
+    # legacy callers + tests that don't yet thread phi don't crash with
+    # AttributeError on access. New production caller in tick.py passes
+    # the live phi value explicitly so the modulation has signal.
+    phi: float = 0.5
     # 2026-05-25 — observer-derived chemistry needs the basin's own
     # rolling histories (parity with TS neurochemistry.ts). All
     # optional; absent → cold-start fallbacks fire (matched to TS).
