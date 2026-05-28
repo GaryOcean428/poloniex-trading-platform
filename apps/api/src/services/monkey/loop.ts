@@ -226,6 +226,7 @@ import { foresightVeto } from './per_agent_foresight.js';
 import {
   clampNewContractsToCap,
   kernelDerivedContractCap,
+  kellyPrimaryContractCap,
   VENUE_CONTRACTS_CEILING,
 } from './positionContractsBound.js';
 
@@ -8160,6 +8161,29 @@ export class MonkeyKernel extends EventEmitter {
       // fall back to venue ceiling (8000) when caller hasn't supplied
       // equity yet. Old call sites that don't thread the new observables
       // keep working at the venue-ceiling level.
+      //
+      // Commit 8 — Fix B (operator brief 2026-05-28): Kelly-primary
+      // cap as the canonical sizing signal when the kernel has earned
+      // a positive edge in its own outcome ring; chemistry-cap stays
+      // as the cold-start fallback when Kelly says 0 (no edge yet OR
+      // insufficient data). Whichever is LARGER wins — we never
+      // structurally collapse sizing below either path's own answer.
+      const ringStatsForCap = await getOutcomeRingStats({
+        agent: (req.agent ?? 'K'),
+        lane: (req.lane ?? 'swing') as LaneType,
+      });
+      const kellyFraction = computeKellyFraction(ringStatsForCap);
+      const chemMod = chemistryBoundedModulator(req.dopamine ?? 0.5, req.gaba ?? 0.5);
+      const kellyCap = (req.availableEquityUsdt && req.availableEquityUsdt > 0 && kellyFraction > 0)
+        ? kellyPrimaryContractCap({
+            availableEquityUsdt: req.availableEquityUsdt,
+            markPrice: req.entryPrice,
+            contractSize: symbolLotSize,
+            leverage: req.leverage,
+            kellyFraction,
+            chemistryModulator: chemMod,
+          })
+        : 0;
       const chemistryCap = req.availableEquityUsdt && req.availableEquityUsdt > 0
         ? kernelDerivedContractCap({
             availableEquityUsdt: req.availableEquityUsdt,
@@ -8171,6 +8195,11 @@ export class MonkeyKernel extends EventEmitter {
             gaba: req.gaba ?? 0.5,
           })
         : VENUE_CONTRACTS_CEILING;
+      // Take the LARGER of Kelly-derived and chemistry-derived caps.
+      // Kelly = "what I've earned"; chemistry = "what I'm feeling".
+      // Either path's positive answer is valid; collapsing to the
+      // minimum was the structural bug.
+      const earnedOrFeltCap = Math.max(kellyCap, chemistryCap);
 
       // Commit 7 — Fix A: break-even notional floor (operator brief
       // 2026-05-28). When the kernel's own outcome ring shows fees
@@ -8188,14 +8217,23 @@ export class MonkeyKernel extends EventEmitter {
       const floorContracts = notionalFloor > 0 && symbolLotSize > 0 && req.entryPrice > 0
         ? Math.ceil((notionalFloor / req.entryPrice) / symbolLotSize)
         : 0;
-      const cap = Math.min(VENUE_CONTRACTS_CEILING, Math.max(chemistryCap, floorContracts));
-      if (floorContracts > 0 && cap > chemistryCap) {
-        logger.info('[Monkey] break-even floor binding — sizing lifted above chemistry cap', {
+      const cap = Math.min(VENUE_CONTRACTS_CEILING, Math.max(earnedOrFeltCap, floorContracts));
+      if (floorContracts > 0 && cap > earnedOrFeltCap) {
+        logger.info('[Monkey] break-even floor binding — sizing lifted above kernel-derived cap', {
           symbol, agent: req.agent ?? 'K', lane: req.lane ?? 'swing',
-          chemistryCap, floorContracts, effectiveCap: cap,
+          kellyCap, chemistryCap, earnedOrFeltCap, floorContracts, effectiveCap: cap,
+          kellyFraction: kellyFraction.toFixed(3),
+          chemistryModulator: chemMod.toFixed(3),
           avgFeePerRoundTrip: ringStats?.avgFeePerRoundTrip.toFixed(4),
           avgWinRoiNotional: ringStats?.avgWinRoiNotional.toFixed(6),
           notionalFloorUsdt: notionalFloor.toFixed(2),
+        });
+      } else if (kellyCap > chemistryCap) {
+        logger.info('[Monkey] Kelly cap dominates chemistry cap (earned > felt)', {
+          symbol, agent: req.agent ?? 'K', lane: req.lane ?? 'swing',
+          kellyCap, chemistryCap,
+          kellyFraction: kellyFraction.toFixed(3),
+          chemistryModulator: chemMod.toFixed(3),
         });
       }
 
