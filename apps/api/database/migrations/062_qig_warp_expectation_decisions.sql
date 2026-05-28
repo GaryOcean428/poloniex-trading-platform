@@ -47,7 +47,7 @@ ALTER TABLE kernel_predictions
 -- for the falsification programme on qig-verification#63.
 CREATE TABLE IF NOT EXISTS kernel_expectation_decisions (
   id BIGSERIAL PRIMARY KEY,
-  trade_id BIGINT REFERENCES autonomous_trades(id) ON DELETE CASCADE,
+  trade_id UUID REFERENCES autonomous_trades(id) ON DELETE CASCADE,
   prediction_id BIGINT REFERENCES kernel_predictions(id) ON DELETE SET NULL,
   kernel_id TEXT NOT NULL,
   decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
