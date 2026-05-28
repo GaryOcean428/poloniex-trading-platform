@@ -7740,8 +7740,19 @@ export class MonkeyKernel extends EventEmitter {
           if (t.ids) allTradeIds.push(...t.ids);
           if (t.grossById) Object.assign(grossById, t.grossById);
         }
+        // closeOrderIds: parse the joined orderId string from the close
+        // flow and drop paper-close-* prefixes (paper orders have no Polo
+        // execution detail). This is what unlocks the per-fill fee
+        // lookup — `applyPoloRealizedPnlAfterClose` will use these to
+        // pull authoritative close fees from /v3/trade/order/trades and
+        // subtract them from gross.
+        const closeOrderIds = String(orderId ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && !s.startsWith('paper-close-'));
         void this.applyPoloRealizedPnlAfterClose({
           tradeIds: allTradeIds,
+          closeOrderIds,
           symbol,
           closeTimeMs: Date.now(),
           side: heldSide,
@@ -8867,6 +8878,7 @@ export class MonkeyKernel extends EventEmitter {
    */
   private async applyPoloRealizedPnlAfterClose(params: {
     tradeIds: string[];           // one or more rows closed together (DCA stack)
+    closeOrderIds?: string[];     // Polo close order IDs (one per close-chunk); empty for paper
     symbol: string;
     closeTimeMs: number;          // when we confirmed the fill
     side: 'long' | 'short';
@@ -8874,6 +8886,7 @@ export class MonkeyKernel extends EventEmitter {
     credentials?: any;            // optional: caller-provided creds; if omitted, fetched inline
   }): Promise<void> {
     const { tradeIds, symbol, closeTimeMs, side, grossPnlByRow } = params;
+    const closeOrderIds = params.closeOrderIds ?? [];
     if (tradeIds.length === 0) return;
 
     // Entry-point info log so we can confirm the canonical path is firing
@@ -8924,65 +8937,134 @@ export class MonkeyKernel extends EventEmitter {
         return;
       }
 
-      const polHistory = await poloniexFuturesService.getPositionHistory(credentials, {
-        symbol,
-        limit: 5,
-      });
-      const histRows: any[] = Array.isArray(polHistory) ? polHistory : (polHistory?.data ?? []);
+      // 2026-05-28: switched from position-history match (±90s + posSide)
+      // to per-fill fee subtraction via /v3/trade/order/trades?ordId=X.
+      //
+      // The structural problem (documented in
+      // polytrade_polo_per_row_vs_per_position_mismatch.md): Polo's
+      // position-history endpoint only records a row when the *overall*
+      // symbol position fully closes. The kernel closes per-row (DCA
+      // scale-outs, partial bracket TPs) — those partials never appear
+      // in position-history at all. PR #998's observability log proved
+      // this on 2026-05-28: histSample[0] was always ~60 minutes stale.
+      //
+      // Per Polo docs verified via polo-futures skill + WebFetch:
+      //   GET /v3/trade/order/trades  — per-fill, NO realisedPnl, has feeAmt
+      //   GET /v3/trade/order/history — per-order, NO realisedPnl, has feeAmt
+      //   GET /v3/trade/position/history — per-position, HAS realisedPnl
+      //     but only on full close
+      //
+      // Polo simply does not expose per-row realised PnL. The right
+      // path is gross (kernel already has it from row entry/exit/qty
+      // diff) minus per-fill feeAmt (authoritative, from /order/trades
+      // keyed by the close orderId). This bypasses position aggregation.
+      //
+      // Gross sum from the row-level synthetic computation:
+      const grossSum = Object.values(grossPnlByRow ?? {}).reduce(
+        (s, v) => s + (Number.isFinite(v) ? Number(v) : 0),
+        0,
+      );
 
-      const wantSide = side === 'long' ? 'LONG' : 'SHORT';
-      let bestMatch: any = null;
-      let bestDelta = Infinity;
-
-      for (const p of histRows) {
-        const polCloseMs = Number(
-          p.closeTime ?? p.cTime ?? p.closeTimestamp ?? p.updateTime ?? 0
-        );
-        const polSide = String(p.posSide ?? p.side ?? '').toUpperCase();
-        if (polCloseMs <= 0 || polSide !== wantSide) continue;
-
-        const delta = Math.abs(polCloseMs - closeTimeMs);
-        if (delta < 90_000 && delta < bestDelta) {
-          bestDelta = delta;
-          bestMatch = p;
-        }
-      }
-
-      if (!bestMatch) {
-        // Promoted to warn 2026-05-28: with the canonical path live, missing a
-        // ±90s match is the most likely silent-failure mode (history pagination,
-        // sub-second clock skew, posSide field rename). Logging it visibly lets
-        // us tune the window or field-extraction without re-shipping the kernel.
-        logger.warn('[Monkey] no Polo position history match within ±90s for canonical pnl', {
-          symbol, side, closeTimeMs,
-          histRows: histRows.length,
-          histSample: histRows.slice(0, 3).map((p: any) => ({
-            closeTime: p.closeTime ?? p.cTime ?? p.closeTimestamp ?? p.updateTime,
-            side: p.posSide ?? p.side,
-          })),
+      if (closeOrderIds.length === 0) {
+        // Paper close or no-orderId path (synthetic remains primary,
+        // chemistry already consumed it via own_close).
+        logger.debug('[Monkey] Polo-authoritative skipped — no close orderIds', {
+          symbol, side, tradeIdsCount: tradeIds.length,
         });
         return;
       }
 
-      const poloRealized = parseFloat(
-        bestMatch.realisedPnl ?? bestMatch.realizedPnl ?? bestMatch.pnl ?? '0'
-      );
+      // Sum per-fill feeAmt across all close-chunk orderIds.
+      // /v3/trade/order/trades response is an array of fills each with:
+      //   { ordId, symbol, side, posSide, px, qty, feeAmt, feeCcy, role, cTime, ... }
+      // For USDT-M perp the feeCcy is consistently 'USDT'. We log + skip
+      // any fill that comes back in a non-USDT fee (defensive, shouldn't
+      // happen on these contracts).
+      let totalCloseFees = 0;
+      let fillCount = 0;
+      const nonUsdtFees: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
+      for (const ordId of closeOrderIds) {
+        try {
+          const resp = await poloniexFuturesService.getExecutionDetails(credentials, {
+            symbol, ordId, limit: 100,
+          });
+          const fills: any[] = Array.isArray(resp) ? resp : (resp?.data ?? []);
+          for (const f of fills) {
+            const feeCcy = String(f.feeCcy ?? '').toUpperCase();
+            const feeAmt = parseFloat(f.feeAmt ?? '0');
+            if (!Number.isFinite(feeAmt)) continue;
+            if (feeCcy && feeCcy !== 'USDT') {
+              nonUsdtFees.push({ ordId, feeCcy, feeAmt });
+              continue;
+            }
+            totalCloseFees += feeAmt;
+            fillCount += 1;
+          }
+        } catch (fetchErr) {
+          logger.warn('[Monkey] /trade/order/trades fetch failed for fee subtraction', {
+            symbol, ordId,
+            err: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+          });
+        }
+      }
+
+      if (nonUsdtFees.length > 0) {
+        logger.warn('[Monkey] Polo-authoritative: non-USDT fees encountered (skipped from subtraction)', {
+          symbol, side, nonUsdtFees,
+        });
+      }
+
+      if (fillCount === 0) {
+        // Polo hasn't indexed the fills yet (typical lag is sub-second
+        // but can be a few seconds). Skip rather than write a gross
+        // value with no fee deduction.
+        logger.warn('[Monkey] Polo-authoritative skipped — no fills returned for close orderIds', {
+          symbol, side, closeOrderIdsCount: closeOrderIds.length,
+        });
+        return;
+      }
+
+      // Net = gross - close-side fees. Open-side fees + funding are not
+      // yet subtracted (open fees would require fetching /order/trades
+      // for each row's entry order_id; funding is usually << close
+      // fees over typical hold windows). Close fees alone are the
+      // dominant correction relative to the synthetic gross.
+      const poloRealized = grossSum - totalCloseFees;
       if (!Number.isFinite(poloRealized)) return;
 
-      // Write Polo authoritative net pnl to the rows, and preserve synthetic as gross_pnl
+      logger.info('[Monkey] Polo-authoritative: gross − close fees computed', {
+        symbol, side,
+        grossSum: grossSum.toFixed(4),
+        totalCloseFees: totalCloseFees.toFixed(4),
+        fillCount,
+        poloRealized: poloRealized.toFixed(4),
+      });
+
+      // Write Polo authoritative net pnl to the rows, and preserve synthetic as gross_pnl.
+      // poloRealized is computed per-close-group (sum of gross − close fees);
+      // pro-rata across rows by their own gross share so each row's `pnl` reflects
+      // its proportional share of the close-group's net.
+      const grossAbsTotal = tradeIds.reduce(
+        (s, id) => s + Math.abs(Number(grossPnlByRow?.[id] ?? 0)),
+        0,
+      );
       for (const id of tradeIds) {
         const gross = grossPnlByRow?.[id];
+        const share = grossAbsTotal > 0
+          ? Math.abs(Number(gross ?? 0)) / grossAbsTotal
+          : 1 / tradeIds.length;
+        const rowNet = poloRealized * share;
         await pool.query(
           `UPDATE autonomous_trades
               SET pnl = $1,
                   gross_pnl = COALESCE(gross_pnl, $2),
-                  pnl_source = 'polo_history',
+                  pnl_source = 'polo_gross_minus_fees',
                   fees_paid = CASE
                     WHEN $2 IS NOT NULL THEN $2 - $1
                     ELSE fees_paid
                   END
             WHERE id = $3`,
-          [poloRealized, gross ?? null, id]
+          [rowNet, gross ?? null, id]
         ).catch(() => { /* non-fatal */ });
       }
 
