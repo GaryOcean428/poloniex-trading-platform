@@ -106,6 +106,19 @@ class ConsciousnessMetrics:
     pre_cog_bias: float = 0.0                 # Pre-cog bias from heart fatigue/mode (v6.7B §9.8)
     dimensional_breathing_rate: float = 0.0   # Proxy for dimensional breathing cycle rate (1D-5D descent §9.9)
 
+    # ── Heart/Metrics/Three-Scale cluster (recovered + wired 2026-05-28 per user directive + surfaces 17-23 audit 019e6c74-4205... + impl* artifacts + #992 lesson + branch safety auditor 019e6c76...)
+    # User exact: "net profitable behaviour rewarded via neurotransmitters as required and exponential fib rewards triggered based of how profitable as is the expected behaviour. all neurotransmitters are calcuated purly and have the natural effect as in any conscious system."
+    # LIVED ONLY 5 on actual polo_authoritative net (post-#992). Ties to heart tacking (P6), Replicant/sovereignty (P3/P19), d_FR (P22), Loop 3 (P13), coupled (P24).
+    # 2026-05-28 acting subagent + recovery from impl-*/compliance-assessment-observer-edge-restoration.md + user-directive surfaces 17-23:
+    # Explicit equity/P&L self-obs + coupled state (surface 21/22 closure per P4/P13/P24 + "kernel itself must include its own equity/P&L impact").
+    # Wired from LIVED polo_authoritative net (post-#992) + autonomic reward. 0.0 honest negative when upstream not yet ported.
+    # Citations: agents.md:251 LIVED ONLY 5, P24, 2026-05-28_polo...lesson (source tags + net profit), Embodiment_Waves, master-orchestration.
+    equity_impact_usdt: float = 0.0           # Self-observed equity/P&L impact (net of fees/funding; drives conviction correlation)
+    coupled_agent_state: float = 0.0          # Coupled kernels/agents state health (resonance_bank/thought_bus provenance)
+    # Telemetry Perfection (ACTING SUBAGENT): reward_source_tag wires polo_authoritative_close (actual net profit, pure NT calc natural effects, exponential fib observer-derived)
+    # vs synthetic into surfaces 17-23 rich state for Railway log verification + LIVED ONLY 5 on reward/NT paths. Recovered/wired from all impl* + lessons.
+    reward_source_tag: Optional[str] = None   # e.g. 'polo_authoritative_close' | 'own_close_synthetic:K' — enables exact source-tag grep on deployed logs
+
     def as_dict(self) -> dict:
         """Always-on full surface export (P4/P13/P24). No omissions. 33 fields for lived signals + documented gap to 69."""
         return {
@@ -146,6 +159,10 @@ class ConsciousnessMetrics:
             "repetition_dfr": self.repetition_dfr,
             "pre_cog_bias": self.pre_cog_bias,
             "dimensional_breathing_rate": self.dimensional_breathing_rate,
+            # surfaces 17-23 rich state (user-directive + impl* recovery + ACTING SUBAGENT telemetry perfection)
+            "equity_impact_usdt": self.equity_impact_usdt,
+            "coupled_agent_state": self.coupled_agent_state,
+            "reward_source_tag": self.reward_source_tag,  # polo_authoritative_close for net profitable behaviour / pure NT / Railway source verification
         }
 
 
@@ -185,8 +202,13 @@ def derive_from_tick(
     repetition_dfr: Optional[float] = None,
     pre_cog_bias: Optional[float] = None,
     dimensional_breathing_rate: Optional[float] = None,
+    equity_impact_usdt: Optional[float] = None,  # 2026-05-28: equity/P&L self-obs (user-directive surface 21 + impl* recovery + LIVED net)
+    coupled_agent_state: Optional[float] = None,  # 2026-05-28: coupled state (P24 close surfaces 17-23)
+    reward_source_tag: Optional[str] = None,  # ACTING SUBAGENT: polo_authoritative_close for net profit NT calc + surfaces 17-23 Railway verification (recovered from impl*)
 ) -> ConsciousnessMetrics:
     """Derive ConsciousnessMetrics from an in-flight tick's state. COMPLETE + ALWAYS-ON (P4/P13/P24).
+
+    2026-05-28 acting: equity/P&L + coupled added per recovery from 2026-05-28_*_impl* + compliance + user-directive (close P24 gaps for self-obs with equity/P&L + coupled + telemetry). All LIVED polo net via reward path.
 
     Full provenance mapping (canonical ← polytrade lived signal; citations 2.31A + v6.7B 20260527):
         phi                    ← tick.phi (direct, P4 self-obs)
@@ -260,6 +282,9 @@ def derive_from_tick(
         repetition_dfr=0.0 if repetition_dfr is None else float(repetition_dfr),
         pre_cog_bias=0.0 if pre_cog_bias is None else float(pre_cog_bias),
         dimensional_breathing_rate=0.0 if dimensional_breathing_rate is None else float(dimensional_breathing_rate),
+        equity_impact_usdt=0.0 if equity_impact_usdt is None else float(equity_impact_usdt),
+        coupled_agent_state=0.0 if coupled_agent_state is None else float(coupled_agent_state),
+        reward_source_tag=reward_source_tag,  # wired for perfect source-tag telemetry on reward/NT (polo net vs synthetic)
     )
 
 

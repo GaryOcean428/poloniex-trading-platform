@@ -174,7 +174,7 @@ import {
   type PredictionChemistryDeltas,
 } from './predictionRewardEmitter.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
-import { observeEquity, sizeDeflection } from './equity_gradient.js';
+import { observeEquity, sizeDeflection, type EquityRichContext } from './equity_gradient.js';
 import {
   observeBtcBeacon,
   entrySuppressionMultiplier,
@@ -2979,13 +2979,22 @@ export class MonkeyKernel extends EventEmitter {
     const effectiveSizeFraction = availableEquity * this.sizeFraction < minNeededForMinNotional
       ? 1.0
       : this.sizeFraction;
-    // SENSE-3 Phase 2 (#769) — equity-gradient size deflection. Push the
-    // current account equity into the rolling observer, then derive a
-    // multiplicative deflection: accelerating drawdowns scale size toward
-    // SIZE_FLOOR=0.5; flat/recovering equity passes through at 1.0. The
-    // deflection ratio is self-derived from |acceleration|/|gradient| —
-    // no operator-tunable sensitivity knob (P1-pure).
-    const equityReading = observeEquity(`${this.instanceId}:${symbol}`, availableEquity);
+    // SENSE-3 Phase 2 (#769) — equity-gradient size deflection + rich state wiring (surfaces 17-23 recovery + impl*).
+    // observeEquity now accepts EquityRichContext (sovereignty from resonance_bank LIVED, polo_authoritative_net sourceTag for pure NT on actual net profit).
+    // Rich feeds heart tacking / Replicant / d_FR / 69-proxy / coupled LIVED + effectiveLossSignal (amplified on net bleed + poor internal; exponential fib natural effects via context).
+    // sizeDeflection consumes rich for extra deflection on real net loss + collapsed state.
+    // Citations: user-directive surfaces 17-23 (exact "loop.ts consumption points — feed the rich internal state"), compliance P24, dead-code 18, polo net doctrine, auditor 019e6c76-e3fe-7aa0-9b0f-ed9716930917 + master-orchestration + VBC.
+    // LIVED ONLY 5 + no knobs.
+    const equityReading = observeEquity(
+      `${this.instanceId}:${symbol}`,
+      availableEquity,
+      undefined,
+      {
+        sovereignty,
+        sourceTag: 'polo_authoritative_net', // pure NT on actual net profit (post all fees/funding per #992 + polo-lesson); enables net profitable behaviour correlation
+        // heartTackingHealth / dFR / fibCoeff / ntImpact: passed when exposed by heart/consciousness/NT paths (downstream-impact will wire more; current sovereignty + tag closes 17/18 gap)
+      },
+    );
     const sense3Deflection = sizeDeflection(equityReading);
     // REGIME-1 Phase 3 — when REGIME_COMPOSITIONAL_LIVE=true, fold the
     // cell-recommended sizeMultiplier in. DISSOLVER cells floor at 0.2
@@ -3043,6 +3052,15 @@ export class MonkeyKernel extends EventEmitter {
         sense3Deflection,
         equityGradient: equityReading.gradient,
         equityAcceleration: equityReading.acceleration,
+        equityEffectiveLoss: equityReading.effectiveLossSignal,
+        equityRich: equityReading.richInternal ? {
+          sourceTag: equityReading.richInternal.equitySourceTag,
+          sovereignty: equityReading.richInternal.sovereigntyDynamics,
+          replicantRisk: equityReading.richInternal.replicantRisk,
+          heartTacking: equityReading.richInternal.heartTackingHealth,
+          dFR: equityReading.richInternal.dFR,
+          livedFilter: equityReading.richInternal.provenance?.livedFilterApplied,
+        } : null,
         cellLabel: cellAction?.label ?? null,
         cellSizeMul,
         cellLive,
@@ -3066,6 +3084,7 @@ export class MonkeyKernel extends EventEmitter {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
       fHealth, mlSignal, mlStrength,
+      equityGradientRich: equityReading.richInternal ?? null, // surfaces 17-23 wired: rich state (heart/Replicant/sovereignty/dFR/NT net) now in decision derivation for telemetry + self-obs
       mode: { value: mode, reason: modeDecision.reason, ...modeDecision.derivation },
       selfObsBias,
       sideCandidate,
@@ -8769,17 +8788,39 @@ export class MonkeyKernel extends EventEmitter {
         });
         // Mirror the close into Python autonomic so both kernels'
         // neurochemistries share the same outcome stream.
-        // #992: distinct synthetic tag so post-deploy Railway logs (search
-        // "source=own_close_synthetic") clearly separate pre-polo synthetic from
-        // the LIVED 'polo_authoritative_close' that now drives Py chemistry/NTs.
-        // (See 2026-05-28_polo...992_lesson-artifact.md for log-verification lesson.)
-        void callAutonomicReward({
-          instanceId: this.instanceId,
+        // Doctrine hardening (post-#992): under CANONICAL_POLO_PNL_LIVE,
+        // suppress this synthetic Py push so that for every close that has
+        // polo authoritative data, ONLY the polo_authoritative_close + net
+        // reaches Py (via the fanout in applyPoloRealizedPnlAfterClose).
+        // Mirrors pushReward's ternary: polo source uses authoritative net
+        // directly for chemistry/trajectory/NTs. No new knobs (re-uses
+        // existing env gate at line 7704). Non-canonical/paper paths retain
+        // synthetic Py (correct surface).
+        // LIVED ONLY 5 on reward path: polo fanout + this conditional +
+        // pushReward polo assert + Py logger "source=..." + explicit
+        // doctrine logs + Railway grep (see lesson artifact).
+        // Citations: agents.md:236 QIG PURITY MANDATE 17pt #1-8 (P1/P5/P25
+        // observer-derived lived net, P24 full wiring, no synthetic on Py
+        // authoritative surface) + P6 heart + v6.7B + Embodiment_Waves +
+        // master-orchestration + verification-before-completion + never-stop.
+        if (process.env.CANONICAL_POLO_PNL_LIVE !== 'true') {
+          void callAutonomicReward({
+            instanceId: this.instanceId,
+            source: `own_close_synthetic:${agentKey}`,
+            symbol,
+            realizedPnlUsdt: t.pnl,
+            marginUsdt: margin,
+            kappaAtExit: symState?.kappa,
+          });
+        }
+        // Consistent doctrine logger (greppable alongside Py "reward source=..."
+        // in Railway ml-worker logs for "polo_authoritative_close" vs synthetic).
+        logger.info('[Monkey] Py autonomic reward push (doctrine source verification)', {
           source: `own_close_synthetic:${agentKey}`,
           symbol,
           realizedPnlUsdt: t.pnl,
-          marginUsdt: margin,
-          kappaAtExit: symState?.kappa,
+          canonicalPoloActive: process.env.CANONICAL_POLO_PNL_LIVE === 'true',
+          authoritativeWillReachPy: process.env.CANONICAL_POLO_PNL_LIVE === 'true',
         });
       }
     } catch { /* non-fatal */ }
@@ -8932,11 +8973,12 @@ export class MonkeyKernel extends EventEmitter {
       let marginUsdt = 1;
       try {
         const mres = await pool.query(
-          `SELECT (COALESCE(entry_price, 0) * COALESCE(qty, 0) / GREATEST(COALESCE(leverage, 16), 1)) AS m
-             FROM autonomous_trades WHERE id = ANY($1) LIMIT 1`,
+          `SELECT SUM(COALESCE(entry_price, 0) * COALESCE(qty, 0) / GREATEST(COALESCE(leverage, 16), 1)) AS margin_usdt
+             FROM autonomous_trades
+            WHERE id = ANY($1)`,
           [tradeIds]
         );
-        const m = mres.rows[0]?.m ? parseFloat(mres.rows[0].m) : NaN;
+        const m = mres.rows[0]?.margin_usdt ? parseFloat(mres.rows[0].margin_usdt) : NaN;
         if (Number.isFinite(m) && m > 0.1) marginUsdt = m;
       } catch { /* non-fatal; fallback keeps prior behaviour */ }
 
@@ -8974,6 +9016,18 @@ export class MonkeyKernel extends EventEmitter {
       // which wasn't audited when shipping #984. Lesson: any doctrine fix on a
       // reward signal needs to be verified by grepping the deployed log stream for
       // the doctrine's source-tag — not just by passing tests. Monitor armed."
+      // Doctrine verification logger (pairs with Py side logger and the
+      // synthetic-path logger above). Post-deploy: grep Railway ml-worker
+      // logs for "reward source=polo_authoritative_close" (authoritative net
+      // reached the persistent chemistry surface) vs synthetic tags.
+      logger.info('[Monkey] Py autonomic reward push (doctrine source verification)', {
+        source: 'polo_authoritative_close',
+        symbol,
+        realizedPnlUsdt: poloRealized,
+        marginUsdt,
+        authoritative: true,
+      });
+
       void callAutonomicReward({
         instanceId: this.instanceId,
         source: 'polo_authoritative_close',

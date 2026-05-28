@@ -633,8 +633,13 @@ def run_tick(
     is_awake = ocean_state.sleep_phase == "AWAKE"
     woke_this_tick = ocean_state.intervention == "WAKE"
 
+    # Live phi feeds Grok's Wave-4 ser-compression phi-modulation
+    # in autonomic._compute_nc (~line 541). Default in the dataclass
+    # is 0.5 (neutral) so legacy callers don't crash, but live ticks
+    # must thread the real Φ for the modulation to have signal.
     ac_result = autonomic.tick(AutonomicTickInputs(
         phi_delta=phi_delta,
+        phi=phi,
         basin_velocity=bv,
         surprise=abs(phi_delta) * 2.0,
         quantum_weight=regime_weights["quantum"],
@@ -643,11 +648,6 @@ def run_tick(
         is_awake=is_awake,
         woke=woke_this_tick,
         now_ms=now_ms,
-        # Live phi for Grok's Wave-4 ser-compression phi-modulation
-        # (_compute_nc line ~541). Without this the autonomic kernel
-        # would default to 0.5 (neutral) and the modulation has no
-        # signal.
-        phi=phi,
     ))
     nc = ac_result.nc
 

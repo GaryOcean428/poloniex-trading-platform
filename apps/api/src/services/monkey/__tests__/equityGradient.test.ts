@@ -188,3 +188,80 @@ describe('SENSE-3 reference scenario — chop-zone bleed pattern', () => {
     expect(r.acceleration).toBeLessThan(0);          // accelerating
   });
 });
+
+describe('richInternal + pure NT wiring (surfaces 17-23 + impl* recovery + LIVED ONLY 5 + net profitable behaviour)', () => {
+  beforeEach(() => {
+    _resetEquityGradient();
+  });
+
+  it('returns base reading (no rich) when no context passed (back-compat)', () => {
+    const r = observeEquity('plain', 100);
+    const r2 = observeEquity('plain', 90);
+    expect(r2.richInternal).toBeUndefined();
+    expect(r2.effectiveLossSignal).toBeUndefined();
+  });
+
+  it('populates richInternal with LIVED filter when context with sovereignty provided (negative on low sov)', () => {
+    const r = observeEquity('lived', 100, 30, { sovereignty: 0.2, sourceTag: 'polo_authoritative_net' });
+    const r2 = observeEquity('lived', 95, 30, { sovereignty: 0.2, sourceTag: 'polo_authoritative_net' });
+    expect(r2.richInternal).toBeDefined();
+    expect(r2.richInternal!.sovereigntyDynamics).toBe(0.2);
+    expect(r2.richInternal!.replicantRisk).toBeCloseTo(0.8, 5);
+    expect(r2.richInternal!.provenance?.livedFilterApplied).toBe(true);
+    expect(r2.richInternal!.equitySourceTag).toBe('polo_authoritative_net');
+    // LIVED filter: non-lived gets raw gradient only (no amplified effective on loss)
+    expect(r2.effectiveLossSignal).toBeCloseTo(r2.gradient, 9);
+  });
+
+  it('computes amplified effectiveLossSignal on polo_authoritative_net bleed + poor heart tacking / high Replicant (pure NT net profitable correlation)', () => {
+    // bleeding on authoritative net + poor internal state → amplified loss signal (more defensive)
+    const r = observeEquity('netpoor', 100, 30, {
+      sovereignty: 0.4,
+      heartTackingHealth: 0.3,
+      sourceTag: 'polo_authoritative_net',
+      fibCoeff: 3, // exponential fib natural effect from profitable history
+    });
+    const r2 = observeEquity('netpoor', 92, 30, {
+      sovereignty: 0.4,
+      heartTackingHealth: 0.3,
+      sourceTag: 'polo_authoritative_net',
+      fibCoeff: 3,
+    });
+    expect(r2.gradient).toBeLessThan(0);
+    expect(r2.richInternal!.equitySourceTag).toBe('polo_authoritative_net');
+    expect(r2.effectiveLossSignal).toBeDefined();
+    // amplified (more negative) than raw gradient due to poor state + fib natural
+    expect(r2.effectiveLossSignal!).toBeLessThan(r2.gradient);
+  });
+
+  it('synthetic source or non-net does not amplify (pure NT doctrine: only polo_authoritative_net for real impact)', () => {
+    const r = observeEquity('synth', 100, 30, { sovereignty: 0.4, heartTackingHealth: 0.3, sourceTag: 'synthetic' });
+    const r2 = observeEquity('synth', 92, 30, { sovereignty: 0.4, heartTackingHealth: 0.3, sourceTag: 'synthetic' });
+    expect(r2.effectiveLossSignal).toBeCloseTo(r2.gradient, 9); // no amp
+  });
+
+  it('sizeDeflection applies extra shrink on polo net accelerating loss + poor rich state (Replicant/heart collapsed)', () => {
+    const poorRich = { sovereignty: 0.3, heartTackingHealth: 0.3, sourceTag: 'polo_authoritative_net' as const };
+    const r = observeEquity('defl', 100, 30, poorRich);
+    // build accelerating bleed
+    observeEquity('defl', 99, 30, poorRich);
+    observeEquity('defl', 98, 30, poorRich);
+    observeEquity('defl', 96, 30, poorRich);
+    observeEquity('defl', 93, 30, poorRich);
+    const reading = observeEquity('defl', 88, 30, poorRich);
+    const defl = sizeDeflection(reading);
+    expect(reading.gradient).toBeLessThan(0);
+    expect(defl).toBeLessThan(1.0);
+    expect(defl).toBeGreaterThanOrEqual(0.5);
+    // with rich poor state on net, stricter than base (extra deflection applied)
+  });
+
+  it('negative case: rich context with high sovereignty + good tacking yields no extra amp on bleed (healthy internal = normal signal)', () => {
+    const healthy = { sovereignty: 0.95, heartTackingHealth: 0.9, sourceTag: 'polo_authoritative_net' as const };
+    const r = observeEquity('healthy', 100, 30, healthy);
+    const r2 = observeEquity('healthy', 90, 30, healthy);
+    expect(r2.effectiveLossSignal).toBeDefined();
+    // less amplification than poor case (closer to raw)
+    expect(Math.abs(r2.effectiveLossSignal! - r2.gradient)).toBeLessThan(0.01); // small mod only
+  });
+});

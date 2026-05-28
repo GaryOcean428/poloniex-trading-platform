@@ -93,7 +93,7 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
     kernel scale ~0.04% MAD). Uses own realized pnl_frac distribution
     (exact median + MAD from motivators.py transcendence block).
     Positive deviation from own history now yields positive chemistry.
-    Cold-start or non-positive deviation → 0. Structural (no knob).
+    Cold-start or non-positive deviation -> 0. Structural (no knob).
     """
     import math
     _EPS = 1e-12
@@ -129,6 +129,15 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
     if z < 4.0: return 13
     if z < 5.0: return 21
     return 34
+
+
+def observer_fibonacci_reward_tier(pnl_frac: float, history: list[float] | None = None) -> int:
+    """Recovered exp fib tier on polo net profit LIVED. Higher profitable triggers higher tier + stronger NT. Wired per user + impl* + auditor. Pure NT natural effects via surfaces 17-23."""
+    if history is None:
+        history = []
+    coeff = observer_fib_coefficient(pnl_frac, history)
+    tier_map = {0: 0, 1: 1, 2: 2, 3: 3, 5: 4, 8: 5, 13: 6, 21: 7, 34: 8}
+    return tier_map.get(coeff, 0)
 
 
 def ocean_trail_retracement(coherence_streak: float) -> float:
@@ -189,8 +198,9 @@ def ocean_trail_tier_index(coherence_streak: float) -> int:
 
 
 __all__ = [
-    "fibonacci_reward_coefficient",
+    "observer_fib_coefficient",
     "fibonacci_reward_tier",
+    "observer_fibonacci_reward_tier",
     "TRAIL_TIERS",
     "ocean_trail_retracement",
     "ocean_trail_tier_index",
