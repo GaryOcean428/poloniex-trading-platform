@@ -8865,6 +8865,15 @@ export class MonkeyKernel extends EventEmitter {
     const { tradeIds, symbol, closeTimeMs, side, grossPnlByRow } = params;
     if (tradeIds.length === 0) return;
 
+    // Entry-point info log so we can confirm the canonical path is firing
+    // at all on each close. Was previously silent (everything past here
+    // was debug-level, suppressed by LOG_LEVEL=info), which masked the
+    // 2026-05-28 issue where CANONICAL_POLO_PNL_LIVE=true didn't actually
+    // produce polo_authoritative_close events on the live deploy.
+    logger.info('[Monkey] Polo-authoritative fetch starting', {
+      symbol, side, closeTimeMs, tradeIdsCount: tradeIds.length,
+    });
+
     try {
       // 2026-05-28 silent-failure fix (CC1): the prior implementation
       // accepted credentials from the caller and bailed when they were
@@ -8929,8 +8938,17 @@ export class MonkeyKernel extends EventEmitter {
       }
 
       if (!bestMatch) {
-        logger.debug('[Monkey] no Polo position history match within ±90s for canonical pnl', {
+        // Promoted to warn 2026-05-28: with the canonical path live, missing a
+        // ±90s match is the most likely silent-failure mode (history pagination,
+        // sub-second clock skew, posSide field rename). Logging it visibly lets
+        // us tune the window or field-extraction without re-shipping the kernel.
+        logger.warn('[Monkey] no Polo position history match within ±90s for canonical pnl', {
           symbol, side, closeTimeMs,
+          histRows: histRows.length,
+          histSample: histRows.slice(0, 3).map((p: any) => ({
+            closeTime: p.closeTime ?? p.cTime ?? p.closeTimestamp ?? p.updateTime,
+            side: p.posSide ?? p.side,
+          })),
         });
         return;
       }
@@ -9037,7 +9055,11 @@ export class MonkeyKernel extends EventEmitter {
         kappaAtExit: undefined,
       });
     } catch (err) {
-      logger.debug('[Monkey] Polo history fetch for canonical pnl failed (non-fatal, synthetic remains)', {
+      // Promoted from debug → warn 2026-05-28: silent debug suppressed the
+      // post-flip diagnostic window. With CANONICAL_POLO_PNL_LIVE=true,
+      // failures here are the difference between real and synthetic chemistry
+      // feeding the kernel — they must be visible at LOG_LEVEL=info.
+      logger.warn('[Monkey] Polo history fetch for canonical pnl failed (non-fatal, synthetic remains)', {
         symbol, err: err instanceof Error ? err.message : String(err),
       });
     }
