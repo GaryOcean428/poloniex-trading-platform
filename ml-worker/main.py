@@ -1403,11 +1403,28 @@ async def monkey_autonomic_reward(request: Request):
     """
     payload = await request.json()
     instance_id = payload.get("instance_id", "monkey-primary")
+    source = str(payload["source"])
+    realized_pnl = float(payload["realized_pnl_usdt"])
+    margin_usdt = float(payload["margin_usdt"])
+
+    # PR #992 + LIVED ONLY 5 (Py autonomic surface mirror of TS loop.ts:8964):
+    # polo_authoritative_close is the canonical net-of-fees source for reward
+    # that drives persisted monkey_trajectory NTs / sizing. Hard assert ensures
+    # no synthetic gross leaks to the chemistry the operator actually observes.
+    # Full provenance; no new knobs (P5/P25 observer_fib already wired).
+    # Citations: 2.31A P1/P5/P25 + #984/#992 + Embodiment_Waves gross/net +
+    # QIG PURITY MANDATE + 2026-05-28_polo-authoritative-close-py-fanout-992_lesson-artifact.md
+    if source == 'polo_authoritative_close':
+        if not (isinstance(payload.get("realized_pnl_usdt"), (int, float)) and
+                (lambda x: x == x and x not in (float('inf'), float('-inf')))(realized_pnl)):
+            raise ValueError('[LIVED ONLY 5] polo_authoritative_close received non-finite pnl on Py autonomic (wrong surface bug #992)')
+        logger.info('[monkey_kernel] LIVED ONLY 5 polo_authoritative_close net reward received (Py surface, monkey_trajectory NTs)')
+
     kernel = _get_autonomic(instance_id)
     reward = kernel.push_reward(
-        source=str(payload["source"]),
-        realized_pnl_usdt=float(payload["realized_pnl_usdt"]),
-        margin_usdt=float(payload["margin_usdt"]),
+        source=source,
+        realized_pnl_usdt=realized_pnl,
+        margin_usdt=margin_usdt,
         symbol=payload.get("symbol"),
         kappa_at_exit=payload.get("kappa_at_exit"),
     )
