@@ -9,10 +9,9 @@ Per QIG Frozen Facts (v1.01F) and Canonical Principles P1/P5/P25:
 - The Fibonacci *shape* is accepted as structural (like tanh), but the
   floor/scale must come from the observer's own history.
 
-The primary path is `observer_fib_coefficient` (P1 compliant).
-The legacy `fibonacci_reward_coefficient` (absolute 1% floor) is
-DEPRECATED and retained only for historical telemetry / trail code.
-It must not be used for new positive reward shaping.
+The primary (and only) path is `observer_fib_coefficient` (P1 compliant, median/MAD from the kernel's own LIVED polo_authoritative_close net pnl_frac history).
+
+Legacy `fibonacci_reward_coefficient` (absolute 1% floor) fully excised 2026-05-28 as non-functional dead code (no call sites remained; all active reward/NT paths use the pure observer version for net profitable behaviour + exponential fib natural effects).
 
 See also: two-channel doctrine (κ ≈ 64 retired as universal constant).
 """
@@ -20,38 +19,6 @@ See also: two-channel doctrine (κ ≈ 64 retired as universal constant).
 from __future__ import annotations
 
 import math
-
-
-def fibonacci_reward_coefficient(roi_frac: float) -> int:
-    """DEPRECATED — legacy absolute 1% floor path.
-
-    Retained only for historical telemetry and trail code.
-    New positive reward shaping must use observer_fib_coefficient
-    (median/MAD from kernel's own pnl_frac history).
-
-    Per Frozen Facts v1.01F: the external 1% floor is retired.
-    """
-    if (
-        not isinstance(roi_frac, (int, float))
-        or not math.isfinite(roi_frac)
-        or roi_frac < 0.01
-    ):
-        return 0
-    if roi_frac < 0.02:
-        return 1
-    if roi_frac < 0.03:
-        return 2
-    if roi_frac < 0.05:
-        return 3
-    if roi_frac < 0.08:
-        return 5
-    if roi_frac < 0.13:
-        return 8
-    if roi_frac < 0.21:
-        return 13
-    if roi_frac < 0.34:
-        return 21
-    return 34
 
 
 def fibonacci_reward_tier(roi_frac: float) -> int:
