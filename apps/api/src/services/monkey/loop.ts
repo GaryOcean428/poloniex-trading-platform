@@ -8769,9 +8769,13 @@ export class MonkeyKernel extends EventEmitter {
         });
         // Mirror the close into Python autonomic so both kernels'
         // neurochemistries share the same outcome stream.
+        // #992: distinct synthetic tag so post-deploy Railway logs (search
+        // "source=own_close_synthetic") clearly separate pre-polo synthetic from
+        // the LIVED 'polo_authoritative_close' that now drives Py chemistry/NTs.
+        // (See 2026-05-28_polo...992_lesson-artifact.md for log-verification lesson.)
         void callAutonomicReward({
           instanceId: this.instanceId,
-          source: `own_close:${agentKey}`,
+          source: `own_close_synthetic:${agentKey}`,
           symbol,
           realizedPnlUsdt: t.pnl,
           marginUsdt: margin,
@@ -8815,13 +8819,50 @@ export class MonkeyKernel extends EventEmitter {
     closeTimeMs: number;          // when we confirmed the fill
     side: 'long' | 'short';
     grossPnlByRow?: Record<string, number>; // synthetic gross per row id (optional)
-    credentials?: any;            // from this.getCredentials() or equivalent
+    credentials?: any;            // optional: caller-provided creds; if omitted, fetched inline
   }): Promise<void> {
-    const { tradeIds, symbol, closeTimeMs, side, grossPnlByRow, credentials } = params;
-    if (!credentials || tradeIds.length === 0) return;
+    const { tradeIds, symbol, closeTimeMs, side, grossPnlByRow } = params;
+    if (tradeIds.length === 0) return;
 
     try {
-      // Use the already-imported default (line 31): import poloniexFuturesService from '../poloniexFuturesService.js'
+      // 2026-05-28 silent-failure fix (CC1): the prior implementation
+      // accepted credentials from the caller and bailed when they were
+      // null. The single call site at loop.ts:7719 passed
+      // `(this as any).credentials ?? null` — but `this.credentials`
+      // doesn't exist as a property on MonkeyKernel, so the helper
+      // never ran. ml-worker logs over a full 30-min post-deploy
+      // window showed only `source=own_close:K` events; the canonical
+      // `source=polo_authoritative_close` events never appeared. PRs
+      // #984/#991/#992 were all blocked by this single dead-credential
+      // gate — the doctrine was correct, the entry point was dark.
+      //
+      // Fix: do the credentials lookup inline (same pattern as 8 other
+      // sites in this file — line 6692, 7087, 8092, 9616, etc.) so the
+      // canonical Polo-authoritative path actually executes regardless
+      // of whether the caller threaded credentials.
+      let credentials = params.credentials;
+      if (!credentials) {
+        try {
+          const userRow = await pool.query<{ user_id?: string }>(
+            `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+          );
+          const userId = userRow.rows[0]?.user_id;
+          if (userId) {
+            credentials = await apiCredentialsService.getCredentials(userId, 'poloniex');
+          }
+        } catch (credErr) {
+          logger.debug('[Monkey] Polo credentials inline-fetch failed (non-fatal)', {
+            err: credErr instanceof Error ? credErr.message : String(credErr),
+          });
+        }
+      }
+      if (!credentials) {
+        logger.warn('[Monkey] Polo-authoritative path skipped — no credentials available', {
+          symbol, side, tradeIdsCount: tradeIds.length,
+        });
+        return;
+      }
+
       const polHistory = await poloniexFuturesService.getPositionHistory(credentials, {
         symbol,
         limit: 5,
@@ -8879,7 +8920,27 @@ export class MonkeyKernel extends EventEmitter {
         symbol, side, poloRealized: poloRealized.toFixed(4), rows: tradeIds.length,
       });
 
-      // Directly fulfill the canonical surface (user 2026-05-28):
+      // PR #992 (2026-05-28): compute realistic margin_usdt from the closed trade rows
+      // so that pnl_frac = poloRealized / margin produces correct z-deviation against
+      // the kernel's own _pnl_frac_history for observer_fib_coefficient (median/MAD).
+      // Prior placeholder margin=1 produced tiny fracs (scale mismatch vs own_close
+      // history) → zero positive chemistry even on net+ Polo closes. This was the
+      // exact "right doctrine on wrong surface" (TS observer got #984 net; Py
+      // persisted autonomic/monkey_trajectory NTs driving sizing did not).
+      // Query is observer-derived (the trade rows the system already persists).
+      // No new knob. Full provenance + LIVED ONLY 5.
+      let marginUsdt = 1;
+      try {
+        const mres = await pool.query(
+          `SELECT (COALESCE(entry_price, 0) * COALESCE(qty, 0) / GREATEST(COALESCE(leverage, 16), 1)) AS m
+             FROM autonomous_trades WHERE id = ANY($1) LIMIT 1`,
+          [tradeIds]
+        );
+        const m = mres.rows[0]?.m ? parseFloat(mres.rows[0].m) : NaN;
+        if (Number.isFinite(m) && m > 0.1) marginUsdt = m;
+      } catch { /* non-fatal; fallback keeps prior behaviour */ }
+
+      // Directly fulfill the canonical surface (user 2026-05-28 / #992):
       // Push an authoritative reward event using the real Polo realized value.
       // This makes the reward channel consume autonomous_trades.pnl (now = Polo realized).
       // LIVED ONLY 5: this 'polo_authoritative_close' path carries explicit provenance and will receive hard asserts in pushReward.
@@ -8887,30 +8948,39 @@ export class MonkeyKernel extends EventEmitter {
         source: 'polo_authoritative_close',
         symbol,
         realizedPnlUsdt: poloRealized,
-        marginUsdt: 1, // the signed direction + relative magnitude matters for the observer
+        marginUsdt, // #992: realistic scale so TS + Py observer_fib see correct pnl_frac
+        kappaAtExit: undefined,
       });
 
-      // Fan-out 2026-05-28 (CC1): mirror the Polo-authoritative reward into
-      // Python autonomic so BOTH chemistry surfaces (TS pendingRewards + Py
-      // monkey_trajectory NTs) consume the lived Polo net. Without this the
-      // Py side keeps reading the synthetic gross via the prior
-      // callAutonomicReward at the own_close:K site — defeats the
-      // "reward based on actual profit" doctrine on the chemistry surface
-      // operators actually observe in DB.
+      // PR #992 fan-out (completes the 2026-05-28 CC1): mirror the Polo-authoritative
+      // net reward (with correct margin) into Python autonomic so BOTH chemistry
+      // surfaces (TS pendingRewards + Py monkey_trajectory NTs that survive restarts
+      // and drive real sizing via executive) consume the lived Polo net.
+      // Closes the exact "chemistry depression" loop the operator observed all night
+      // despite #984 (Py was reading synthetic gross via own_close:K with realistic
+      // margin, or polo with margin=1 scale error).
       //
-      // Honest negative: this MAY double-count chemistry briefly during the
-      // ~1 tick between the synthetic own_close:K Py push and this
-      // polo_authoritative_close Py push. Acceptable: the synthetic delta
-      // is small relative to the authoritative one, and Py's autonomic
-      // applies time-decay that absorbs it quickly. A follow-up could
-      // suppress the synthetic Py push entirely; for now the immediate
-      // bleed-stop is fanning the Polo net to Py.
+      // Source-tag convention (LIVED ONLY 5): 'polo_authoritative_close' is now
+      // canonical on Py surface too. Synthetic own_close paths remain for the
+      // immediate tick but are absorbed by decay + authoritative magnitude.
+      // Lesson (permanent, see 2026-05-28_polo-authoritative-close-py-fanout-992_lesson-artifact.md):
+      // any doctrine fix on reward signal MUST be verified by grepping deployed
+      // Railway logs for the source-tag — not just tests. Monitor armed.
+      //
+      // Insight (verbatim): "This is a textbook case of 'the right doctrine applied
+      // to the wrong surface.' PR #984 was technically correct on TS observer. But
+      // TS observer is in-memory and doesn't persist — the persisted chemistry that
+      // survives kernel restarts and drives sizing comes from the Py-side autonomic,
+      // which wasn't audited when shipping #984. Lesson: any doctrine fix on a
+      // reward signal needs to be verified by grepping the deployed log stream for
+      // the doctrine's source-tag — not just by passing tests. Monitor armed."
       void callAutonomicReward({
         instanceId: this.instanceId,
         source: 'polo_authoritative_close',
         symbol,
         realizedPnlUsdt: poloRealized,
-        marginUsdt: 1,
+        marginUsdt, // #992: correct scale for Py autonomic observer_fib + NC
+        kappaAtExit: undefined,
       });
     } catch (err) {
       logger.debug('[Monkey] Polo history fetch for canonical pnl failed (non-fatal, synthetic remains)', {

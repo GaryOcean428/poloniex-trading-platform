@@ -410,9 +410,19 @@ class AutonomicKernel:
                 "pnl_fraction": reward.pnl_fraction,
                 "at_ms": reward.at_ms,
             })
+        # PR #992 + source-tagging (LIVED ONLY 5 on Py surface): polo_authoritative_close
+        # is now the canonical net reward for this persisted autonomic (drives
+        # monkey_trajectory NTs + executive sizing). Enhanced log enables the
+        # permanent verification lesson: grep deployed Railway logs for
+        # "source=polo_authoritative_close" (must dominate on net+ closes).
+        # See 2026-05-28_polo-authoritative-close-py-fanout-992_lesson-artifact.md
+        # (insight verbatim + "Monitor armed").
+        is_polo_lived = source == 'polo_authoritative_close'
+        log_prefix = '[LIVED ONLY 5 polo net]' if is_polo_lived else ''
         logger.info(
-            "[%s.autonomic] reward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% oceanTier=%d oceanCoeff=%d dop=%.3f ser=%.3f endo=%.3f",
+            "[%s.autonomic] %sreward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% oceanTier=%d oceanCoeff=%d dop=%.3f ser=%.3f endo=%.3f",
             self.label,
+            log_prefix,
             source,
             symbol,
             realized_pnl_usdt,
