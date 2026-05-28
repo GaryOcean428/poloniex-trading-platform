@@ -29,6 +29,7 @@ import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
+import { apiCache } from '../../utils/apiCache.js';
 import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
 import {
   paperClosePosition,
@@ -8980,24 +8981,57 @@ export class MonkeyKernel extends EventEmitter {
       // For USDT-M perp the feeCcy is consistently 'USDT'. We log + skip
       // any fill that comes back in a non-USDT fee (defensive, shouldn't
       // happen on these contracts).
+      //
+      // Parallel fetches + bounded retry with cache bypass (Copilot review
+      // on PR #1000 round 3, 2026-05-28 05:06 UTC):
+      // - Parallel: each chunk call is independent; Promise.allSettled keeps
+      //   the per-ordId try/catch behaviour without N × RTT latency on the
+      //   close hot path.
+      // - Bounded retry: apiCache has a 5s TTL on /trade/order/trades, so a
+      //   single early empty-result hit (Polo hasn't indexed the fills yet)
+      //   would otherwise be cached for 5s and any retry would see the
+      //   stale empty. We invalidate the GET:/trade/order/trades prefix
+      //   between attempts. 3 attempts × 200ms = 600ms upper bound,
+      //   acceptable on the close hot path; in practice Polo usually
+      //   indexes within the first try.
       let totalCloseFees = 0;
       let fillCount = 0;
       const nonUsdtFees: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
-      // Per-ordId fill tracking. Bails below if ANY chunk returns zero fills —
-      // Copilot review on PR #1000 round 2 (2026-05-28 04:52 UTC) flagged that
-      // closes >9,999 contracts are chunked into multiple orders. Polo's fill
-      // indexing is async, so it's possible to see fills for chunk 1 but not
-      // yet chunk 2 at the moment of this query. If we accept a partial
-      // result, totalCloseFees is under-counted → poloRealized overstates net
-      // → silently corrupts the reward ledger in the exact "silent dark"
-      // class this PR exists to eliminate.
       const fillsByOrdId: Record<string, number> = {};
-      for (const ordId of closeOrderIds) {
-        fillsByOrdId[ordId] = 0;
-        try {
-          const resp = await poloniexFuturesService.getExecutionDetails(credentials, {
-            symbol, ordId, limit: 100,
-          });
+      for (const ordId of closeOrderIds) fillsByOrdId[ordId] = 0;
+
+      const MAX_ATTEMPTS = 3;
+      const RETRY_DELAY_MS = 200;
+      let attempt = 0;
+      while (attempt < MAX_ATTEMPTS) {
+        attempt += 1;
+        if (attempt > 1) {
+          // Burst any cached empty result before retrying.
+          apiCache.invalidatePrefix('GET:/trade/order/trades');
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        }
+
+        // Only re-fetch ordIds that haven't returned any fills yet.
+        const pending = closeOrderIds.filter((id) => fillsByOrdId[id] === 0);
+        if (pending.length === 0) break;
+
+        const results = await Promise.allSettled(
+          pending.map((ordId) =>
+            poloniexFuturesService.getExecutionDetails(credentials, {
+              symbol, ordId, limit: 100,
+            }).then((resp) => ({ ordId, resp })),
+          ),
+        );
+
+        for (const r of results) {
+          if (r.status === 'rejected') {
+            logger.warn('[Monkey] /trade/order/trades fetch failed for fee subtraction', {
+              symbol, attempt,
+              err: r.reason instanceof Error ? r.reason.message : String(r.reason),
+            });
+            continue;
+          }
+          const { ordId, resp } = r.value as { ordId: string; resp: any };
           const fills: any[] = Array.isArray(resp) ? resp : (resp?.data ?? []);
           for (const f of fills) {
             const feeCcy = String(f.feeCcy ?? '').toUpperCase();
@@ -9011,11 +9045,6 @@ export class MonkeyKernel extends EventEmitter {
             fillCount += 1;
             fillsByOrdId[ordId] += 1;
           }
-        } catch (fetchErr) {
-          logger.warn('[Monkey] /trade/order/trades fetch failed for fee subtraction', {
-            symbol, ordId,
-            err: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
-          });
         }
       }
 
@@ -9029,15 +9058,14 @@ export class MonkeyKernel extends EventEmitter {
         .filter(([_, n]) => n === 0)
         .map(([ordId]) => ordId);
       if (ordIdsWithNoFills.length > 0) {
-        // Either all chunks are unindexed (cold path — Polo lag), or some
-        // are and some aren't (partial-indexing race). In both cases the
-        // safe action is to bail: the synthetic own_close already pushed
-        // an immediate reward, the Polo follow-up will fire again on the
-        // next close — but we don't write a partial under-counted fee
-        // value to the reward channel.
-        logger.warn('[Monkey] Polo-authoritative skipped — some/all close ordIds have no fills indexed yet', {
+        // Even after MAX_ATTEMPTS retries, some chunks aren't indexed.
+        // The synthetic own_close already pushed an immediate reward; the
+        // Polo follow-up will fire again on the next close. Don't write a
+        // partial under-counted fee value to the reward channel.
+        logger.warn('[Monkey] Polo-authoritative skipped — some/all close ordIds still unindexed after retries', {
           symbol, side,
           closeOrderIdsCount: closeOrderIds.length,
+          attempts: attempt,
           ordIdsWithNoFills,
           fillsByOrdId,
         });
@@ -9060,34 +9088,40 @@ export class MonkeyKernel extends EventEmitter {
         poloRealized: poloRealized.toFixed(4),
       });
 
-      // Write Polo authoritative net pnl to the rows, and preserve synthetic as gross_pnl.
-      // poloRealized is computed per-close-group (sum of gross − close fees);
-      // pro-rata across rows by their SIGNED gross share so each row's `pnl`
-      // reflects its proportional contribution to the close-group's net.
+      // Write Polo authoritative net pnl to the rows, and preserve synthetic
+      // as gross_pnl.
       //
-      // Signed pro-rata (Copilot review on PR #1000 round 2): for mixed-sign
-      // close groups (DCA stacks with entries above + below the exit price are
-      // common — winner + loser closed in the same flush), the prior
-      // abs(gross_i)/Σ|gross_j| share could produce rowNet whose sign opposes
-      // gross_i. That would silently corrupt `fees_paid = gross_i − rowNet_i`
-      // (could go negative or be huge). Switching to signed shares —
-      // gross_i / grossSum × poloRealized — preserves the sign relationship
-      // because we scale by a constant factor.
+      // Fee distribution model (Copilot review on PR #1000 round 3): fees are
+      // proportional to trade volume (≈ |gross|), not to signed gross. So
+      // distribute totalCloseFees by ABSOLUTE share and compute
+      //   rowNet_i = gross_i − rowFee_i
+      // This keeps three invariants simultaneously:
+      //   1. sign(rowNet_i) == sign(gross_i) (winners stay winners, losers
+      //      stay losers — no silent sign inversion in mixed-sign DCA stacks)
+      //   2. rowFee_i ≥ 0 for every row (outcomeRingStats.ts rejects negative
+      //      fees, so non-negative is required for the per-row reconciler to
+      //      consume them)
+      //   3. Σ rowNet_i == poloRealized (sum is conserved by construction)
       //
-      // Edge case: grossSum near zero (extremely rare — perfectly balanced
-      // wins and losses in the same close). Fall back to equal split rather
-      // than divide by ~0.
+      // Earlier iterations tried signed pro-rata (gross_i / grossSum × poloRealized)
+      // which preserves the sum but violates invariants 1 and 2 for mixed-sign
+      // groups. Earlier still used absolute share for the net itself, which
+      // violated invariant 1.
+      //
+      // Edge case: Σ|gross_j| near zero (extremely rare — all rows landed at
+      // their entry price). Fall back to equal fee split.
       //
       // pnl_source stays 'polo_history' — that's the column's CHECK constraint
       // (allowed values: 'polo_history' | 'synthetic_fallback', per migration
-      // 061_polo_authoritative_pnl_columns.sql:33). The provenance "gross − close
-      // fees" is captured in the preceding info log + this comment. A distinct
-      // provenance tag would require a migration to expand the CHECK enum.
-      const grossSumNumeric = tradeIds.reduce(
-        (s, id) => s + Number(grossPnlByRow?.[id] ?? 0),
+      // 061_polo_authoritative_pnl_columns.sql:33). The provenance "gross −
+      // close fees" is captured in the preceding info log + this comment. A
+      // distinct provenance tag would require a migration to expand the
+      // CHECK enum.
+      const grossAbsTotal = tradeIds.reduce(
+        (s, id) => s + Math.abs(Number(grossPnlByRow?.[id] ?? 0)),
         0,
       );
-      const grossSumIsZero = Math.abs(grossSumNumeric) < 1e-9;
+      const grossAbsTotalIsZero = grossAbsTotal < 1e-9;
       for (const id of tradeIds) {
         // grossRaw distinguishes "no synthetic recorded for this row"
         // (undefined → null) from "synthetic was 0" (number → 0). The
@@ -9095,10 +9129,11 @@ export class MonkeyKernel extends EventEmitter {
         // second should write 0.
         const grossRaw = grossPnlByRow?.[id];
         const gross = Number(grossRaw ?? 0);
-        const share = grossSumIsZero
+        const feeShare = grossAbsTotalIsZero
           ? 1 / tradeIds.length
-          : gross / grossSumNumeric;
-        const rowNet = poloRealized * share;
+          : Math.abs(gross) / grossAbsTotal;
+        const rowFee = totalCloseFees * feeShare;
+        const rowNet = gross - rowFee;
         await pool.query(
           `UPDATE autonomous_trades
               SET pnl = $1,
