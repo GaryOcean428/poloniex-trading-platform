@@ -256,7 +256,7 @@ export function sizeDeflection(reading: EquityGradientReading): number {
   // apply extra deflection (smaller size) — "bleeding BECAUSE internal state collapsed".
   // Pure derivation + LIVED filter; no new knobs. Correlates to exponential fib / NT natural effects via rich.
   const r = reading.richInternal;
-  if (r && r.equitySourceTag === 'polo_authoritative_net' && reading.gradient < 0) {
+  if (r && !r.provenance.livedFilterApplied && r.equitySourceTag === 'polo_authoritative_net' && reading.gradient < 0) {
     if (r.heartTackingHealth < 0.45 || r.replicantRisk > 0.45 || r.sovereigntyDynamics < 0.55) {
       const extra = 0.08 * Math.max(r.replicantRisk, 1 - r.heartTackingHealth); // geometric extra shrink, bounded by SIZE_FLOOR
       baseDefl = Math.max(SIZE_FLOOR, baseDefl - extra);

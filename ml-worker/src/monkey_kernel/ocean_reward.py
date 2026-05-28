@@ -131,7 +131,7 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
     return 34
 
 
-def fibonacci_reward_tier(pnl_frac: float, history: list[float] | None = None) -> int:
+def observer_fibonacci_reward_tier(pnl_frac: float, history: list[float] | None = None) -> int:
     """Recovered exp fib tier on polo net profit LIVED. Higher profitable triggers higher tier + stronger NT. Wired per user + impl* + auditor. Pure NT natural effects via surfaces 17-23."""
     if history is None:
         history = []
@@ -200,6 +200,7 @@ def ocean_trail_tier_index(coherence_streak: float) -> int:
 __all__ = [
     "observer_fib_coefficient",
     "fibonacci_reward_tier",
+    "observer_fibonacci_reward_tier",
     "TRAIL_TIERS",
     "ocean_trail_retracement",
     "ocean_trail_tier_index",

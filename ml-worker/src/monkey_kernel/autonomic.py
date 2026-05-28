@@ -357,7 +357,7 @@ class AutonomicKernel:
         # history now produces meaningful positive chemistry.
         # Cold-start now gives gentle positive ramp (see observer_fib_coefficient).
         # History < 2 samples -> tier 1 for positive pnl_frac (prevents starvation).
-        from .ocean_reward import observer_fib_coefficient, fibonacci_reward_tier
+        from .ocean_reward import observer_fib_coefficient, observer_fibonacci_reward_tier
         from .parameters import get_registry
         # Maintain bounded rolling history on the autonomic instance
         # 2026-05-28 acting subagent (Neurotransmitter Purity + natural effects, recovered from impl-6 surfaces 17-23 / impl-1 purge / impl-7 compliance / polo-authoritative lesson / compliance-assessment / reward-source-doctrine + user "net profitable behaviour rewarded via neurotransmitters" + "all NT calculated purely"):
@@ -377,7 +377,7 @@ class AutonomicKernel:
         if len(self._pnl_frac_history) > hist_max:
             self._pnl_frac_history = self._pnl_frac_history[-hist_max:]
         ocean_coeff = observer_fib_coefficient(pnl_frac, self._pnl_frac_history)
-        ocean_tier = fibonacci_reward_tier(pnl_frac, self._pnl_frac_history)  # exponential fib tier on LIVED polo net (how profitable) for NT reward strength + Railway telemetry (recovered + wired)
+        ocean_tier = observer_fibonacci_reward_tier(pnl_frac, self._pnl_frac_history)  # exponential fib tier on LIVED polo net (how profitable) for NT reward strength + Railway telemetry (recovered + wired)
 
         # 2026-05-28 perfect telemetry + source tags for Railway log verification
         # (per polo-authoritative lesson + reward-source doctrine): grep deployed
@@ -463,7 +463,7 @@ class AutonomicKernel:
         log_prefix = '[LIVED ONLY 5 polo net]' if is_polo_lived else ''
         # Wire recovered pure fibonacci_reward_tier (impl* + user exact: net profitable behaviour + exponential fib + pure NT calc with natural effects)
         # + LIVED polo net history (post #992 fanout). Auditor 019e6c76-e3fe-7aa0-9b0f-ed9716930917 visible.
-        fib_tier = fibonacci_reward_tier(pnl_frac, self._pnl_frac_history if hasattr(self, '_pnl_frac_history') else None)
+        fib_tier = observer_fibonacci_reward_tier(pnl_frac, self._pnl_frac_history if hasattr(self, '_pnl_frac_history') else None)
         logger.info(
             "[%s.autonomic] %sreward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% oceanTier=%d oceanCoeff=%d dop=%.3f ser=%.3f endo=%.3f (pure NT net_profit_polo=%s exponential_fib_natural_effects)",
             self.label,
