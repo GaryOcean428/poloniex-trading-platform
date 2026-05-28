@@ -8889,6 +8889,29 @@ export class MonkeyKernel extends EventEmitter {
         realizedPnlUsdt: poloRealized,
         marginUsdt: 1, // the signed direction + relative magnitude matters for the observer
       });
+
+      // Fan-out 2026-05-28 (CC1): mirror the Polo-authoritative reward into
+      // Python autonomic so BOTH chemistry surfaces (TS pendingRewards + Py
+      // monkey_trajectory NTs) consume the lived Polo net. Without this the
+      // Py side keeps reading the synthetic gross via the prior
+      // callAutonomicReward at the own_close:K site — defeats the
+      // "reward based on actual profit" doctrine on the chemistry surface
+      // operators actually observe in DB.
+      //
+      // Honest negative: this MAY double-count chemistry briefly during the
+      // ~1 tick between the synthetic own_close:K Py push and this
+      // polo_authoritative_close Py push. Acceptable: the synthetic delta
+      // is small relative to the authoritative one, and Py's autonomic
+      // applies time-decay that absorbs it quickly. A follow-up could
+      // suppress the synthetic Py push entirely; for now the immediate
+      // bleed-stop is fanning the Polo net to Py.
+      void callAutonomicReward({
+        instanceId: this.instanceId,
+        source: 'polo_authoritative_close',
+        symbol,
+        realizedPnlUsdt: poloRealized,
+        marginUsdt: 1,
+      });
     } catch (err) {
       logger.debug('[Monkey] Polo history fetch for canonical pnl failed (non-fatal, synthetic remains)', {
         symbol, err: err instanceof Error ? err.message : String(err),
