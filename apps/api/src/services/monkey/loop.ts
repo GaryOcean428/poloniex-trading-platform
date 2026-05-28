@@ -160,6 +160,12 @@ import {
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
 import { SAFE_PNL_FROM_ROW, verifyPnl, computeSafePnl, checkNotionalConsistency, computeNetPnlForReward } from './safePnlSql.js';
+import {
+  getOutcomeRingStats,
+  computeBreakEvenNotionalFloor,
+  computeKellyFraction,
+  chemistryBoundedModulator,
+} from './outcomeRingStats.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import {
@@ -8154,7 +8160,7 @@ export class MonkeyKernel extends EventEmitter {
       // fall back to venue ceiling (8000) when caller hasn't supplied
       // equity yet. Old call sites that don't thread the new observables
       // keep working at the venue-ceiling level.
-      const cap = req.availableEquityUsdt && req.availableEquityUsdt > 0
+      const chemistryCap = req.availableEquityUsdt && req.availableEquityUsdt > 0
         ? kernelDerivedContractCap({
             availableEquityUsdt: req.availableEquityUsdt,
             markPrice: req.entryPrice,
@@ -8165,6 +8171,34 @@ export class MonkeyKernel extends EventEmitter {
             gaba: req.gaba ?? 0.5,
           })
         : VENUE_CONTRACTS_CEILING;
+
+      // Commit 7 — Fix A: break-even notional floor (operator brief
+      // 2026-05-28). When the kernel's own outcome ring shows fees
+      // dominating wins on small fills, lift the cap so the kernel
+      // sizes at least to where the typical win nets positive after
+      // its own observed fee hit. Pure observer derivation — no knob.
+      // Self-deactivates: only binds when chemistryCap is BELOW the
+      // break-even point; as chemistry recovers and chemistryCap grows
+      // above the floor, the floor stops mattering.
+      const ringStats = await getOutcomeRingStats({
+        agent: (req.agent ?? 'K'),
+        lane: (req.lane ?? 'swing') as LaneType,
+      });
+      const notionalFloor = computeBreakEvenNotionalFloor(ringStats);
+      const floorContracts = notionalFloor > 0 && symbolLotSize > 0 && req.entryPrice > 0
+        ? Math.ceil((notionalFloor / req.entryPrice) / symbolLotSize)
+        : 0;
+      const cap = Math.min(VENUE_CONTRACTS_CEILING, Math.max(chemistryCap, floorContracts));
+      if (floorContracts > 0 && cap > chemistryCap) {
+        logger.info('[Monkey] break-even floor binding — sizing lifted above chemistry cap', {
+          symbol, agent: req.agent ?? 'K', lane: req.lane ?? 'swing',
+          chemistryCap, floorContracts, effectiveCap: cap,
+          avgFeePerRoundTrip: ringStats?.avgFeePerRoundTrip.toFixed(4),
+          avgWinRoiNotional: ringStats?.avgWinRoiNotional.toFixed(6),
+          notionalFloorUsdt: notionalFloor.toFixed(2),
+        });
+      }
+
       const clampedNewContracts = clampNewContractsToCap(
         newContracts, currentContracts, cap,
       );
