@@ -165,6 +165,7 @@ import {
   computeBreakEvenNotionalFloor,
   computeKellyFraction,
   chemistryBoundedModulator,
+  computeObserverLossFloorRoi,
 } from './outcomeRingStats.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
@@ -3815,6 +3816,16 @@ export class MonkeyKernel extends EventEmitter {
         // Phase B2: skipped when bracketActive — the synthetic bracket
         // (Gate 0) owns profit-taking under the commit-and-revise model.
         if (!exitFired && !bracketActive) {
+          // Commit 9 — Fix C: observer-derived harvest floor (operator
+          // brief 2026-05-28). Suppress harvest when proposed exit ROI
+          // is below the kernel's own observed loss-magnitude floor so
+          // winners run to commensurate size. Pure observer; uses ring
+          // we may have already fetched for sizing.
+          const ringForHarvest = await getOutcomeRingStats({
+            agent: 'K',  // executive harvest path is K-scoped (see L3076 entry agent)
+            lane: heldLane as LaneType,
+          });
+          const observerLossFloorRoi = computeObserverLossFloorRoi(ringForHarvest);
           const harvest = shouldProfitHarvest(
             unrealizedPnl,
             lanePeak,
@@ -3823,6 +3834,10 @@ export class MonkeyKernel extends EventEmitter {
             heldSide,
             basinState,
             laneStreak,
+            undefined, // peakGivebackMinPct — keep default
+            undefined, // peakGivebackThreshold — keep default
+            undefined, // tapeFlipStreakRequired — keep default
+            observerLossFloorRoi,
           );
           derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: lanePeak, tradeId, lane: heldLane };
           if (harvest.value) {
