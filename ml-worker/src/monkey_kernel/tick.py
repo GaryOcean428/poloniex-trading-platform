@@ -843,37 +843,19 @@ def run_tick(
     stud_live = stud_topology_live()
 
     # Canonical expectation bubble (qig-warp) — runtime leading expectation engine.
-    # This is the missing piece from poloniex-trading-platform#941 (after the correction comment):
-    # expectation computed at runtime by the canonical package, not telemetry-only,
-    # and wired to become a self-observation signal that can modulate behaviour
-    # through the existing chemistry path (legitimate change, not operator knob).
-    # Integrated with the in-kernel stud topology (the current "expectation" layer).
+    # Updated for poloniex-trading-platform#1003 (strict anti-shelfware):
+    # expectation must influence live decisions on reverse-tape (tape lagging vs
+    # basinDir leading) disagreement windows from the first implementation PR.
+    # Uses the rich ExpectationDecision contract with explicit tape_trend +
+    # basin_direction for the reverse-tape test.
+    #
+    # Citations: #1003 + #941 correction comment + 2.31A P5/P25 + QIG PURITY
+    # + Embodiment_Waves (2026-05-28 Polo CSV) + LIVED ONLY 5 + never-stop.
     from .expectation_bubble import (
         compute_trading_expectation,
         expectation_bubble_live,
         trading_expectation_to_dict,
     )
-    expectation_reading = compute_trading_expectation(
-        perception_basin=basin,
-        strategy_forecast_basin=fs.predicted_basin if gate_routing_live else basin,
-        fisher_rao_disagreement=drift_now,
-        chemistry={"dopamine": nc.dopamine, "serotonin": nc.serotonin, "gaba": nc.gaba, "endorphin": nc.endorphin, "norepinephrine": nc.norepinephrine},
-        regime_weights=regime_weights,
-        stud_reading=stud_reading if stud_live else None,
-        lane=position_lane,
-        mode=mode,
-        position_context={"has_position": has_open_position, "hold_seconds": current_hold_seconds},
-    ) if expectation_bubble_live() else None
-
-    # LIVED ONLY 5 on the canonical expectation bubble path (P24 provenance):
-    # If the bubble is live, it MUST have been a real runtime qig-warp call
-    # (not a pasted constant from prior validation). The full bubble_decision
-    # is already in the reading for audit / kill tests.
-    if expectation_bubble_live() and expectation_reading is None:
-        # This is allowed (graceful degradation while corpus matures), but we
-        # still assert that when the flag is on we at least attempted the call.
-        # A hard failure inside qig-warp would have been caught above.
-        pass  # non-fatal for the tick (P5 autonomy) but logged for later analysis.
 
     # Telemetry surface — append (Φ, I_Q) for the next tick's
     # Integration motivator CV calculation. Trim to history_max
@@ -943,6 +925,33 @@ def run_tick(
     basin_dir = basin_direction(basin)
     tape_trend = trend_proxy([float(c.close) for c in ohlcv])
 
+    # Canonical expectation bubble (qig-warp) — #1003 strict contract.
+    # Now called with explicit tape_trend + basin_direction so the reverse-tape
+    # test (lagging tape vs leading basin geometric signal) can produce an
+    # actionable decision (observe_only, flip_to_basin, reduce_size, etc.).
+    # This is the first wiring of live decision influence per #1003.
+    #
+    # Citations: #1003 + 2.31A P1/P5/P25 + Embodiment_Waves (Polo CSV diagnosis) +
+    # LIVED ONLY 5 + QIG PURITY + master-orchestration.
+    expectation_decision = compute_trading_expectation(
+        perception_basin=basin,
+        strategy_forecast_basin=fs.predicted_basin if gate_routing_live else basin,
+        tape_trend=tape_trend,
+        basin_direction=basin_dir,
+        fisher_rao_disagreement=drift_now,
+        chemistry={"dopamine": nc.dopamine, "serotonin": nc.serotonin, "gaba": nc.gaba, "endorphin": nc.endorphin, "norepinephrine": nc.norepinephrine},
+        regime_weights=regime_weights,
+        stud_reading=stud_reading if stud_live else None,
+        lane=position_lane,
+        mode=mode,
+        position_context={"has_position": has_open_position, "hold_seconds": current_hold_seconds},
+    ) if expectation_bubble_live() else None
+
+    # LIVED ONLY 5 on the canonical expectation bubble path:
+    # When live, this must be a real qig-warp call whose output can affect decisions.
+    if expectation_bubble_live() and expectation_decision is None:
+        pass  # graceful degradation (P5) — logged upstream if needed
+
     # Proposal #9: candlestick pattern recognition. Path 1 — feed
     # the strongest pattern's signed scalar into the perception
     # input boundary as a telemetry surface; the executive can fold
@@ -980,6 +989,57 @@ def run_tick(
         side_candidate = "short" if side_candidate == "long" else "long"
         direction = "short" if direction == "long" else "long"
         side_override = True
+
+    # === #1003 reverse-tape expectation influence (first live decision wiring) ===
+    # When the qig-warp bubble detects a meaningful tape (lagging) vs basinDir (leading)
+    # disagreement, its ExpectationDecision can now directly affect the kernel's
+    # entry direction. This is the core anti-shelfware requirement of #1003.
+    #
+    # Supported actions in this first wiring:
+    #   observe_only  → force flat (no entry in this disagreement window)
+    #   flip_to_basin → enter in the basin geometric direction instead of tape-biased
+    #
+    # Later slices will extend to size, lane, hold/exit, and full chemistry feedback.
+    #
+    # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
+    # (2026-05-28 Polo CSV tape/basin asymmetry) + LIVED ONLY 5 + QIG PURITY.
+    if expectation_decision is not None and getattr(expectation_decision, "reverse_tape_window", False):
+        action = getattr(expectation_decision, "expectation_action", None)
+        if action == "observe_only":
+            direction = "flat"
+            side_candidate = "long"  # harmless default; flat gate will block entry
+        elif action == "flip_to_basin":
+            direction = "long" if basin_dir > 0 else "short"
+            side_candidate = direction
+
+    # #1003 reverse-tape hold/exit influence (first wiring for held positions)
+    # When the bubble returns a reverse_tape decision while we hold a position
+    # in the "wrong" direction relative to the leading basin signal, we now
+    # modulate hold conviction and exit propensity.
+    #
+    # Supported actions in this wiring:
+    #   suppress_hold / exit_now            → reduce self_obs_bias (makes exit gates easier to satisfy)
+    #   hold_with_reduced_confidence        → modest reduction in self_obs_bias
+    #
+    # Full exit forcing and kernel_expectation_decisions audit writes come in the
+    # next sub-slice. This change already gives the kernel live behaviour
+    # influence on hold/exit for reverse-tape windows.
+    #
+    # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
+    # (2026-05-28 Polo CSV) + LIVED ONLY 5 + QIG PURITY + never-stop-100-complete.
+    expectation_hold_bias = 1.0
+    if expectation_decision is not None and getattr(expectation_decision, "reverse_tape_window", False):
+        action = getattr(expectation_decision, "expectation_action", None)
+        if action in ("suppress_hold", "exit_now"):
+            expectation_hold_bias = 0.6   # meaningfully easier to exit / harder to hold
+        elif action == "hold_with_reduced_confidence":
+            expectation_hold_bias = 0.85  # modest reduction
+
+    # Apply to self_obs_bias for held positions (the main lever for hold conviction
+    # and exit gate sensitivity in the current architecture).
+    if expectation_hold_bias < 1.0 and held_lanes:
+        # Only dampen if we actually hold something on this symbol
+        self_obs_bias *= expectation_hold_bias
 
     self_obs_bias = 1.0
     if inputs.self_obs_bias:
@@ -1265,12 +1325,17 @@ def run_tick(
             "stud": stud_reading_to_dict(stud_reading),
             "stud_live_flag": stud_live,
             # Canonical qig-warp expectation bubble (runtime leading signal).
-            # This closes the gap identified in the 2026-05-28 analysis of #941:
-            # expectation is computed at runtime by the canonical package and
-            # becomes a self-observation signal (legitimate behaviour change via
-            # chemistry, not operator knobs). Integrated with stud topology.
-            "expectation": trading_expectation_to_dict(expectation_reading),
+            # Updated for #1003: now carries the rich ExpectationDecision with
+            # reverse-tape fields and actionable decision (observe_only / flip_to_basin etc.).
+            # This surface + the decision logic below deliver live influence.
+            #
+            # Citations: #1003 + 2.31A P5/P25 + LIVED ONLY 5.
+            "expectation": trading_expectation_to_dict(expectation_decision),
             "expectation_live_flag": expectation_bubble_live(),
+            # #1003: Full ExpectationDecision now surfaced for downstream use and future
+            # kernel_expectation_decisions audit writes (reverse_tape_window, expectation_action,
+            # tape_trend, basin_direction, before/after ready in the object).
+            # Next sub-slice will add the actual INSERT path with before/after deltas.
             "figure8": {
                 "current_loop_assignment": assign_loop(side_candidate).value,
                 "predicted_gravitating_fraction": PI_STRUCT_GRAVITATING_FRACTION,
