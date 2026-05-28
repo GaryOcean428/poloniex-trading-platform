@@ -9099,15 +9099,36 @@ export class MonkeyKernel extends EventEmitter {
       // No new knob. Full provenance + LIVED ONLY 5.
       let marginUsdt = 1;
       try {
+        // 2026-05-28 hotfix: column is `quantity` (per migration
+        // 060_backfill_quantity_base_asset.sql + 048 schema), not `qty`.
+        // The previous query referenced a non-existent column, which
+        // raised a Postgres `undefined column` error at execution. The
+        // surrounding `.catch { /* non-fatal */ }` swallowed that error
+        // silently at LOG_LEVEL=info, so marginUsdt stayed at the
+        // fallback 1, and the polo_authoritative_close reward push fired
+        // with pnlFrac = pnl / 1 — visible in the b8139a81 deploy log as
+        // values like -343.79% (= -$3.44 / $1) instead of the real ~-3% ROE.
+        // PR #1001 fixes the column name and surfaces the catch via warn.
         const mres = await pool.query(
-          `SELECT SUM(COALESCE(entry_price, 0) * COALESCE(qty, 0) / GREATEST(COALESCE(leverage, 16), 1)) AS margin_usdt
+          `SELECT SUM(COALESCE(entry_price, 0) * COALESCE(quantity, 0) / GREATEST(COALESCE(leverage, 16), 1)) AS margin_usdt
              FROM autonomous_trades
             WHERE id = ANY($1)`,
           [tradeIds]
         );
         const m = mres.rows[0]?.margin_usdt ? parseFloat(mres.rows[0].margin_usdt) : NaN;
         if (Number.isFinite(m) && m > 0.1) marginUsdt = m;
-      } catch { /* non-fatal; fallback keeps prior behaviour */ }
+      } catch (err) {
+        // Promoted from silent catch 2026-05-28: same lesson as the row
+        // UPDATE catch below — silent swallows mask real bugs (this very
+        // bug went undetected because it was silent). Log the full error
+        // object (including stack + Postgres `code`/`detail` if present)
+        // so any future query failure is diagnosable without re-shipping.
+        logger.warn('[Monkey] Polo-authoritative marginUsdt query failed; falling back to 1', {
+          symbol, tradeIdsCount: tradeIds.length,
+          err,
+          errMessage: err instanceof Error ? err.message : String(err),
+        });
+      }
 
       // Directly fulfill the canonical surface (user 2026-05-28 / #992):
       // Push an authoritative reward event using the real Polo realized value.
