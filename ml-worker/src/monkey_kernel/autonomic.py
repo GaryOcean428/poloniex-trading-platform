@@ -47,6 +47,20 @@ from .state import NeurochemicalState
 
 logger = logging.getLogger("monkey_kernel.autonomic")
 
+# Module-level registry alias — Grok's Wave 4 P5/P25 sweep added
+# `_registry.get(...)` calls inside the new `get_*` observer functions
+# (lines 156/166/173/180/187/514) but did NOT add the corresponding
+# module-level `_registry = get_registry()` alias that working_memory.py
+# and other Wave 4 modules use. Production NameError at 02:22:14 UTC:
+#   "NameError: name '_registry' is not defined. Did you mean: 'get_registry'?"
+# (firing at function-call time on `get_pnl_frac_history_max()`, which
+# the kernel evaluates on each close to size pnlFracHistory).
+#
+# The import-smoke gate from PR #985 catches IMPORT-time breaks but not
+# function-evaluation-time NameErrors — follow-up gate would need to
+# invoke each `get_*` observer once. Filed in session memory.
+_registry = get_registry()
+
 
 # ═══════════════════════════════════════════════════════════════
 #  UCP v6.6 §29 frozen facts (mirror vex config/frozen_facts)
