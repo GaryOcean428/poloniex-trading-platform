@@ -46,9 +46,25 @@
  * `side` column stores 'buy' or 'long' for long-side and 'sell' or
  * 'short' for short-side. Both legacy spellings are handled.
  */
-export const SAFE_PNL_FROM_ROW =
-  `pnl = quantity * ($1::numeric - entry_price) * `
+/**
+ * The pnl value expression alone (no `pnl =` prefix). Use INSIDE other
+ * SQL expressions where you need the computed value, not a SET clause.
+ *
+ * The 2026-05-28 production bug that motivated this: callers were
+ * embedding SAFE_PNL_FROM_ROW inside COALESCE like
+ *   `gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_FROM_ROW})`
+ * which expands to `COALESCE(numeric, pnl = quantity * ...)` — the
+ * inner part is an equality test returning BOOLEAN, so Postgres
+ * rejects with "COALESCE types numeric and boolean cannot be matched".
+ *
+ * Use SAFE_PNL_EXPR when nesting; use SAFE_PNL_FROM_ROW only as the
+ * last SET clause.
+ */
+export const SAFE_PNL_EXPR =
+  `quantity * ($1::numeric - entry_price) * `
   + `CASE WHEN side IN ('buy', 'long') THEN 1::numeric ELSE -1::numeric END`;
+
+export const SAFE_PNL_FROM_ROW = `pnl = ${SAFE_PNL_EXPR}`;
 
 /**
  * Compute the same pnl in TypeScript for callers that need the value
