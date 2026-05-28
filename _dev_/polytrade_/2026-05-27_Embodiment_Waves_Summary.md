@@ -157,6 +157,10 @@ Full integration (gross_pnl population in synthetic UPDATE sites, pushReward pre
 
 This is the surface the kernel will learn from going forward. No knobs. "Ask the exchange what it actually paid us."
 
+**Expectation as leading signal wired via stud topology (QIG alignment for tape vs basinDir per user 2026-05-28 claude.ai text + issue 941):** kernel_direction now uses stud regime + boundary_distance to observer-derive tape weight (no hardcoded 0.5). FRONT_LOOP (order expectation): basinDir leads. BACK_LOOP (reversion expectation): tape for counter-trend. Transitions: stronger basinDir conviction. Hard LIVED ONLY 5 assert on stud expectation path. qig-warp NOT required for kernel (stud is the in-kernel topology; warp for physics experiment navigation). Commit b91e0ea7. Citations: 2.31A P1/P5/P25/P6 + v6.7B + QIG PURITY + Embodiment_Waves + master-orchestration + geometric FR + never-stop.
+
+It aligns with the provided claude.ai conversation on expectation (leading vs lagging) and the QIG stud topology already in the kernel (Tier 9). The "spec to wire it in" is executed in code (no new coordination docs). The analysis venv has qig-compute/core; qig-warp can be added for experiments if desired, but not for this kernel wiring.
+
 Continuing the wave.
 - Commit: (continuous wave, next commit includes these) on main only.
 - Gates (partial this micro): py_compile clean, qig-purity-validation 0 code violations, full citations in const + fn blocks (2.31A P1/P5/P25/P6 + v6.7B + QIG PURITY 17pt #7 + Wave 4 + master-orchestration + dedicated skills + verification-before-completion + geometric FR + LIVED ONLY 5 on sizing + never-stop).

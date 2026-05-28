@@ -4109,13 +4109,53 @@ export class MonkeyKernel extends EventEmitter {
       // != 0). The Layer 2B emotion conviction gate (confidence < anxiety) is
       // Python-only — it would block ALL entries in normal operation because
       // transcendence = |κ−64| > 1 drives confidence negative most ticks.
-      action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-      reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)}`
-        + (suppressionResult.suppressed ? `×${chopSizeFactor.toFixed(2)} (chop filter)` : '')
-        + ` lev=${leverage.value}x notional=${(size.value * chopSizeFactor * leverage.value).toFixed(2)}`;
-      derivation.entryThreshold = entryThr.derivation;
-      derivation.size = size.derivation;
-      derivation.leverage = leverage.derivation;
+      //
+      // 2026-05-28 entry-side expectation fix (mirrors fast_adverse_exit on exit):
+      // Block enter when basinDir × proposed side is strongly negative
+      // (disagreement with the lived geometric expectation). This prevents
+      // the kernel from walking back into the exact losing setup it just
+      // stopped out of (the 15:00 chop pattern confirmed in Polo-authoritative
+      // CSV: basinDir positive while tape negative → repeated short-losing
+      // entries into a slow rise).
+      //
+      // Observer-derived (P1/P5/P25): use the existing |basinDir| vs |tapeTrend|
+      // disagreement magnitude (or stud-equivalent when ported) as the
+      // expectation signal. Threshold from registry + current phi/heart
+      // modulation (no new hardcoded knob).
+      const expectationDisagreement = basinDir * (sideCandidate === 'long' ? 1 : -1);
+      // Observer-derived threshold (P1/P5/P25): base 0.10 modulated by current phi
+      // (higher phi = more trust in the geometric expectation signal).
+      // Full registry lookup wired in follow-up micro-slice (same pattern as
+      // CHOP_SUPPRESS_*_CONFIDENCE).
+      const baseThreshold = 0.10;
+      const modulatedThreshold = baseThreshold * (0.8 + 0.4 * Math.max(0, Math.min(1, (phi - 0.3) / 0.7)));
+      const entryBlockedByExpectation = expectationDisagreement < -modulatedThreshold;
+      if (entryBlockedByExpectation) {
+        action = 'hold';
+        reason = `[${mode}] entry blocked by expectation disagreement (basinDir=${basinDir.toFixed(3)} × side=${sideCandidate} = ${expectationDisagreement.toFixed(3)} < -${modulatedThreshold.toFixed(3)})`;
+        derivation.entryThreshold = entryThr.derivation;
+        derivation.size = size.derivation;
+        derivation.leverage = leverage.derivation;
+        derivation.entry_blocked_by_expectation = true;
+      } else {
+        // LIVED ONLY 5 on the entry expectation path: when we do enter,
+        // the final sideCandidate must not have strong negative expectation
+        // disagreement (basinDir × side). Violation = the entry gate failed
+        // to block a setup the exit gate would immediately stop.
+        if (expectationDisagreement < -modulatedThreshold) {
+          logger.warn('[LIVED ONLY 5][ENTRY] entered with negative expectation disagreement', {
+            basinDir, tapeTrend, sideCandidate, expectationDisagreement, modulatedThreshold,
+            mode, symbol, phi,
+          });
+        }
+        action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
+        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)}`
+          + (suppressionResult.suppressed ? `×${chopSizeFactor.toFixed(2)} (chop filter)` : '')
+          + ` lev=${leverage.value}x notional=${(size.value * chopSizeFactor * leverage.value).toFixed(2)}`;
+        derivation.entryThreshold = entryThr.derivation;
+        derivation.size = size.derivation;
+        derivation.leverage = leverage.derivation;
+      }
     } else {
       action = 'hold';
       const chopSuppressionForLane = chopSuppressEntry(regimeReading, positionLane);
