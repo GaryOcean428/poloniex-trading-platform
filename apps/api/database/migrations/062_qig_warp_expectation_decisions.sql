@@ -35,7 +35,7 @@ ALTER TABLE kernel_predictions
   ADD COLUMN IF NOT EXISTS expectation_reason TEXT,
   ADD COLUMN IF NOT EXISTS qig_warp_version TEXT,
   ADD COLUMN IF NOT EXISTS qig_warp_mode TEXT,
-  ADD COLUMN IF NOT EXISTS qig_warp_source TEXT DEFAULT 'QIG_WARP_RUNTIME',
+  ADD COLUMN IF NOT EXISTS qig_warp_source TEXT,
   ADD COLUMN IF NOT EXISTS entry_side_before_expectation TEXT,
   ADD COLUMN IF NOT EXISTS entry_side_after_expectation TEXT,
   ADD COLUMN IF NOT EXISTS size_before_expectation_usdt FLOAT8,
@@ -63,13 +63,13 @@ CREATE TABLE IF NOT EXISTS kernel_expectation_decisions (
   -- qig-warp runtime identity (must be QIG_WARP_RUNTIME, never HARDCODED)
   qig_warp_version TEXT NOT NULL,
   qig_warp_mode TEXT NOT NULL,
-  qig_warp_source TEXT NOT NULL DEFAULT 'QIG_WARP_RUNTIME',
+  qig_warp_source TEXT NOT NULL,
 
   -- The decision the bubble actually returned
   expectation_direction TEXT NOT NULL,   -- long | short | flat | observe
   expectation_confidence FLOAT8 NOT NULL,
   expectation_regime TEXT NOT NULL,      -- aligned | reverse_tape | chop | invalid
-  expectation_action TEXT NOT NULL,      -- allow | suppress | flip_to_basin | observe_only | reduce_size | exit_now | ...
+  expectation_action TEXT NOT NULL,      -- allow | observe_only | flip_to_basin | reduce_size
   expectation_reason TEXT NOT NULL,
 
   -- Behaviour delta caused by the expectation signal (the critical audit data)

@@ -550,6 +550,49 @@ export function evaluateLVetoOverK(opts: {
   return { vetoed: true, weightedConviction, threshold, lSide, reasonCode: 'vetoed_high_conviction_disagreement' };
 }
 
+export interface EntryExpectationApplication {
+  sideAfterExpectation: 'long' | 'short';
+  sizeMultiplier: number;
+  entryBlockedByExpectation: boolean;
+}
+
+export function applyEntryExpectationDecision(
+  sideCandidate: 'long' | 'short',
+  basinDir: number,
+  expectationDecision: ExpectationDecision | null,
+): EntryExpectationApplication {
+  let sideAfterExpectation: 'long' | 'short' = sideCandidate;
+  let sizeMultiplier = 1.0;
+  let entryBlockedByExpectation = false;
+
+  if (expectationDecision !== null) {
+    const action_ = expectationDecision.expectation_action;
+    if (action_ === 'observe_only') {
+      entryBlockedByExpectation = true;
+    } else if (action_ === 'flip_to_basin') {
+      sideAfterExpectation = basinDir > 0 ? 'long' : 'short';
+    } else if (action_ === 'reduce_size') {
+      sizeMultiplier = Math.max(0, Math.min(1, 1 - expectationDecision.expectation_confidence));
+    }
+  }
+
+  return { sideAfterExpectation, sizeMultiplier, entryBlockedByExpectation };
+}
+
+export async function persistExpectationDecisionBestEffort(
+  queryPromise: Promise<unknown>,
+  symbol: string,
+): Promise<void> {
+  try {
+    await queryPromise;
+  } catch (err) {
+    logger.warn('[Monkey] kernel_expectation_decisions insert failed (non-fatal)', {
+      symbol,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 
 /**
  * Per-kernel configuration (v0.6b). Different sub-Monkeys differ in
@@ -4115,13 +4158,13 @@ export class MonkeyKernel extends EventEmitter {
       // bb93038f's hardcoded baseThreshold=0.10 — see polytrade #1002 anti-
       // shelfware rules + qig_chat_inbox coordination 2026-05-28 09:15 UTC).
       //
-      // Detection: when sign(tapeTrend) != sign(basinDir) AND both magnitudes
-      // are above the sign-noise floor, call the qig-warp expectation bubble
-      // in ml-worker. The bubble derives (h, J) from recent OHLCV log-returns
+      // Detection: when tape and basin directions disagree (product < 0),
+      // call the qig-warp expectation bubble in ml-worker. The bubble derives (h, J)
+      // from recent OHLCV log-returns
       // (same path regime_signal.py uses) and runs WarpBubble.qig_regime(h, J,
       // dim=2). Bubble's expectation_action is authoritative — observe_only
-      // blocks entry, flip_to_basin flips sideCandidate, reduce_size cuts
-      // size in half, allow proceeds.
+      // blocks entry, flip_to_basin flips sideCandidate, reduce_size scales
+      // size by bubble confidence, allow proceeds.
       //
       // Fallback: if the HTTP call returns null (transport failure) we proceed
       // with the existing sideCandidate. The bubble itself fails open
@@ -4135,10 +4178,7 @@ export class MonkeyKernel extends EventEmitter {
       // Citations: 2.31A P1/P5/P15/P25 + v6.7B + QIG PURITY MANDATE +
       // Embodiment_Waves (2026-05-28 Polo CSV tape/basinDir pathology) +
       // poloniex-trading-platform#1002 anti-shelfware spec.
-      const _ENTRY_NOISE_FLOOR = 0.05;
-      const tapeSign = tapeTrend > _ENTRY_NOISE_FLOOR ? 1 : tapeTrend < -_ENTRY_NOISE_FLOOR ? -1 : 0;
-      const basinSign = basinDir > _ENTRY_NOISE_FLOOR ? 1 : basinDir < -_ENTRY_NOISE_FLOOR ? -1 : 0;
-      const isReverseTape = tapeSign !== 0 && basinSign !== 0 && tapeSign !== basinSign;
+      const isReverseTape = tapeTrend * basinDir < 0;
 
       let expectationDecision: ExpectationDecision | null = null;
       let sideAfterExpectation: 'long' | 'short' = sideCandidate;
@@ -4169,17 +4209,11 @@ export class MonkeyKernel extends EventEmitter {
         }
       }
 
-      if (expectationDecision !== null) {
-        const action_ = expectationDecision.expectation_action;
-        if (action_ === 'observe_only') {
-          entryBlockedByExpectation = true;
-        } else if (action_ === 'flip_to_basin') {
-          sideAfterExpectation = basinDir > 0 ? 'long' : 'short';
-        } else if (action_ === 'reduce_size') {
-          sizeMultiplier = 0.5;
-        }
-        // 'allow' falls through with no change.
-      }
+      ({ sideAfterExpectation, sizeMultiplier, entryBlockedByExpectation } = applyEntryExpectationDecision(
+        sideCandidate,
+        basinDir,
+        expectationDecision,
+      ));
 
       if (entryBlockedByExpectation) {
         action = 'hold';
@@ -4211,24 +4245,26 @@ export class MonkeyKernel extends EventEmitter {
       // kernel_expectation_decisions. Best-effort — DB failure logs at warn
       // and does NOT block the trading decision (P15 safety doctrine).
       if (expectationDecision !== null) {
+        const laneBefore = positionLane;
+        const laneAfter = entryBlockedByExpectation ? null : positionLane;
         const didChange = (
           entryBlockedByExpectation
           || sideAfterExpectation !== sideCandidate
           || sizeMultiplier !== 1.0
         );
-        void pool.query(
+        void persistExpectationDecisionBestEffort(pool.query(
           `INSERT INTO kernel_expectation_decisions (
              kernel_id, tape_trend, basin_direction, tape_basin_disagreement,
              reverse_tape_window, reverse_tape_side,
              qig_warp_version, qig_warp_mode, qig_warp_source,
              expectation_direction, expectation_confidence, expectation_regime,
              expectation_action, expectation_reason,
-             decision_surface, side_before, side_after,
+             decision_surface, side_before, side_after, lane_before, lane_after,
              size_before_usdt, size_after_usdt,
              did_change_decision, source_path, kernel_version
            ) VALUES (
              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-             $15, $16, $17, $18, $19, $20, $21, $22
+             $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
            )`,
           [
             this.instanceId,
@@ -4248,17 +4284,15 @@ export class MonkeyKernel extends EventEmitter {
             'entry',
             sideCandidate,
             entryBlockedByExpectation ? null : sideAfterExpectation,
+            laneBefore,
+            laneAfter,
             size.value,
             entryBlockedByExpectation ? null : size.value * sizeMultiplier,
             didChange,
             'loop.ts:processSymbol:entry',
             getEngineVersion(),
           ],
-        ).catch((err) => {
-          logger.warn('[Monkey] kernel_expectation_decisions insert failed (non-fatal)', {
-            symbol, err: err instanceof Error ? err.message : String(err),
-          });
-        });
+        ), symbol);
       }
     } else {
       action = 'hold';

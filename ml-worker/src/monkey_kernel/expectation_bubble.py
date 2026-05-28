@@ -95,9 +95,32 @@ class ExpectationDecision:
 
 
 def expectation_bubble_live() -> bool:
-    """Master kill switch. Default ON. When false, the call site reads
-    ``action='allow'`` and falls back to its existing logic."""
+    """Master kill switch. Default ON. When ******, the call site reads
+    ``action='allow'`` and falls back to its existing logic.
+
+    This is an explicit operator kill switch for incident response.
+    """
     return os.environ.get("EXPECTATION_BUBBLE_LIVE", "true").strip().lower() == "true"
+
+
+def _classify_disagreement_window(
+    tape_trend: float,
+    basin_direction: float,
+) -> tuple[str, bool, Optional[str]]:
+    same_polarity = (
+        (tape_trend > 0 and basin_direction > 0)
+        or (tape_trend < 0 and basin_direction < 0)
+    )
+    nontrivial = (
+        abs(tape_trend) >= _SIGNAL_NOISE_FLOOR
+        and abs(basin_direction) >= _SIGNAL_NOISE_FLOOR
+    )
+    if not nontrivial:
+        return "chop", False, None
+    if same_polarity:
+        return "aligned", False, None
+    reverse_tape_side = "long" if basin_direction > 0 else "short"
+    return "reverse_tape", True, reverse_tape_side
 
 
 def _shannon_entropy_of_returns(returns: np.ndarray, bins: int = 20) -> float:
@@ -137,9 +160,13 @@ def _allow_fallback(
     """Default-open fallback when the bubble is unreachable or inputs
     are degenerate. Records the cause for audit."""
     disagreement = float(tape_trend) * float(basin_direction)
+    _, reverse_tape_window, reverse_tape_side = _classify_disagreement_window(
+        tape_trend=tape_trend,
+        basin_direction=basin_direction,
+    )
     return ExpectationDecision(
         expectation_id=str(uuid.uuid4()),
-        expectation_direction="allow",
+        expectation_direction="observe",
         expectation_confidence=0.0,
         expectation_regime="invalid",
         expectation_action="allow",
@@ -150,8 +177,8 @@ def _allow_fallback(
         tape_trend=tape_trend,
         basin_direction=basin_direction,
         tape_basin_disagreement=disagreement,
-        reverse_tape_window=False,
-        reverse_tape_side=None,
+        reverse_tape_window=reverse_tape_window,
+        reverse_tape_side=reverse_tape_side,
     )
 
 
@@ -237,29 +264,9 @@ def evaluate_expectation(
             source="QIG_WARP_UNAVAILABLE",
         )
 
-    # Disagreement classification — purely from the input signs + magnitudes.
-    same_polarity = (
-        (tape_trend > 0 and basin_direction > 0)
-        or (tape_trend < 0 and basin_direction < 0)
-    )
-    nontrivial = (
-        abs(tape_trend) >= _SIGNAL_NOISE_FLOOR
-        and abs(basin_direction) >= _SIGNAL_NOISE_FLOOR
-    )
-    if not nontrivial:
-        expectation_regime = "chop"
-        reverse_tape_window = False
-    elif same_polarity:
-        expectation_regime = "aligned"
-        reverse_tape_window = False
-    else:
-        # Genuine reverse-tape window: tape says one direction, basin
-        # the other, both with conviction.
-        expectation_regime = "reverse_tape"
-        reverse_tape_window = True
-
-    reverse_tape_side = (
-        ("long" if basin_direction > 0 else "short") if reverse_tape_window else None
+    expectation_regime, reverse_tape_window, reverse_tape_side = _classify_disagreement_window(
+        tape_trend=tape_trend,
+        basin_direction=basin_direction,
     )
 
     # Action mapping — every gate uses qig-warp's regime label directly,
@@ -402,6 +409,8 @@ def compute_trading_expectation(
     Returns ``None`` to indicate the live decision path now flows via the
     HTTP endpoint + ``evaluate_expectation``. tick.py treats ``None`` as
     "no telemetry this tick", which matches the prior cold-start behaviour.
+
+    TODO(#1002): remove this shim after tick.py consumes ExpectationDecision directly.
     """
     return None
 

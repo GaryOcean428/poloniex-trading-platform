@@ -31,7 +31,7 @@ function mlWorkerUrl(): string {
  * `expectation_bubble.py` after `decision_to_dict`. */
 export interface ExpectationDecision {
   expectation_id: string;
-  expectation_direction: 'long' | 'short' | 'flat' | 'observe' | 'allow';
+  expectation_direction: 'long' | 'short' | 'flat' | 'observe';
   expectation_confidence: number;
   expectation_regime: 'aligned' | 'reverse_tape' | 'chop' | 'invalid';
   /** Authoritative action the call site MUST apply. */

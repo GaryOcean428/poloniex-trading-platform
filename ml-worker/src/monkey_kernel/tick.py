@@ -933,13 +933,15 @@ def run_tick(
     #
     # Citations: #1003 + 2.31A P1/P5/P25 + Embodiment_Waves (Polo CSV diagnosis) +
     # LIVED ONLY 5 + QIG PURITY + master-orchestration.
+    # TODO(#1002): remove this legacy tick-side shim when tick consumes
+    # ExpectationDecision directly (compute_trading_expectation currently returns None).
     expectation_decision = compute_trading_expectation(
         perception_basin=basin,
         strategy_forecast_basin=fs.predicted_basin if gate_routing_live else basin,
         tape_trend=tape_trend,
         basin_direction=basin_dir,
         fisher_rao_disagreement=drift_now,
-        chemistry={"dopamine": nc.dopamine, "serotonin": nc.serotonin, "gaba": nc.gaba, "endorphin": nc.endorphin, "norepinephrine": nc.norepinephrine},
+        chemistry={"dopamine": nc.dopamine, "serotonin": nc.serotonin, "gaba": nc.gaba, "endorphins": nc.endorphins, "norepinephrine": nc.norepinephrine},
         regime_weights=regime_weights,
         stud_reading=stud_reading if stud_live else None,
         lane=position_lane,
@@ -1331,7 +1333,7 @@ def run_tick(
             #
             # Citations: #1003 + 2.31A P5/P25 + LIVED ONLY 5.
             "expectation": trading_expectation_to_dict(expectation_decision),
-            "expectation_live_flag": expectation_bubble_live(),
+            "expectation_live_flag": expectation_bubble_live() and expectation_decision is not None,
             # #1003: Full ExpectationDecision now surfaced for downstream use and future
             # kernel_expectation_decisions audit writes (reverse_tape_window, expectation_action,
             # tape_trend, basin_direction, before/after ready in the object).
