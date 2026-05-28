@@ -8819,13 +8819,50 @@ export class MonkeyKernel extends EventEmitter {
     closeTimeMs: number;          // when we confirmed the fill
     side: 'long' | 'short';
     grossPnlByRow?: Record<string, number>; // synthetic gross per row id (optional)
-    credentials?: any;            // from this.getCredentials() or equivalent
+    credentials?: any;            // optional: caller-provided creds; if omitted, fetched inline
   }): Promise<void> {
-    const { tradeIds, symbol, closeTimeMs, side, grossPnlByRow, credentials } = params;
-    if (!credentials || tradeIds.length === 0) return;
+    const { tradeIds, symbol, closeTimeMs, side, grossPnlByRow } = params;
+    if (tradeIds.length === 0) return;
 
     try {
-      // Use the already-imported default (line 31): import poloniexFuturesService from '../poloniexFuturesService.js'
+      // 2026-05-28 silent-failure fix (CC1): the prior implementation
+      // accepted credentials from the caller and bailed when they were
+      // null. The single call site at loop.ts:7719 passed
+      // `(this as any).credentials ?? null` — but `this.credentials`
+      // doesn't exist as a property on MonkeyKernel, so the helper
+      // never ran. ml-worker logs over a full 30-min post-deploy
+      // window showed only `source=own_close:K` events; the canonical
+      // `source=polo_authoritative_close` events never appeared. PRs
+      // #984/#991/#992 were all blocked by this single dead-credential
+      // gate — the doctrine was correct, the entry point was dark.
+      //
+      // Fix: do the credentials lookup inline (same pattern as 8 other
+      // sites in this file — line 6692, 7087, 8092, 9616, etc.) so the
+      // canonical Polo-authoritative path actually executes regardless
+      // of whether the caller threaded credentials.
+      let credentials = params.credentials;
+      if (!credentials) {
+        try {
+          const userRow = await pool.query<{ user_id?: string }>(
+            `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+          );
+          const userId = userRow.rows[0]?.user_id;
+          if (userId) {
+            credentials = await apiCredentialsService.getCredentials(userId, 'poloniex');
+          }
+        } catch (credErr) {
+          logger.debug('[Monkey] Polo credentials inline-fetch failed (non-fatal)', {
+            err: credErr instanceof Error ? credErr.message : String(credErr),
+          });
+        }
+      }
+      if (!credentials) {
+        logger.warn('[Monkey] Polo-authoritative path skipped — no credentials available', {
+          symbol, side, tradeIdsCount: tradeIds.length,
+        });
+        return;
+      }
+
       const polHistory = await poloniexFuturesService.getPositionHistory(credentials, {
         symbol,
         limit: 5,
