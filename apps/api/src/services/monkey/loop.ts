@@ -7760,26 +7760,32 @@ export class MonkeyKernel extends EventEmitter {
         }
       }
 
-      // v0.6.7 + 2026-05-16 per-agent NC: push one reward event per
-      // agent that contributed to this close. See
-      // pushPerAgentCloseRewards for margin derivation + rationale.
-      this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals);
-
       // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
-      // Now wired with real data from the row loop. The helper will
-      // fetch Polo history, match, write Polo realized to .pnl and
-      // preserve the synthetic as .gross_pnl.
-      // LIVED ONLY 5: reward ledger will eventually be driven by the
-      // Polo net value.
+      // Hoist the collection so the reward path can pass a representative
+      // tradeId for authoritative DB pnl preference when the Polo history
+      // helper has updated the row (LIVED ONLY 5: reward ledger driven by
+      // the real net).
+      const allTradeIds: string[] = [];
+      const grossById: Record<string, number> = {};
       if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
-        // Collect all trade IDs and a gross map across agents for this close group
-        const allTradeIds: string[] = [];
-        const grossById: Record<string, number> = {};
         for (const agentKey of ['K', 'M', 'T', 'L'] as const) {
           const t = perAgentTotals[agentKey];
           if (t.ids) allTradeIds.push(...t.ids);
           if (t.grossById) Object.assign(grossById, t.grossById);
         }
+      }
+
+      // v0.6.7 + 2026-05-16 per-agent NC: push one reward event per
+      // agent that contributed to this close. See
+      // pushPerAgentCloseRewards for margin derivation + rationale.
+      const representativeTradeIdForReward = allTradeIds.length > 0 ? allTradeIds[0] : undefined;
+      this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals, representativeTradeIdForReward);
+
+      // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
+      // The helper will fetch Polo history, match, write Polo realized to .pnl and
+      // preserve the synthetic as .gross_pnl. LIVED ONLY 5: reward ledger will
+      // eventually be driven by the Polo net value (via the tradeId now threaded).
+      if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
         // closeOrderIds: parse the joined orderId string from the close
         // flow and drop paper-close-* prefixes (paper orders have no Polo
         // execution detail). This is what unlocks the per-fill fee
