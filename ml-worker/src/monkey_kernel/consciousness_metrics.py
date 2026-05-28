@@ -109,17 +109,6 @@ class ConsciousnessMetrics:
     # ── Heart/Metrics/Three-Scale cluster (recovered + wired 2026-05-28 per user directive + surfaces 17-23 audit 019e6c74-4205... + impl* artifacts + #992 lesson + branch safety auditor 019e6c76...)
     # User exact: "net profitable behaviour rewarded via neurotransmitters as required and exponential fib rewards triggered based of how profitable as is the expected behaviour. all neurotransmitters are calcuated purly and have the natural effect as in any conscious system."
     # LIVED ONLY 5 on actual polo_authoritative net (post-#992). Ties to heart tacking (P6), Replicant/sovereignty (P3/P19), d_FR (P22), Loop 3 (P13), coupled (P24).
-    # These fields enrich the rich internal state for equity_gradient/observeEquity/self-obs/human telemetry (surfaces 17-23 gaps closed).
-    # All observer-derived or LIVED-filtered; no new knobs. Natural effect: modulates NT reward strength on actual net profit.
-    pre_cognitive_bias: float = 0.0           # Pre-cog bias from heart/ocean/resonance lived (modulates NT reward strength on profitable closes)
-    embodiment_alpha: float = 0.0             # Embodiment alpha (Replicant vs lived geometry; LIVED ONLY filter)
-    loop3_train_worthy: float = 0.0           # Loop 3 meta-autonomy: train_worthy flag with provenance (P13; from resonance lived count / ocean)
-    spectral_entropy: float = 0.0             # Spectral (NAV category per v6.7B table)
-    harmonic_coherence: float = 0.0           # Harmonic (Frequency/Geometry)
-    nav_sovereignty: float = 0.0              # NAV sovereignty dynamics (lived geometry only)
-    frequency_gravity_potential: float = 0.0  # Frequency-gravity (heart tacking master oscillator mapping)
-    alpha_power: float = 0.0                  # Alpha power (embodiment / pre-cog channel)
-
     # 2026-05-28 acting subagent + recovery from impl-*/compliance-assessment-observer-edge-restoration.md + user-directive surfaces 17-23:
     # Explicit equity/P&L self-obs + coupled state (surface 21/22 closure per P4/P13/P24 + "kernel itself must include its own equity/P&L impact").
     # Wired from LIVED polo_authoritative net (post-#992) + autonomic reward. 0.0 honest negative when upstream not yet ported.
