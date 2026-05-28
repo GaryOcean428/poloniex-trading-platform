@@ -8973,11 +8973,12 @@ export class MonkeyKernel extends EventEmitter {
       let marginUsdt = 1;
       try {
         const mres = await pool.query(
-          `SELECT (COALESCE(entry_price, 0) * COALESCE(qty, 0) / GREATEST(COALESCE(leverage, 16), 1)) AS m
-             FROM autonomous_trades WHERE id = ANY($1) LIMIT 1`,
+          `SELECT SUM(COALESCE(entry_price, 0) * COALESCE(qty, 0) / GREATEST(COALESCE(leverage, 16), 1)) AS margin_usdt
+             FROM autonomous_trades
+            WHERE id = ANY($1)`,
           [tradeIds]
         );
-        const m = mres.rows[0]?.m ? parseFloat(mres.rows[0].m) : NaN;
+        const m = mres.rows[0]?.margin_usdt ? parseFloat(mres.rows[0].margin_usdt) : NaN;
         if (Number.isFinite(m) && m > 0.1) marginUsdt = m;
       } catch { /* non-fatal; fallback keeps prior behaviour */ }
 
