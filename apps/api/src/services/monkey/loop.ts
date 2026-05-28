@@ -9044,6 +9044,12 @@ export class MonkeyKernel extends EventEmitter {
       // poloRealized is computed per-close-group (sum of gross − close fees);
       // pro-rata across rows by their own gross share so each row's `pnl` reflects
       // its proportional share of the close-group's net.
+      //
+      // pnl_source stays 'polo_history' — that's the column's CHECK constraint
+      // (allowed values: 'polo_history' | 'synthetic_fallback', per migration
+      // 061_polo_authoritative_pnl_columns.sql:33). The provenance "gross − close
+      // fees" is captured in the preceding info log + this comment. A distinct
+      // provenance tag would require a migration to expand the CHECK enum.
       const grossAbsTotal = tradeIds.reduce(
         (s, id) => s + Math.abs(Number(grossPnlByRow?.[id] ?? 0)),
         0,
@@ -9058,14 +9064,24 @@ export class MonkeyKernel extends EventEmitter {
           `UPDATE autonomous_trades
               SET pnl = $1,
                   gross_pnl = COALESCE(gross_pnl, $2),
-                  pnl_source = 'polo_gross_minus_fees',
+                  pnl_source = 'polo_history',
                   fees_paid = CASE
                     WHEN $2 IS NOT NULL THEN $2 - $1
                     ELSE fees_paid
                   END
             WHERE id = $3`,
           [rowNet, gross ?? null, id]
-        ).catch(() => { /* non-fatal */ });
+        ).catch((err) => {
+          // Promoted from silent catch 2026-05-28 (Copilot review on PR #1000):
+          // the previous `.catch(() => {})` would swallow constraint violations
+          // and other DB errors silently. With CANONICAL_POLO_PNL_LIVE active,
+          // a failure here means the reward ledger is silently corrupted — log
+          // it visibly so we don't repeat the silent-dark class of incident.
+          logger.warn('[Monkey] Polo-authoritative row UPDATE failed', {
+            symbol, tradeId: id,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        });
       }
 
       logger.info('[Monkey] Polo-authoritative pnl written for reward ledger', {
