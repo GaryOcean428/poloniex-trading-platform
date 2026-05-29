@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from math import ceil
+from math import ceil, isfinite
 from statistics import stdev
 from typing import TYPE_CHECKING, Any, Deque, Literal, Mapping, Optional, Sequence, Tuple
 
@@ -109,7 +109,7 @@ def _finite_non_negative(value: Any) -> float:
         v = float(value)
     except (TypeError, ValueError):
         return 0.0
-    if v != v or v < 0.0 or v == float("inf"):
+    if not isfinite(v) or v < 0.0:
         return 0.0
     return v
 
@@ -155,7 +155,14 @@ def compute_post_close_cooldown_ms(
     decoherence = _finite_non_negative(decoherence_floor_ms)
     rhythm = _finite_non_negative(heart_rhythm)
     phase = _clean_phase(tacking_phase)
-    pnls = [_finite_non_negative(abs(p)) * (-1.0 if float(p) < 0.0 else 1.0) for p in recent_close_pnls if isinstance(p, (int, float))]
+    pnls: list[float] = []
+    for p in recent_close_pnls:
+        try:
+            pnl = float(p)
+        except (TypeError, ValueError):
+            continue
+        if isfinite(pnl):
+            pnls.append(pnl)
     gaps = [_finite_non_negative(g) for g in recent_close_gaps_ms]
 
     chain_gaps: list[float] = []

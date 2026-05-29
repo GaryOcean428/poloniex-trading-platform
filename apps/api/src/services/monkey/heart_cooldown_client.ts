@@ -82,7 +82,13 @@ export async function refreshHeartCooldown(args: HeartCooldownRefreshArgs): Prom
         },
       }),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      logger.debug('[heart_cooldown] ml-worker returned non-OK status', {
+        symbol: args.symbol,
+        status: res.status,
+      });
+      return;
+    }
     const parsed = parseResponse(await res.json());
     if (parsed) cache.set(args.symbol, parsed);
   } catch (err) {

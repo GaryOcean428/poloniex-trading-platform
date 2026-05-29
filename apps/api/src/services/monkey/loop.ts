@@ -40,7 +40,7 @@ import {
   // gets `tNow - tCloseAck` as the empirical p99 measurement.
   observePositionSnapshot,
 } from './safety_floor.js';
-import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
+import { composeCooldown, formatCooldownTelemetry, type CooldownBreakdown } from './cooldown_composer.js';
 import { noteClose as noteHeartClose } from './heart_arbitrator.js';
 import {
   cachedDecoherenceFloorMs,
@@ -1249,7 +1249,7 @@ export class MonkeyKernel extends EventEmitter {
     return kappa < KAPPA_STAR ? 'FEELING' : 'LOGIC';
   }
 
-  private async composeHeartOwnedCooldown(symbol: string, tickCadenceMs: number) {
+  private async composeHeartOwnedCooldown(symbol: string, tickCadenceMs: number): Promise<CooldownBreakdown> {
     const initial = composeCooldown({ symbol, tickCadenceMs });
     await refreshHeartCooldown({
       symbol,
