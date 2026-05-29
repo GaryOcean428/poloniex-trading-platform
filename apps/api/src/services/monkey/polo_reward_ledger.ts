@@ -163,3 +163,80 @@ export function detectFundingSignDiscrepancies(
   }
   return out;
 }
+
+/**
+ * Authoritative realized-PnL + funding composition from `/v3/account/bills`
+ * (poloniex-trading-platform#1028).
+ *
+ * Poloniex account bills are literal USDT cash movements per row:
+ *   type 'PNL'         — realized price PnL of a close fill (signed `sz`)
+ *   type 'FUNDING_FEE' — funding cash flow (signed `sz`: + received, − paid)
+ *   type 'TRANSFER'    — deposits/withdrawals (NOT a trade outcome; excluded)
+ *
+ * Verified 2026-05-29 against the live polytrade-be account: summing the
+ * `type=PNL` rows over the close-fill window reconciles EXACTLY to the
+ * exchange-exported closed PnL (ETH −4.2499 from 8 rows; BTC −2.243525 from
+ * 4 rows). The prior path self-computed a synthetic per-row gross that
+ * under-counted (ETH reported −3.5568), and pulled funding from
+ * `/v3/trade/funding` — which does not exist (404). Funding lives in
+ * FUNDING_FEE bills.
+ *
+ * Bills carry no `ordId`, so PNL rows are matched by symbol + a tight cTime
+ * window around the close fills (PNL bill cTime == close fill cTime), and
+ * funding rows by the position hold window [entry, close].
+ */
+export interface PoloBillRow {
+  /** Bill type: 'PNL' | 'FUNDING_FEE' | 'TRANSFER' | ... */
+  type: string;
+  /** Signed USDT cash movement for this bill row. */
+  sz: number;
+  /** Normalized symbol, e.g. ETH_USDT_PERP. */
+  symbol: string;
+  /** Bill creation time in epoch ms. */
+  cTimeMs: number;
+}
+
+export interface PoloBillsComposition {
+  /** Σ of `type=PNL` `sz` within the close window — authoritative realized PnL. */
+  realizedPnl: number;
+  /** Σ of `type=FUNDING_FEE` `sz` within the hold window (+ received, − paid). */
+  fundingSigned: number;
+  /** Count of PNL rows matched (0 → caller must NOT trust realizedPnl; fall back). */
+  pnlRowCount: number;
+  /** Count of FUNDING_FEE rows matched. */
+  fundingRowCount: number;
+}
+
+export function composePoloBillsReward(
+  rows: PoloBillRow[],
+  opts: {
+    symbol: string;
+    /** Tight window around the close fills (inclusive, epoch ms). */
+    closeStartMs: number;
+    closeEndMs: number;
+    /** Position hold window for funding attribution (inclusive, epoch ms). */
+    holdStartMs: number;
+    holdEndMs: number;
+  },
+): PoloBillsComposition {
+  let realizedPnl = 0;
+  let fundingSigned = 0;
+  let pnlRowCount = 0;
+  let fundingRowCount = 0;
+  for (const r of rows) {
+    if (r.symbol !== opts.symbol) continue;
+    if (!Number.isFinite(r.sz) || !Number.isFinite(r.cTimeMs)) continue;
+    if (r.type === 'PNL' && r.cTimeMs >= opts.closeStartMs && r.cTimeMs <= opts.closeEndMs) {
+      realizedPnl += r.sz;
+      pnlRowCount += 1;
+    } else if (
+      r.type === 'FUNDING_FEE' &&
+      r.cTimeMs >= opts.holdStartMs &&
+      r.cTimeMs <= opts.holdEndMs
+    ) {
+      fundingSigned += r.sz;
+      fundingRowCount += 1;
+    }
+  }
+  return { realizedPnl, fundingSigned, pnlRowCount, fundingRowCount };
+}
