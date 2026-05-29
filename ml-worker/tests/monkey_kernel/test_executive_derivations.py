@@ -346,8 +346,24 @@ class TestPillar1Guard:
 # ────────────────────────────────────────────────────────────────
 
 class TestDCADerivations:
-    def test_cooldown_anchored_at_nominal_serotonin(self):
-        """serotonin=0.5 → cooldown = (25 - 10) * 60000 = 900000 ms (15 min)."""
+    """DCA cooldown is now observer-derived from substrate_observer
+    (#1025 cascading-knob-strip 2026-05-29). The legacy serotonin
+    formula `int((25.0 - 20.0 * ser) * 60_000)` and the `DCA_COOLDOWN_MS
+    = 15 * 60 * 1000` fallback are both DELETED. Cold-start observer
+    returns 0 → no DCA cooldown until kernel has observed its own
+    decision cadence.
+    """
+
+    def test_cold_start_observer_returns_zero_cooldown_no_veto(self):
+        """Cold-start substrate observer → cooldown_ms = 0 → cooldown
+        check does NOT veto. Other checks still run; the DCA-add
+        succeeds or fails based on price/sovereignty/cap, NOT on a
+        designer's 15-minute table."""
+        from monkey_kernel.substrate_observer import (
+            _reset_substrate_observer_state,
+        )
+
+        _reset_substrate_observer_state()
         s = _nominal_state()
         r = should_dca_add(
             held_side="long", side_candidate="long",
@@ -355,34 +371,53 @@ class TestDCADerivations:
             add_count=0, last_add_at_ms=9_990_000, now_ms=10_000_000,
             sovereignty=0.5, s=s,
         )
-        assert r["value"] is False  # cooldown blocks
-        assert r["derivation"]["cooldown_ms"] == 900_000
-
-    def test_high_serotonin_shorter_cooldown(self):
-        """serotonin=1.0 → 5 min cooldown."""
-        nc = NeurochemicalState(
-            acetylcholine=0.5, dopamine=0.5, serotonin=1.0,
-            norepinephrine=0.5, gaba=0.5, endorphins=0.5,
+        # Cooldown check should NOT fire at cold-start; whatever fails the
+        # gate must be a different rule.
+        assert "cooldown" not in r["reason"], (
+            f"cold-start observer should not produce a cooldown veto, got: {r['reason']}"
         )
-        s = _nominal_state(nc=nc)
+
+    def test_observed_cooldown_vetoes_when_elapsed_below_observed_period(self):
+        """Seed the substrate observer with synthetic decision-change
+        samples → observed lane period > 0 → cooldown check vetoes
+        when (now_ms - last_add_at_ms) < observed_period."""
+        from monkey_kernel.substrate_observer import (
+            _reset_substrate_observer_state,
+            record_lane_decision,
+        )
+
+        _reset_substrate_observer_state()
+        # Seed swing lane with ~180_000ms decision-change intervals.
+        for i in range(5):
+            record_lane_decision("swing", float(i * 180_000), f"decision-{i}")
+
+        s = _nominal_state()
         r = should_dca_add(
             held_side="long", side_candidate="long",
             current_price=100.0, initial_entry_price=101.0,
-            add_count=0, last_add_at_ms=9_990_000, now_ms=10_000_000,
-            sovereignty=0.5, s=s,
+            add_count=0,
+            last_add_at_ms=9_990_000, now_ms=10_000_000,  # 10s elapsed
+            sovereignty=0.5, s=s, lane="swing",
         )
-        assert r["derivation"]["cooldown_ms"] == 300_000
+        assert r["value"] is False
+        assert "cooldown" in r["reason"]
+        assert r["derivation"]["cooldown_ms"] == 180_000
 
-    def test_legacy_caller_without_s_gets_hardcoded_cooldown(self):
-        """Backward-compat: caller without `s` gets pre-derivation 15min."""
+    def test_legacy_caller_without_s_uses_observer_too(self):
+        """Caller without `s` still goes through the substrate observer
+        (no `DCA_COOLDOWN_MS` fallback). At cold-start: 0 → no veto."""
+        from monkey_kernel.substrate_observer import (
+            _reset_substrate_observer_state,
+        )
+
+        _reset_substrate_observer_state()
         r = should_dca_add(
             held_side="long", side_candidate="long",
             current_price=100.0, initial_entry_price=101.0,
             add_count=0, last_add_at_ms=9_990_000, now_ms=10_000_000,
             sovereignty=0.5,  # no s=
         )
-        # Hardcoded DCA_COOLDOWN_MS = 15 * 60 * 1000 = 900_000
-        assert r["derivation"]["cooldown_ms"] == 900_000
+        assert "cooldown" not in r["reason"]
 
 
 if __name__ == "__main__":
