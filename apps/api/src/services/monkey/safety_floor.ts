@@ -175,6 +175,39 @@ export function recordFlatObserved(symbol: string, tFlatMs: number): void {
 }
 
 /**
+ * Position-snapshot observer (#1009 PR2). Call after a successful
+ * `getPositions` response with the set of symbols currently present
+ * (qty > 0). For every symbol that has a pending close-ack and is NOT
+ * present in the snapshot, this records `tNowMs - pendingCloseAckMs`
+ * into the settlement ring — the empirical flat-observation latency.
+ *
+ * This is the *real* surface for Observer 1: a flat reading from Polo
+ * is the only authoritative signal that exchange state has propagated.
+ * DB-side close-row timestamps are *not* equivalent (~10ms DB latency
+ * vs. real exchange settlement) and would push p99 artificially low
+ * if used as the flat observation. Cascade follow-up review 2026-05-29
+ * pinned this distinction explicitly.
+ *
+ * `presentSymbols` is expected to contain ONLY symbols whose live
+ * position has nonzero size — callers should filter on `qty > 0` (or
+ * the exchange's equivalent) before calling.
+ */
+export function observePositionSnapshot(
+  presentSymbols: Iterable<string>,
+  tNowMs: number,
+): void {
+  if (!Number.isFinite(tNowMs)) return;
+  const present = presentSymbols instanceof Set
+    ? presentSymbols
+    : new Set(presentSymbols);
+  for (const [sym, s] of _state.entries()) {
+    if (s.pendingCloseAckMs !== null && !present.has(sym)) {
+      recordFlatObserved(sym, tNowMs);
+    }
+  }
+}
+
+/**
  * Observer 2 input. Call from the `plan21002RetryClose` retry handler
  * when Polo returns code=21002 (position not flat). Records how long after
  * the originating close the 21002 was still happening — a hard lower

@@ -48,6 +48,7 @@
  */
 
 import { getSafetyFloorBreakdown } from './safety_floor.js';
+import { heartArbitratedMs as heartArbitratedMsObserver } from './heart_arbitrator.js';
 
 /**
  * Normalize every floor input before composition: a NaN, Infinity, or
@@ -93,15 +94,20 @@ export function decoherenceFloorMs(_symbol: string): number {
 }
 
 /**
- * Stub — Stage-2 PR #1010 replaces this with HEART rhythm + tacking
- * phase + recent close-PnL distribution. Returning 0 here is honest:
- * the 180_000ms tilt-chain wall was conflating two concerns (settlement
- * + tilt) per PR #807 archaeology. Until HEART arbitration ships, the
- * safety floor IS the cooldown floor and the kernel is free to re-enter
- * as soon as the substrate allows.
+ * HEART's observer-derived cooldown contribution. Delegates to
+ * `heart_arbitrator.ts` which maintains the per-symbol close-chain
+ * observer: returns 0 until the kernel has demonstrated a
+ * consecutive-loss chain on `symbol`, then returns the rolling-max
+ * inter-loss gap as the empirically-grounded tilt-chain floor.
+ *
+ * The previous stub returned 0 unconditionally; PR2 wires the real
+ * observer that supersedes the legacy hardcoded 180_000ms tilt wall
+ * (loop.ts:1197). The two concerns the legacy constant conflated —
+ * settlement (handled by `safety_floor.ts`) and tilt (handled here)
+ * — now compose as `max(safety, heart, ...)` per #1009.
  */
-export function heartArbitratedMs(_symbol: string): number {
-  return 0;
+export function heartArbitratedMs(symbol: string): number {
+  return heartArbitratedMsObserver(symbol);
 }
 
 export interface ComposeArgs {

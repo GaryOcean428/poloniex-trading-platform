@@ -36,6 +36,10 @@ import {
   recordFlatObserved,
   record21002Incident,
 } from '../safety_floor.js';
+import {
+  noteClose as noteHeartClose,
+  _resetHeartState,
+} from '../heart_arbitrator.js';
 
 const SYM = 'BTC_USDT_PERP';
 
@@ -254,6 +258,45 @@ describe('cooldown_composer — telemetry order: incident before cold_start (Cop
     expect(b.safetyMs).toBe(500); // COLD_START_FALLBACK_MS
     expect(b.by).toBe<BindingFloor>('safety');
     expect(formatCooldownTelemetry(b)).toBe('cooldown:500ms|by=safety:cold_start');
+  });
+});
+
+// ─── #1009 PR2: HEART provider wired to heart_arbitrator (not stub) ───
+//
+// PR1's composeCooldown defaulted heartArbitratedMs to a `return 0`
+// stub. PR2 wires it to the real `heart_arbitrator.ts` close-chain
+// observer. This block pins that the default provider is NOT the stub:
+// a real chain on `symbol` raises `b.heartMs` (and `b.finalMs`) when no
+// explicit `heartProvider` override is passed.
+
+describe('cooldown_composer — default HEART provider is heart_arbitrator (#1009 PR2)', () => {
+  beforeEach(() => {
+    _resetSafetyFloorState();
+    _resetHeartState();
+  });
+
+  it('default heart provider returns 0 when no chain observed', () => {
+    const b = composeCooldown({ symbol: SYM, tickCadenceMs: 0 });
+    expect(b.heartMs).toBe(0);
+  });
+
+  it('default heart provider returns the chain-gap when chain observed', () => {
+    // Two consecutive losses 2500ms apart → HEART arbitration = 2500ms.
+    noteHeartClose(SYM, 1000, -10);
+    noteHeartClose(SYM, 3500, -5);
+    const b = composeCooldown({ symbol: SYM, tickCadenceMs: 0 });
+    expect(b.heartMs).toBe(2500);
+  });
+
+  it('HEART binds finalMs when its term exceeds safety + tick cadence', () => {
+    // No incidents, settlement ring is cold (500ms sentinel). A chain of
+    // 8000ms exceeds the 500ms safety floor → HEART is the binding term.
+    noteHeartClose(SYM, 1000, -10);
+    noteHeartClose(SYM, 9000, -5);
+    const b = composeCooldown({ symbol: SYM, tickCadenceMs: 0 });
+    expect(b.heartMs).toBe(8000);
+    expect(b.finalMs).toBe(8000);
+    expect(b.by).toBe<BindingFloor>('heart');
   });
 });
 
