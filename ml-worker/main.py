@@ -1511,14 +1511,19 @@ async def monkey_expectation_evaluate(request: Request):
     proposed_side = payload.get("proposed_side")
 
     from monkey_kernel.expectation_bubble import (
-        evaluate_expectation,
+        TradingExpectationBubble,
         decision_to_dict,
     )
-    decision = evaluate_expectation(
+    decision = TradingExpectationBubble().evaluate(
         tape_trend=tape_trend,
         basin_direction=basin_direction,
         recent_returns=recent_returns,
-        proposed_side=proposed_side,
+        position_context={
+            "proposed_side": proposed_side,
+            "held_side": payload.get("held_side"),
+            "decision_surface": payload.get("decision_surface", "entry"),
+            "recent_returns": recent_returns,
+        },
     )
     return decision_to_dict(decision)
 

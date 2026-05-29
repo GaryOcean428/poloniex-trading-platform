@@ -1003,7 +1003,8 @@ def run_tick(
     #   observe_only  → force flat (no entry in this disagreement window)
     #   flip_to_basin → enter in the basin geometric direction instead of tape-biased
     #
-    # Later slices will extend to size, lane, hold/exit, and full chemistry feedback.
+    # reduce_size is applied through the existing sizing/self-observation
+    # path; held-position ticks use the hold/exit modulation below.
     #
     # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
     # (2026-05-28 Polo CSV tape/basin asymmetry) + LIVED ONLY 5 + QIG PURITY.
@@ -1025,9 +1026,9 @@ def run_tick(
     #   observe_only  → meaningfully reduce self_obs_bias (makes exit gates easier to satisfy)
     #   reduce_size   → modest reduction in self_obs_bias
     #
-    # Full exit forcing and kernel_expectation_decisions audit writes come in the
-    # next sub-slice. This change already gives the kernel live behaviour
-    # influence on hold/exit for reverse-tape windows.
+    # Audit rows are written by the API runtime when it calls the same
+    # qig-warp adapter; this Python tick still applies live hold/exit
+    # pressure locally so the worker path is not passive telemetry.
     #
     # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
     # (2026-05-28 Polo CSV) + LIVED ONLY 5 + QIG PURITY + never-stop-100-complete.
@@ -1348,10 +1349,9 @@ def run_tick(
                     None,
                 ) == "QIG_WARP_RUNTIME"
             ),
-            # #1003: Full ExpectationDecision now surfaced for downstream use and future
-            # kernel_expectation_decisions audit writes (reverse_tape_window, expectation_action,
-            # tape_trend, basin_direction, before/after ready in the object).
-            # Next sub-slice will add the actual INSERT path with before/after deltas.
+            # #1003: Full ExpectationDecision surfaced for downstream audit
+            # writes (reverse_tape_window, expectation_action, tape_trend,
+            # basin_direction, before/after ready in the object).
             "figure8": {
                 "current_loop_assignment": assign_loop(side_candidate).value,
                 "predicted_gravitating_fraction": PI_STRUCT_GRAVITATING_FRACTION,

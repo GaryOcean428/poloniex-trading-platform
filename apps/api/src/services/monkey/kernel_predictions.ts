@@ -36,6 +36,23 @@ export interface KernelPredictionSnapshot {
   } | null;
   mode?: string | null;
   lane?: string | null;
+  tapeTrend?: number | null;
+  basinDirection?: number | null;
+  tapeBasinDisagreement?: number | null;
+  reverseTapeWindow?: boolean | null;
+  reverseTapeSide?: string | null;
+  expectationDirection?: string | null;
+  expectationConfidence?: number | null;
+  expectationRegime?: string | null;
+  expectationAction?: string | null;
+  expectationReason?: string | null;
+  qigWarpVersion?: string | null;
+  qigWarpMode?: string | null;
+  qigWarpSource?: string | null;
+  entrySideBeforeExpectation?: string | null;
+  entrySideAfterExpectation?: string | null;
+  sizeBeforeExpectationUsdt?: number | null;
+  sizeAfterExpectationUsdt?: number | null;
   snapshotReason: PredictionSnapshotReason;
   triggeringGate?: string | null;
   kernelVersion?: string;
@@ -99,11 +116,19 @@ export async function insertKernelPrediction(
           predicted_pnl_stddev_usdt, predicted_direction, predicted_confidence,
           dopamine, serotonin, norepinephrine, gaba, endorphins, acetylcholine,
           regime_quantum, regime_efficient, regime_equilibrium, mode, lane,
+          tape_trend, basin_direction, tape_basin_disagreement, reverse_tape_window,
+          reverse_tape_side, expectation_direction, expectation_confidence,
+          expectation_regime, expectation_action, expectation_reason, qig_warp_version,
+          qig_warp_mode, qig_warp_source, entry_side_before_expectation,
+          entry_side_after_expectation, size_before_expectation_usdt,
+          size_after_expectation_usdt,
           snapshot_reason, triggering_gate, kernel_version, source_path)
        VALUES
          ($1, $2, $3::float8[], $4::float8[], $5, $6, $7, $8,
           $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-          $20, $21, $22, $23, $24, $25, $26, $27, $28)
+          $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+          $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, $41,
+          $42, $43, $44, $45)
        RETURNING trade_id
      )
      UPDATE autonomous_trades
@@ -134,6 +159,23 @@ export async function insertKernelPrediction(
       finiteOrNull(regime.equilibrium),
       snapshot.mode ?? null,
       snapshot.lane ?? null,
+      finiteOrNull(snapshot.tapeTrend),
+      finiteOrNull(snapshot.basinDirection),
+      finiteOrNull(snapshot.tapeBasinDisagreement),
+      snapshot.reverseTapeWindow ?? null,
+      snapshot.reverseTapeSide ?? null,
+      snapshot.expectationDirection ?? null,
+      finiteOrNull(snapshot.expectationConfidence),
+      snapshot.expectationRegime ?? null,
+      snapshot.expectationAction ?? null,
+      snapshot.expectationReason ?? null,
+      snapshot.qigWarpVersion ?? null,
+      snapshot.qigWarpMode ?? null,
+      snapshot.qigWarpSource ?? null,
+      snapshot.entrySideBeforeExpectation ?? null,
+      snapshot.entrySideAfterExpectation ?? null,
+      finiteOrNull(snapshot.sizeBeforeExpectationUsdt),
+      finiteOrNull(snapshot.sizeAfterExpectationUsdt),
       snapshot.snapshotReason,
       snapshot.triggeringGate ?? null,
       snapshot.kernelVersion ?? getEngineVersion(),

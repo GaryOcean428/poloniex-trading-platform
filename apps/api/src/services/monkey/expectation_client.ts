@@ -35,7 +35,14 @@ export interface ExpectationDecision {
   expectation_confidence: number;
   expectation_regime: 'aligned' | 'reverse_tape' | 'chop' | 'invalid';
   /** Authoritative action the call site MUST apply. */
-  expectation_action: 'allow' | 'observe_only' | 'flip_to_basin' | 'reduce_size';
+  expectation_action:
+    | 'allow'
+    | 'observe_only'
+    | 'flip_to_basin'
+    | 'reduce_size'
+    | 'exit_now'
+    | 'suppress_hold'
+    | 'hold_with_reduced_confidence';
   expectation_reason: string;
   qig_warp_mode: string;
   qig_warp_version: string;
@@ -58,6 +65,8 @@ export interface ExpectationRequest {
   /** Proposed entry side at the call site, for the audit table's
    * `reverse_tape_side`. Optional. */
   proposedSide?: 'long' | 'short';
+  heldSide?: 'long' | 'short';
+  decisionSurface?: 'entry' | 'hold' | 'exit' | 'size' | 'lane';
 }
 
 /**
@@ -74,12 +83,15 @@ export interface ExpectationRequest {
 export async function callExpectationBubble(
   req: ExpectationRequest,
 ): Promise<ExpectationDecision | null> {
-  const body = JSON.stringify({
+  const payload: Record<string, unknown> = {
     tape_trend: req.tapeTrend,
     basin_direction: req.basinDirection,
     recent_returns: req.recentReturns,
     proposed_side: req.proposedSide ?? null,
-  });
+  };
+  if (req.heldSide !== undefined) payload.held_side = req.heldSide;
+  if (req.decisionSurface !== undefined) payload.decision_surface = req.decisionSurface;
+  const body = JSON.stringify(payload);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
   try {

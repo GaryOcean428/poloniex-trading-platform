@@ -35,7 +35,7 @@ ALTER TABLE kernel_predictions
   ADD COLUMN IF NOT EXISTS expectation_reason TEXT,
   ADD COLUMN IF NOT EXISTS qig_warp_version TEXT,
   ADD COLUMN IF NOT EXISTS qig_warp_mode TEXT,
-  ADD COLUMN IF NOT EXISTS qig_warp_source TEXT,
+  ADD COLUMN IF NOT EXISTS qig_warp_source TEXT DEFAULT 'QIG_WARP_RUNTIME',
   ADD COLUMN IF NOT EXISTS entry_side_before_expectation TEXT,
   ADD COLUMN IF NOT EXISTS entry_side_after_expectation TEXT,
   ADD COLUMN IF NOT EXISTS size_before_expectation_usdt FLOAT8,
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS kernel_expectation_decisions (
   -- qig-warp runtime identity (must be QIG_WARP_RUNTIME, never HARDCODED)
   qig_warp_version TEXT NOT NULL,
   qig_warp_mode TEXT NOT NULL,
-  qig_warp_source TEXT NOT NULL,
+  qig_warp_source TEXT NOT NULL DEFAULT 'QIG_WARP_RUNTIME',
 
   -- The decision the bubble actually returned
   expectation_direction TEXT NOT NULL,   -- long | short | flat | observe

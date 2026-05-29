@@ -8,6 +8,18 @@ let applyEntryExpectationDecision: (
   expectationDecision: ExpectationDecision | null,
 ) => { sideAfterExpectation: 'long' | 'short'; sizeMultiplier: number; entryBlockedByExpectation: boolean };
 
+let applyHoldExitExpectationDecision: (
+  heldSide: 'long' | 'short',
+  basinDir: number,
+  exitWouldFire: boolean,
+  expectationDecision: ExpectationDecision | null,
+) => {
+  actionAfterExpectation: 'hold' | 'exit';
+  exitSuppressedByExpectation: boolean;
+  exitForcedByExpectation: boolean;
+  holdConfidenceMultiplier: number;
+};
+
 let persistExpectationDecisionBestEffort: (
   queryPromise: Promise<unknown>,
   symbol: string,
@@ -37,6 +49,7 @@ beforeAll(async () => {
   vi.stubEnv('DATABASE_URL', '******://******:******@localhost:5432/******');
   const loop = await import('../loop.js');
   applyEntryExpectationDecision = loop.applyEntryExpectationDecision;
+  applyHoldExitExpectationDecision = loop.applyHoldExitExpectationDecision;
   persistExpectationDecisionBestEffort = loop.persistExpectationDecisionBestEffort;
 });
 
@@ -92,5 +105,30 @@ describe('loop expectation decision integration helpers', () => {
 
     expect(chosen.sideAfterExpectation).toBe('long');
     expect(chosen.entryBlockedByExpectation).toBe(false);
+  });
+
+  it('hold/exit path can suppress a non-catastrophic adverse-basin exit when bubble says observe_only', () => {
+    const res = applyHoldExitExpectationDecision(
+      'short',
+      0.25,
+      true,
+      mkDecision({ expectation_action: 'observe_only', expectation_confidence: 0.4 }),
+    );
+
+    expect(res.actionAfterExpectation).toBe('hold');
+    expect(res.exitSuppressedByExpectation).toBe(true);
+    expect(res.holdConfidenceMultiplier).toBeCloseTo(0.6);
+  });
+
+  it('hold/exit path keeps exit when bubble says flip_to_basin against the held side', () => {
+    const res = applyHoldExitExpectationDecision(
+      'short',
+      0.25,
+      true,
+      mkDecision({ expectation_action: 'flip_to_basin' }),
+    );
+
+    expect(res.actionAfterExpectation).toBe('exit');
+    expect(res.exitSuppressedByExpectation).toBe(false);
   });
 });

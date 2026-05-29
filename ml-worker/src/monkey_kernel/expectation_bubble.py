@@ -44,7 +44,7 @@ import logging
 import math
 import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Sequence
 
 import numpy as np
@@ -81,7 +81,7 @@ class ExpectationDecision:
     expectation_direction: str   # "long" | "short" | "flat" | "observe"
     expectation_confidence: float
     expectation_regime: str      # "aligned" | "reverse_tape" | "chop" | "invalid"
-    expectation_action: str      # "allow" | "observe_only" | "flip_to_basin" | "reduce_size"
+    expectation_action: str      # "allow" | "observe_only" | "flip_to_basin" | "reduce_size" | exit/hold actions
     expectation_reason: str
     qig_warp_mode: str           # "qig_regime" — the verified method we call
     qig_warp_version: str
@@ -343,6 +343,70 @@ def evaluate_expectation(
             "proposed_side": proposed_side,
         },
     )
+
+
+class TradingExpectationBubble:
+    """Local adapter matching the trading-kernel expectation contract.
+
+    The adapter owns the qig-warp runtime call through ``evaluate_expectation``;
+    callers may pass the richer kernel context without TypeScript reimplementing
+    QIG geometry.
+    """
+
+    def evaluate(
+        self,
+        *,
+        perception_basin: Any = None,
+        strategy_forecast_basin: Any = None,
+        tape_trend: float,
+        basin_direction: float,
+        fisher_rao_disagreement: float = 0.0,
+        chemistry: Optional[dict[str, float]] = None,
+        regime_weights: Optional[dict[str, float]] = None,
+        lane: Optional[str] = None,
+        mode: Optional[str] = None,
+        position_context: Optional[dict[str, Any]] = None,
+        recent_returns: Optional[Sequence[float]] = None,
+    ) -> ExpectationDecision:
+        del (
+            perception_basin,
+            strategy_forecast_basin,
+            fisher_rao_disagreement,
+            chemistry,
+            regime_weights,
+            lane,
+            mode,
+        )
+        position_context = position_context or {}
+        decision = evaluate_expectation(
+            tape_trend=tape_trend,
+            basin_direction=basin_direction,
+            recent_returns=recent_returns or position_context.get("recent_returns", []),
+            proposed_side=position_context.get("proposed_side"),
+        )
+        surface = str(position_context.get("decision_surface", "entry"))
+        held_side = position_context.get("held_side")
+        basin_side = "long" if basin_direction > 0 else "short" if basin_direction < 0 else None
+        if (
+            surface in {"hold", "exit"}
+            and decision.reverse_tape_window
+            and held_side in {"long", "short"}
+            and basin_side is not None
+            and basin_side != held_side
+        ):
+            if decision.expectation_action == "flip_to_basin":
+                return replace(
+                    decision,
+                    expectation_action="exit_now",
+                    expectation_reason=f"{decision.expectation_reason}; held {held_side} invalidated",
+                )
+            if decision.expectation_action == "observe_only":
+                return replace(
+                    decision,
+                    expectation_action="hold_with_reduced_confidence",
+                    expectation_reason=f"{decision.expectation_reason}; exit suppressed pending clarity",
+                )
+        return decision
 
 
 def decision_to_dict(d: ExpectationDecision) -> dict[str, Any]:

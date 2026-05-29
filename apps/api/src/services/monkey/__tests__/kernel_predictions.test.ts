@@ -73,6 +73,59 @@ describe('kernel prediction corpus capture', () => {
     expect(params.slice(13, 19)).toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
   });
 
+  it('stores reverse-tape expectation audit fields on prediction rows', async () => {
+    const { insertKernelPrediction } = await import('../kernel_predictions.js');
+    const basin = Array.from({ length: 64 }, () => 1 / 64);
+    await insertKernelPrediction({
+      tradeId: 43,
+      kernelId: 'monkey-position',
+      perceptionBasin: basin,
+      strategyForecastBasin: basin,
+      snapshotReason: 'entry',
+      sourcePath: 'test',
+      tapeTrend: -0.65,
+      basinDirection: 0.18,
+      tapeBasinDisagreement: -0.117,
+      reverseTapeWindow: true,
+      reverseTapeSide: 'long',
+      expectationDirection: 'long',
+      expectationConfidence: 0.86,
+      expectationRegime: 'reverse_tape',
+      expectationAction: 'flip_to_basin',
+      expectationReason: 'test reverse tape',
+      qigWarpVersion: '0.4.3',
+      qigWarpMode: 'qig_regime',
+      qigWarpSource: 'QIG_WARP_RUNTIME',
+      entrySideBeforeExpectation: 'short',
+      entrySideAfterExpectation: 'long',
+      sizeBeforeExpectationUsdt: 10,
+      sizeAfterExpectationUsdt: 10,
+    }, { query: poolQueryMock });
+
+    const [sql, params] = poolQueryMock.mock.calls[0];
+    expect(sql).toContain('tape_trend');
+    expect(sql).toContain('entry_side_after_expectation');
+    expect(params.slice(24, 41)).toEqual([
+      -0.65,
+      0.18,
+      -0.117,
+      true,
+      'long',
+      'long',
+      0.86,
+      'reverse_tape',
+      'flip_to_basin',
+      'test reverse tape',
+      '0.4.3',
+      'qig_regime',
+      'QIG_WARP_RUNTIME',
+      'short',
+      'long',
+      10,
+      10,
+    ]);
+  });
+
   it('drops and logs insert failures without throwing into the caller', async () => {
     const {
       recordKernelPrediction,

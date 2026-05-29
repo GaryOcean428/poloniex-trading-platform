@@ -610,6 +610,60 @@ export function applyEntryExpectationDecision(
   return { sideAfterExpectation, sizeMultiplier, entryBlockedByExpectation };
 }
 
+export interface HoldExitExpectationApplication {
+  actionAfterExpectation: 'hold' | 'exit';
+  exitSuppressedByExpectation: boolean;
+  exitForcedByExpectation: boolean;
+  holdConfidenceMultiplier: number;
+}
+
+export function applyHoldExitExpectationDecision(
+  heldSide: 'long' | 'short',
+  basinDir: number,
+  exitWouldFire: boolean,
+  expectationDecision: ExpectationDecision | null,
+): HoldExitExpectationApplication {
+  const basinSide: 'long' | 'short' | null =
+    basinDir > 0 ? 'long' : basinDir < 0 ? 'short' : null;
+  let actionAfterExpectation: 'hold' | 'exit' = exitWouldFire ? 'exit' : 'hold';
+  let exitSuppressedByExpectation = false;
+  let exitForcedByExpectation = false;
+  let holdConfidenceMultiplier = 1.0;
+
+  if (
+    expectationDecision !== null
+    && basinSide !== null
+    && basinSide !== heldSide
+  ) {
+    const action_ = expectationDecision.expectation_action;
+    if (
+      exitWouldFire
+      && (action_ === 'observe_only' || action_ === 'hold_with_reduced_confidence')
+    ) {
+      actionAfterExpectation = 'hold';
+      exitSuppressedByExpectation = true;
+      holdConfidenceMultiplier = Math.max(
+        0,
+        Math.min(1, 1 - expectationDecision.expectation_confidence),
+      );
+    } else if (
+      action_ === 'flip_to_basin'
+      || action_ === 'exit_now'
+      || action_ === 'suppress_hold'
+    ) {
+      actionAfterExpectation = 'exit';
+      exitForcedByExpectation = !exitWouldFire;
+    }
+  }
+
+  return {
+    actionAfterExpectation,
+    exitSuppressedByExpectation,
+    exitForcedByExpectation,
+    holdConfidenceMultiplier,
+  };
+}
+
 export async function persistExpectationDecisionBestEffort(
   queryPromise: Promise<unknown>,
   symbol: string,
@@ -1636,6 +1690,13 @@ export class MonkeyKernel extends EventEmitter {
     sizeUsdt: number;
     leverage: number;
     entryThreshold: number;
+    expectationDecision?: ExpectationDecision | null;
+    expectationDelta?: {
+      sideBefore?: 'long' | 'short' | null;
+      sideAfter?: 'long' | 'short' | null;
+      sizeBeforeUsdt?: number | null;
+      sizeAfterUsdt?: number | null;
+    } | null;
   }): void {
     const cadenceSeconds = this.predictionCadenceSeconds(input.state, input.basinVelocity);
     const predictedDirection = predictionDirectionFromSide(input.predictedSide ?? 'flat');
@@ -1668,6 +1729,23 @@ export class MonkeyKernel extends EventEmitter {
       regimeWeights: input.regimeWeights,
       mode: input.mode,
       lane: input.lane,
+      tapeTrend: input.expectationDecision?.tape_trend ?? null,
+      basinDirection: input.expectationDecision?.basin_direction ?? null,
+      tapeBasinDisagreement: input.expectationDecision?.tape_basin_disagreement ?? null,
+      reverseTapeWindow: input.expectationDecision?.reverse_tape_window ?? null,
+      reverseTapeSide: input.expectationDecision?.reverse_tape_side ?? null,
+      expectationDirection: input.expectationDecision?.expectation_direction ?? null,
+      expectationConfidence: input.expectationDecision?.expectation_confidence ?? null,
+      expectationRegime: input.expectationDecision?.expectation_regime ?? null,
+      expectationAction: input.expectationDecision?.expectation_action ?? null,
+      expectationReason: input.expectationDecision?.expectation_reason ?? null,
+      qigWarpVersion: input.expectationDecision?.qig_warp_version ?? null,
+      qigWarpMode: input.expectationDecision?.qig_warp_mode ?? null,
+      qigWarpSource: input.expectationDecision?.qig_warp_source ?? null,
+      entrySideBeforeExpectation: input.expectationDelta?.sideBefore ?? null,
+      entrySideAfterExpectation: input.expectationDelta?.sideAfter ?? null,
+      sizeBeforeExpectationUsdt: input.expectationDelta?.sizeBeforeUsdt ?? null,
+      sizeAfterExpectationUsdt: input.expectationDelta?.sizeAfterUsdt ?? null,
       snapshotReason: input.reason,
       triggeringGate: input.triggeringGate ?? null,
       sourcePath: 'apps/api/src/services/monkey/loop.ts',
@@ -4097,6 +4175,96 @@ export class MonkeyKernel extends EventEmitter {
           action = 'exit';
           reason = exit.reason;
           derivation.exit = exit.derivation;
+
+          const basinAdverseToHeld = heldSide === 'long' ? basinDir < 0 : basinDir > 0;
+          let exitExpectationDecision: ExpectationDecision | null = null;
+          if (basinAdverseToHeld) {
+            const lookbackN = Math.min(50, Math.max(2, ohlcv.length - 1));
+            const recentReturns: number[] = [];
+            for (let i = Math.max(1, ohlcv.length - lookbackN); i < ohlcv.length; i++) {
+              const prev = ohlcv[i - 1]?.close;
+              const curr = ohlcv[i]?.close;
+              if (prev && curr && prev > 0 && curr > 0) {
+                recentReturns.push(Math.log(curr / prev));
+              }
+            }
+            exitExpectationDecision = await callExpectationBubble({
+              tapeTrend,
+              basinDirection: basinDir,
+              recentReturns,
+              proposedSide: heldSide,
+              heldSide,
+              decisionSurface: 'exit',
+            });
+          }
+
+          const holdExitExpectation = applyHoldExitExpectationDecision(
+            heldSide,
+            basinDir,
+            exit.value,
+            exitExpectationDecision,
+          );
+          if (exitExpectationDecision !== null) {
+            derivation.exit_expectation = {
+              ...exitExpectationDecision,
+              action_after_expectation: holdExitExpectation.actionAfterExpectation,
+              hold_confidence_multiplier: holdExitExpectation.holdConfidenceMultiplier,
+            };
+          }
+          if (holdExitExpectation.exitSuppressedByExpectation) {
+            action = 'hold';
+            reason = `exit suppressed by qig-warp expectation: ${exitExpectationDecision?.expectation_reason ?? 'hold_with_reduced_confidence'} `
+              + `(held=${heldSide}, basinDir=${basinDir.toFixed(3)}, confidence×${holdExitExpectation.holdConfidenceMultiplier.toFixed(3)})`;
+          }
+          if (exitExpectationDecision !== null) {
+            const expectationTradeId = ownOpenRow?.id ? String(ownOpenRow.id) : null;
+            const expectationNotional = ownOpenRow
+              ? Number(ownOpenRow.entry_price) * Number(ownOpenRow.quantity)
+              : null;
+            void persistExpectationDecisionBestEffort(pool.query(
+              `INSERT INTO kernel_expectation_decisions (
+                 trade_id, kernel_id, tape_trend, basin_direction, fisher_rao_disagreement,
+                 tape_basin_disagreement, reverse_tape_window, reverse_tape_side,
+                 qig_warp_version, qig_warp_mode, qig_warp_source,
+                 expectation_direction, expectation_confidence, expectation_regime,
+                 expectation_action, expectation_reason,
+                 decision_surface, side_before, side_after, lane_before, lane_after,
+                 size_before_usdt, size_after_usdt,
+                 did_change_decision, source_path, kernel_version
+               ) VALUES (
+                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                 $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26
+               )`,
+              [
+                expectationTradeId,
+                this.instanceId,
+                exitExpectationDecision.tape_trend,
+                exitExpectationDecision.basin_direction,
+                exit.derivation?.fisherRaoDistance ?? null,
+                exitExpectationDecision.tape_basin_disagreement,
+                exitExpectationDecision.reverse_tape_window,
+                exitExpectationDecision.reverse_tape_side,
+                exitExpectationDecision.qig_warp_version,
+                exitExpectationDecision.qig_warp_mode,
+                exitExpectationDecision.qig_warp_source,
+                exitExpectationDecision.expectation_direction,
+                exitExpectationDecision.expectation_confidence,
+                exitExpectationDecision.expectation_regime,
+                exitExpectationDecision.expectation_action,
+                exitExpectationDecision.expectation_reason,
+                holdExitExpectation.exitSuppressedByExpectation ? 'hold' : 'exit',
+                heldSide,
+                holdExitExpectation.actionAfterExpectation === 'hold' ? heldSide : null,
+                heldLane,
+                holdExitExpectation.actionAfterExpectation === 'hold' ? heldLane : null,
+                expectationNotional,
+                holdExitExpectation.actionAfterExpectation === 'hold' ? expectationNotional : 0,
+                holdExitExpectation.exitSuppressedByExpectation || holdExitExpectation.exitForcedByExpectation,
+                'loop.ts:processSymbol:hold_exit',
+                getEngineVersion(),
+              ],
+            ), symbol);
+          }
         } else if (
           // 3b. v0.7.1 — OVERRIDE REVERSAL. When basin + tape quorum
           // flipped sideCandidate AGAINST the currently-held side, she
@@ -4219,6 +4387,7 @@ export class MonkeyKernel extends EventEmitter {
       let sideAfterExpectation: 'long' | 'short' = sideCandidate;
       let sizeMultiplier = 1.0;
       let entryBlockedByExpectation = false;
+      const sizeBeforeExpectation = size.value;
 
       if (isReverseTape) {
         // Recent log-returns over the same window regime_signal.py uses for
@@ -4261,7 +4430,8 @@ export class MonkeyKernel extends EventEmitter {
         derivation.expectation = expectationDecision;
       } else {
         action = sideAfterExpectation === 'long' ? 'enter_long' : 'enter_short';
-        const sizeApplied = size.value * sizeMultiplier;
+        const sizeApplied = sizeBeforeExpectation * sizeMultiplier;
+        size.value = sizeApplied;
         const reasonSuffix = expectationDecision !== null
           ? ` [qig-warp: ${expectationDecision.expectation_action} regime=${expectationDecision.expectation_regime} alpha=${expectationDecision.expectation_confidence.toFixed(3)} src=${expectationDecision.qig_warp_source}]`
           : '';
@@ -4280,6 +4450,12 @@ export class MonkeyKernel extends EventEmitter {
       // kernel_expectation_decisions. Best-effort — DB failure logs at warn
       // and does NOT block the trading decision (P15 safety doctrine).
       if (expectationDecision !== null) {
+        derivation.expectation_delta = {
+          side_before: sideCandidate,
+          side_after: entryBlockedByExpectation ? null : sideAfterExpectation,
+          size_before_usdt: sizeBeforeExpectation,
+          size_after_usdt: entryBlockedByExpectation ? null : size.value,
+        };
         const laneBefore = positionLane;
         const laneAfter = entryBlockedByExpectation ? null : positionLane;
         const didChange = (
@@ -4321,8 +4497,8 @@ export class MonkeyKernel extends EventEmitter {
             entryBlockedByExpectation ? null : sideAfterExpectation,
             laneBefore,
             laneAfter,
-            size.value,
-            entryBlockedByExpectation ? null : size.value * sizeMultiplier,
+            sizeBeforeExpectation,
+            entryBlockedByExpectation ? null : size.value,
             didChange,
             'loop.ts:processSymbol:entry',
             getEngineVersion(),
@@ -4854,6 +5030,15 @@ export class MonkeyKernel extends EventEmitter {
             sizeUsdt: cappedMargin,
             leverage: leverage.value,
             entryThreshold: entryThr.value,
+            expectationDecision: (derivation.expectation as ExpectationDecision | null | undefined) ?? null,
+            expectationDelta: derivation.expectation_delta
+              ? {
+                sideBefore: (derivation.expectation_delta as { side_before?: 'long' | 'short' | null }).side_before ?? null,
+                sideAfter: (derivation.expectation_delta as { side_after?: 'long' | 'short' | null }).side_after ?? null,
+                sizeBeforeUsdt: Number((derivation.expectation_delta as { size_before_usdt?: number | null }).size_before_usdt ?? NaN),
+                sizeAfterUsdt: Number((derivation.expectation_delta as { size_after_usdt?: number | null }).size_after_usdt ?? NaN),
+              }
+              : null,
           });
         }
         }  // close v0.8.7 trading-paused else branch

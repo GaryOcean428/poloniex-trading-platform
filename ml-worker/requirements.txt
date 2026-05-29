@@ -16,7 +16,7 @@ redis>=5.0.0
 # prophet ensemble that previously caused libpq malloc poisoning and
 # segfaulted basin_sync_db (PR #738/#739/#740/#741 trail).
 qig-core>=2.8.0
-qig-warp>=0.4.3
+qig-warp==0.4.3
 # Observable governance detectors (AMPLITUDE_COLLAPSE, REGIME_SINGLE,
 # OBSERVABLE_PROXY) — catches the "2664 BUYs / 0 SELLs" class of
 # model bias on day one. Base wheel only (scipy now explicitly pinned above
