@@ -20,11 +20,14 @@ import {
   applyChronicDemote,
   expectancyLiveEnabled,
   makeRotationState,
+  promoteToLive,
   recordClose,
   rollingExpectancy,
+  rollingWinRate,
   shouldAutoPromote,
   shouldChronicDemote,
   ROTATION_EXPECTANCY_BAND,
+  ROTATION_LOSS_STREAK_THRESHOLD,
   ROTATION_TARGET_LOSS_WIN_RATIO,
   ROTATION_WR_MIN_SAMPLES,
   type RotationPeerSnapshot,
@@ -280,5 +283,141 @@ describe('expectancy promotion gate — issue #1032 gap 2 (WR not enough)', () =
     const peers = [livePeer(0.5, ROTATION_TARGET_LOSS_WIN_RATIO, { winRate: 0.9 })];
     const reason = shouldAutoPromote(s, peers, true);
     expect(reason).toBeNull();
+  });
+});
+
+/**
+ * CAPITAL-FIREWALL PURITY — the firewall must be a pure capital-routing
+ * filter. Demotion/promotion may flip ONLY the routing/mode state; they
+ * must NOT alter the kernel's decision inputs or its reward/chemistry
+ * path. The kernel is blind to paper-vs-live.
+ *
+ * The rotation module's surface only ever receives a RotationState (+
+ * peer snapshots). The "cognition-relevant" data the kernel learns from
+ * is its rolling outcome window (state.rollingPnls) — the same window
+ * the loop builds reward/chemistry from. These tests pin that the
+ * firewall transitions touch ONLY {mode, lastDemotionAtMs,
+ * lastTransitionReason} (and the streak counter on promote, which is
+ * itself firewall bookkeeping) and leave the learning window — and any
+ * object the caller did NOT pass in — untouched.
+ *
+ * STRUCTURAL GUARANTEE this leans on: the functions cannot reach a
+ * decision input or the reward push because those are never passed to
+ * them. The reward is computed + pushed in loop.ts BEFORE rotation is
+ * touched; rotation receives only the already-realized PnL number.
+ */
+describe('capital-firewall purity — kernel cognition is blind to routing', () => {
+  /** Deep-ish snapshot of the learning-relevant window. */
+  function learningSnapshot(s: RotationState) {
+    return {
+      rollingPnls: [...s.rollingPnls],
+      rollingWinRate: rollingWinRate(s),
+      rollingExpectancy: rollingExpectancy(s).edge,
+    };
+  }
+
+  it('acute demote flips ONLY routing/mode state — learning window is byte-identical', () => {
+    const s = makeRotationState();
+    // Seed a window, then drive 5 consecutive losses to trip the breaker.
+    for (let i = 0; i < ROTATION_WR_MIN_SAMPLES; i++) recordClose(s, +1);
+    const before = learningSnapshot(s);
+    expect(s.mode).toBe('live');
+
+    let demoted = false;
+    for (let i = 0; i < ROTATION_LOSS_STREAK_THRESHOLD; i++) {
+      const r = recordClose(s, -1);
+      demoted = demoted || r.demoted;
+    }
+    expect(demoted).toBe(true);
+    expect(s.mode).toBe('paper'); // routing flipped...
+
+    const after = learningSnapshot(s);
+    // ...but the learning window only GREW by the closes we fed it; the
+    // demotion itself injected nothing and rewrote nothing. The window
+    // is exactly [before + the 5 losses we recorded].
+    expect(after.rollingPnls).toEqual([...before.rollingPnls, -1, -1, -1, -1, -1]);
+    // Win-rate / expectancy reflect ONLY the recorded closes, not the
+    // mode flip — the firewall does not perturb the learning signal.
+    const independent = makeRotationState();
+    for (const p of after.rollingPnls) recordClose(independent, p);
+    expect(rollingWinRate(s)).toBe(rollingWinRate(independent));
+    expect(rollingExpectancy(s).edge).toBe(rollingExpectancy(independent).edge);
+  });
+
+  it('chronic demote mutates ONLY {mode, lastDemotionAtMs, lastTransitionReason} — never the learning window', () => {
+    // A genuine neg-EV bleeder so the chronic gate fires under the flag.
+    const s = stateWithPnls(
+      [+0.1, -2, +0.1, -2, +0.1, -2, +0.1, -2, +0.1, -2],
+      'live',
+    );
+    const peers = [livePeer(+0.5, ROTATION_TARGET_LOSS_WIN_RATIO)];
+    const beforeWindow = [...s.rollingPnls];
+    const beforeLearn = learningSnapshot(s);
+
+    const res = applyChronicDemote(s, peers, /*expectancyLive*/ true, 123456);
+    expect(res.demoted).toBe(true);
+
+    // Routing/bookkeeping changed:
+    expect(s.mode).toBe('paper');
+    expect(s.lastDemotionAtMs).toBe(123456);
+    expect(s.lastTransitionReason).toContain('chronic-demote');
+
+    // Learning window + derived learning signal are UNCHANGED — the
+    // firewall read the window but did not write to it.
+    expect(s.rollingPnls).toEqual(beforeWindow);
+    expect(rollingWinRate(s)).toBe(beforeLearn.rollingWinRate);
+    expect(rollingExpectancy(s).edge).toBe(beforeLearn.rollingExpectancy);
+  });
+
+  it('chronic demote does NOT touch the consecutive-loss counter (acute breaker independent)', () => {
+    const s = stateWithPnls(
+      [+0.1, -2, +0.1, -2, +0.1, -2, +0.1, -2, +0.1, -2],
+      'live',
+    );
+    s.consecutiveLosses = 2; // mid-streak
+    const peers = [livePeer(+0.5, ROTATION_TARGET_LOSS_WIN_RATIO)];
+    applyChronicDemote(s, peers, true);
+    // The chronic firewall path leaves the acute streak counter alone —
+    // it is a separate routing criterion, not a cognition mutation.
+    expect(s.consecutiveLosses).toBe(2);
+  });
+
+  it('promotion flips routing back to live without injecting outcomes into the learning window', () => {
+    const s = stateWithPnls(
+      [+1, +1, +1, +1, +1, +1, +1, +1, -1, -1],
+      'paper',
+    );
+    const beforeWindow = [...s.rollingPnls];
+    const beforeWR = rollingWinRate(s);
+    const beforeEdge = rollingExpectancy(s).edge;
+
+    const res = promoteToLive(s, 'test-promote');
+    expect(res.promoted).toBe(true);
+    expect(s.mode).toBe('live'); // routing flipped back
+
+    // Promotion resets the firewall's own streak bookkeeping but injects
+    // NO synthetic outcome — the learning window and signal are intact.
+    expect(s.consecutiveLosses).toBe(0);
+    expect(s.rollingPnls).toEqual(beforeWindow);
+    expect(rollingWinRate(s)).toBe(beforeWR);
+    expect(rollingExpectancy(s).edge).toBe(beforeEdge);
+  });
+
+  it('a paper-mode kernel and an identical live-mode kernel learn IDENTICALLY from the same closes', () => {
+    // The decisive blindness pin: feed the exact same outcome stream to
+    // a live kernel and a paper-routed kernel. Their learning windows
+    // and derived signals must be bit-identical — mode does not enter
+    // the learning math at all.
+    const live = makeRotationState();
+    const paper = makeRotationState();
+    paper.mode = 'paper';
+    const stream = [+1, -1, +2, -0.5, +0.3, -3, +1.2, -0.1, +0.9, -2];
+    for (const p of stream) {
+      recordClose(live, p);
+      recordClose(paper, p);
+    }
+    expect(paper.rollingPnls).toEqual(live.rollingPnls);
+    expect(rollingWinRate(paper)).toBe(rollingWinRate(live));
+    expect(rollingExpectancy(paper).edge).toBe(rollingExpectancy(live).edge);
   });
 });

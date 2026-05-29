@@ -10089,14 +10089,28 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
-   * Decide whether placeOrder calls should route to the paper simulator
-   * instead of the real exchange. Two paths reach this:
+   * THE CAPITAL FIREWALL GATE. Decide whether placeOrder calls route to
+   * the paper simulator instead of the real exchange. Two paths reach
+   * this:
    *   1. The global `MONKEY_PAPER_MODE=true` env (back-compat, applies
    *      to ALL kernels — used historically for whole-kernel dry runs).
    *   2. This kernel's rotation state has been demoted to 'paper'
-   *      (per-kernel paper rotation, PR #921 scaffold).
+   *      (per-kernel capital firewall — kernel_rotation.ts).
    * Either path routes the same way through `paperPlaceOrder`, so the
    * downstream code is unchanged.
+   *
+   * ROUTING-OWNERSHIP INVARIANT: this is the SOLE live order-routing
+   * gate. TS is the only live order-router; the Python ml-worker
+   * `place_order` is an unwired advisory capability (no caller in
+   * monkey_kernel/ or main.py as of 2026-05-29). The firewall is
+   * therefore complete here. The kernel never reads its own routing
+   * state in the decision/reward path — `mode` is consumed ONLY by this
+   * gate (routing) and by telemetry. Demotion removes a kernel's output
+   * from live money; it does not change how the kernel thinks or learns.
+   *
+   * ⚠ If Python execution is ever wired into the live path it MUST
+   *   consult this same per-kernel rotation state, or the firewall leaks
+   *   (see kernel_rotation.ts module header guard-note).
    */
   private shouldRouteOrdersToPaper(): boolean {
     return isMonkeyPaperMode() || this.rotation.mode === 'paper';

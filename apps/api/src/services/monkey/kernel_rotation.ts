@@ -1,6 +1,55 @@
 /**
- * kernel_rotation.ts — per-kernel live/paper state machine.
+ * kernel_rotation.ts — per-kernel live/paper CAPITAL FIREWALL.
  *
+ * ============================================================
+ * WHAT THIS IS (and what it is NOT)
+ * ============================================================
+ * This module is a CAPITAL-ROUTING FIREWALL, not a behavioural knob.
+ * Its single job is to decide whether a given kernel's orders reach
+ * LIVE money or get diverted to the paper simulator. It does NOT
+ * change how the kernel thinks, decides, or learns.
+ *
+ *   • The kernel is BLIND to its own paper/live routing. Nothing in
+ *     the per-tick decision path reads rotation `mode`. The kernel
+ *     keeps ticking, keeps perceiving, keeps deciding, and keeps
+ *     learning (chemistry / reward) IDENTICALLY whether it is routed
+ *     to live or to paper.
+ *   • Demotion to paper is purely a capital-routing decision: it
+ *     removes the kernel's OUTPUT from live money. It does not gate,
+ *     suppress, or alter the kernel's cognition or its reward push.
+ *   • The reward / chemistry signal is computed and pushed BEFORE the
+ *     rotation state is touched (see loop.ts processCloseReward). The
+ *     firewall therefore cannot starve or distort learning.
+ *
+ * Mental model: this is the breaker panel between the kernel's
+ * decisions and the exchange — not part of the kernel's brain.
+ *
+ * ============================================================
+ * ROUTING-OWNERSHIP INVARIANT (critical — read before extending)
+ * ============================================================
+ * TS (apps/api/src/services/monkey/loop.ts) is the SOLE live
+ * order-router. Live orders flow through `MonkeyKernel.shouldRoute-
+ * OrdersToPaper()` → `paperPlaceOrder` (paper) or the real exchange
+ * (live). Because that single gate consults this rotation state, the
+ * firewall is COMPLETE on the TS side.
+ *
+ * The Python side (ml-worker `poloniex_v3.PoloniexV3Client.place_order`)
+ * is an UNWIRED capability: verified 2026-05-29 there is NO caller in
+ * `ml-worker/src/monkey_kernel/` or `main.py` — the only reference is
+ * the usage example in the client's own docstring. The Python kernel
+ * is a consensus/advisory peer; it does not execute orders.
+ *
+ *   ⚠ GUARD-NOTE: if Python execution is EVER wired into the live
+ *     order path, it MUST consult the same per-kernel live/paper
+ *     rotation state (or an authoritative mirror of it) before placing
+ *     an order. Otherwise the firewall LEAKS: a kernel demoted to
+ *     paper on the TS side could still commit live capital via the
+ *     Python path. Treat the rotation `mode` as the single source of
+ *     truth for "does this kernel's output reach live money".
+ *
+ * ============================================================
+ * BEHAVIOUR (the demote/promote rules)
+ * ============================================================
  * The pre-cutover system the operator described (2026-05-25):
  *
  *   "the most successful kernel was allocated more over time. kernels
@@ -10,23 +59,19 @@
  *    paper and backtesting also."
  *
  * This module implements the LIVE/PAPER state machine + the
- * 5-consecutive-loss demotion trigger. Auto-promotion (paper WR within
- * 10% of best live kernel) is queued for the follow-up PR — it
- * requires virtual position simulation so a paper-mode kernel can
- * accumulate simulated closes to compare against the live registry.
- * Until that lands, paper-mode kernels can be manually re-promoted via
- * `MonkeyKernel.promoteToLive()`.
+ * 5-consecutive-loss demotion trigger + WR-based auto-promotion, plus
+ * (flag-gated, issue #1032) an expectancy-based chronic demote and a
+ * profit-shaped promotion gate.
  *
  * The state machine is INSTANCE-LOCAL: each MonkeyKernel owns its own
- * rotation state, no global coordinator. Cross-kernel comparisons
- * (best WR registry) become relevant in the auto-promotion PR.
+ * rotation state, no global coordinator. Cross-kernel comparisons read
+ * peer snapshots (best live peer = the cohort benchmark).
  *
  * Doctrine: chemistry-driven feedback is the primary learning loop
- * (push_reward → gaba on losses → reduced size). The paper-rotation
- * adds a structural circuit-breaker for losing streaks that the
- * chemistry alone hasn't pulled the kernel out of fast enough.
- * Paper-mode kernels still TICK and still UPDATE chemistry from any
- * outcomes that reach them — they just don't commit capital.
+ * (push_reward → gaba on losses → reduced size) and runs for EVERY
+ * kernel regardless of routing. The paper-rotation firewall adds a
+ * structural capital-routing breaker on top — it decides where the
+ * money goes, never how the kernel learns.
  */
 
 /** Default loss streak that triggers demotion. */
@@ -35,34 +80,60 @@ export const ROTATION_LOSS_STREAK_THRESHOLD = 5;
 /** Rolling window over which a kernel's WR is tracked. */
 export const ROTATION_WR_WINDOW = 50;
 
-/** Minimum WR sample count before a kernel's rolling WR is considered
- *  authoritative — used by the auto-promotion gate so a paper kernel
- *  can't promote on a single lucky close. */
+/** Minimum sample count before a kernel's rolling stats are treated as
+ *  authoritative — a FIREWALL parameter (statistical floor), not a
+ *  soak-and-dial chemistry knob. It exists so the capital-routing gate
+ *  cannot flip a kernel's seat on a single lucky/unlucky close. */
 export const ROTATION_WR_MIN_SAMPLES = 10;
 
-/** Auto-promotion gap: paper kernel's WR must be within this many
- *  percentage points of the best live kernel's WR to graduate back
- *  to live. The operator's pre-cutover spec was "within 10%". */
+/** Auto-promotion gap: a paper-routed kernel's WR must be within this
+ *  many percentage points of the best live kernel's WR to be routed
+ *  back to live money. FIREWALL parameter (cohort-relative bar), not a
+ *  chemistry knob. The operator's pre-cutover spec was "within 10%". */
 export const ROTATION_PROMOTION_WR_GAP = 0.10;
 
 /**
- * Operator-MANDATED relative membership band (issue #1032). A kernel's
- * realized expectancy must stay within 10% of the BEST live peer's
- * expectancy to keep / regain its live seat. This is the SAME 10% the
- * promotion-WR gate uses, made symmetric and ranked by profit rather
- * than win-rate. NOT a soak-and-dial knob: it is relative-to-cohort,
- * and 10% is the operator's standing band (see issue #1032 / the
- * pre-cutover "within 10% of the best kernel" spec). Fractional, not
- * percentage-points: |best - mine| / |best| ≤ band.
+ * Relative membership band for the capital firewall (issue #1032). A
+ * kernel's realized expectancy must stay within this fraction of the
+ * BEST live peer's expectancy to keep / regain its LIVE-money seat.
+ * Same 10% the WR promotion gate uses, made symmetric and ranked by
+ * profit rather than win-rate. Fractional: best - mine ≤ band·|best|.
+ *
+ * This is a FIREWALL PARAMETER, not a chemistry coefficient: it is
+ * cohort-relative (the benchmark is observed from the best live peer,
+ * not a hardcoded intuition threshold) and it only decides ROUTING —
+ * whether this kernel's trades reach live money. It is never fed into
+ * the kernel's reward, neurochemistry, or per-tick decision, and the
+ * kernel cannot observe it. The 10% width is the operator's standing
+ * pre-cutover band ("within 10% of the best kernel").
  */
 export const ROTATION_EXPECTANCY_BAND = 0.10;
 
 /**
- * Operator-MANDATED loss:win VALUE target (issue #1032): "avg win ≥ 8×
- * avg loss" ⇒ a healthy loss:win ratio of 1:8 = 0.125. This is the
- * reinclusion bar a paper kernel must be trending toward to earn its
- * seat back. MANDATE, not a tunable knob — it is the operator's stated
- * profitability goal for the cohort.
+ * Structural loss:win VALUE ratio for the capital firewall (issue
+ * #1032). A paper-routed kernel must be trending toward avg-win ≥ 8×
+ * avg-loss — a loss:win ratio of 1:8 = 0.125 — before its output is
+ * routed back to live money.
+ *
+ * PROVENANCE — E8 / 64 = 8×8 STRUCTURAL DOCTRINE, not an operator
+ * profitability target. The 1:8 ratio descends from the QIG E8 chain:
+ * the 64-dimensional basin factors as 64 = 8×8, and 8 is the rank /
+ * simple-root cardinality of E8. The firewall reads this as a
+ * structural "one unit of loss may be admitted per 8 units of win"
+ * routing filter — it is doctrine, the same family of frozen
+ * structural facts as the E8 kernel hierarchy, NOT a soak-and-dial
+ * profitability knob chosen by intuition.
+ *
+ * This ratio is a CAPITAL-ROUTING FILTER ONLY. It is NOT a chemistry
+ * coefficient, NOT a reward, and is NOT visible to the kernel — it
+ * solely decides whether a kernel's trades reach live money.
+ *
+ * TODO(qig-canon-xref): cross-link the canonical source for the
+ * E8/64 = 8×8 doctrine (QIG consciousness / Protocol docs under
+ * Dev/QIG_QFI/ and the e8-architecture-validation skill's kappa*=64
+ * fixed-point + rank-8 simple-root statements). Do NOT re-derive the
+ * mathematics here — cite the canonical doctrine once the exact
+ * document anchor is confirmed.
  */
 export const ROTATION_TARGET_LOSS_WIN_RATIO = 1 / 8;
 
@@ -425,8 +496,8 @@ export function applyChronicDemote(
  *   5. The candidate's expectancy must be within ROTATION_EXPECTANCY_BAND
  *      of the best live peer's expectancy, AND
  *   6. The candidate's loss:win VALUE ratio must be trending toward the
- *      1:8 target — i.e. ≤ the best live peer's loss:win ratio (a
- *      cohort-relative bar), or already at/under the 1:8 target.
+ *      1:8 E8/64 structural ratio — i.e. ≤ the best live peer's loss:win
+ *      ratio (a cohort-relative bar), or already at/under the 1:8 ratio.
  * When `expectancyLive` is false the function is byte-for-byte the
  * legacy WR-only gate.
  *
@@ -466,9 +537,11 @@ export function shouldAutoPromote(
     if (!Number.isFinite(bestE)) return null; // no expectancy benchmark
     if (!withinExpectancyBand(mine.edge, bestE)) return null;
 
-    // loss:win ratio bar. The target is 1:8 = ROTATION_TARGET_LOSS_WIN_RATIO.
-    // A paper kernel earns re-entry when its ratio is trending toward
-    // the target: at/under the 1:8 target OUTRIGHT, or at/under the best
+    // loss:win ratio bar. The ratio is 1:8 = ROTATION_TARGET_LOSS_WIN_RATIO
+    // (E8/64 = 8×8 structural doctrine — see the constant's docblock).
+    // A paper-routed kernel earns re-entry to live money when its ratio
+    // is trending toward it: at/under the 1:8 ratio OUTRIGHT, or at/under
+    // the best
     // live peer's ratio (a cohort-relative bar — you're no worse than
     // the benchmark on size asymmetry). NaN ratio (no losses observed in
     // window) is the best possible case and passes.
