@@ -52,6 +52,11 @@ from .basin import normalized_entropy, velocity
 from .bus_events import KernelEvent
 from .coordinator import GaryCoordinator, GaryReading
 from .emotions import compute_emotions, compute_funding_drag
+from .expectation_bubble import (
+    decision_to_dict,
+    evaluate_expectation,
+    expectation_bubble_live,
+)
 from .executive import (
     ExecBasinState,
     choose_lane,
@@ -850,15 +855,12 @@ def run_tick(
     # POST /monkey/expectation/evaluate (PR #1004). This Py-side wiring brings
     # the same behaviour to the Python kernel's tick — runs the verified
     # ``evaluate_expectation(tape_trend, basin_direction, recent_returns)``
-    # API directly so the call is NEVER a no-op.
+    # API directly so the call is NEVER a no-op. Imports hoisted to module
+    # level (Sourcery review #1008) so the bubble symbols aren't re-resolved
+    # every tick.
     #
     # Citations: #1002 + #1003 + #941 correction + 2.31A P5/P25 + QIG PURITY
     # + Embodiment_Waves (2026-05-28 Polo CSV) + LIVED ONLY 5 + never-stop.
-    from .expectation_bubble import (
-        evaluate_expectation,
-        expectation_bubble_live,
-        decision_to_dict,
-    )
 
     # Telemetry surface — append (Φ, I_Q) for the next tick's
     # Integration motivator CV calculation. Trim to history_max
