@@ -33,15 +33,35 @@ import { resolveExchangePositionSide, resolveExchangePositionNotional } from '..
 import { callExpectationBubble, type ExpectationDecision } from './expectation_client.js';
 import {
   recordCloseAck,
-  // `recordFlatObserved` deliberately not imported — Cascade follow-up
-  // review (2026-05-29) flagged that calling it from the DB-close
-  // timestamp is wrong-surface and could push the rolling settlement
-  // p99 to ~10ms DB latency, falsely lowering the safety floor below
-  // exchange-settlement reality. PR2 wires it to a real Polo
-  // /v3/trade/position/opens flat-observation hook.
   record21002Incident,
+  // #1009 PR2: the real Polo flat-observation surface. Receives every
+  // getPositions snapshot's present-symbol set; for any symbol with a
+  // pending close-ack that is NOT present, the settlement-latency ring
+  // gets `tNow - tCloseAck` as the empirical p99 measurement.
+  observePositionSnapshot,
 } from './safety_floor.js';
 import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
+import { noteClose as noteHeartClose } from './heart_arbitrator.js';
+
+/**
+ * #1009 PR2 helper — extract the present-symbol set from a Polo
+ * getPositions response and forward to `observePositionSnapshot`. Used
+ * at every kernel `getPositions` site so Observer 1 (settlement
+ * latency p99) sees the empirical flat surface, not DB commit time.
+ */
+function _feedFlatObserverFromPositions(positions: unknown): void {
+  const arr = Array.isArray(positions) ? positions : [];
+  const presentSymbols: string[] = [];
+  for (const p of arr) {
+    if (p === null || typeof p !== 'object') continue;
+    const obj = p as Record<string, unknown>;
+    const qty = Math.abs(Number(obj.qty ?? obj.size ?? 0));
+    if (qty <= 0) continue;
+    const sym = String(obj.symbol ?? '');
+    if (sym.length > 0) presentSymbols.push(sym);
+  }
+  observePositionSnapshot(presentSymbols, Date.now());
+}
 import {
   paperClosePosition,
   paperPlaceOrder,
@@ -1186,15 +1206,19 @@ export class MonkeyKernel extends EventEmitter {
   private static readonly EFFECTIVE_COST_MAX_HISTORY = 100;
   private static readonly EFFECTIVE_COST_MIN_SAMPLES = 20;
   private static readonly EFFECTIVE_COST_COLD_DEFAULT = 0.0018;
-  /** SAFETY_BOUND: 3 min default — calibrated 2026-05-19 from observed
-   *  BTC short→short tilt pattern (62s re-entry slipped past prior 60s
-   *  default) and BTC long→long tilt pattern (2min re-entry after small
-   *  loss → -$0.22 blow-out). 3 min is long enough to break the
-   *  immediate-press impulse on the typical 30-90s scalp/swing tick
-   *  cadence; short enough that genuine signal recovery isn't blocked
-   *  indefinitely. Operator can override via POSTCLOSE_COOLDOWN_MS env
-   *  (legacy POSTWIN_COOLDOWN_MS still honored for back-compat). */
-  private static readonly POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000;
+  // #1009 PR2 (2026-05-29): `POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000`
+  // removed. The 3-minute wall was calibrated 2026-05-19 against observed
+  // BTC tilt-chain patterns (62s and 2min re-entry losses) — empirical
+  // CALIBRATION dressed as a settlement-safety constant. PR #807
+  // archaeology traced the motivation to tilt-chain behaviour, not
+  // exchange settlement. The replacement is
+  // `composeCooldown({symbol}).finalMs` — composing the safety floor
+  // (settlement p99 + 21002 incidents + rate-limit headroom from
+  // `safety_floor.ts`) with HEART arbitration (consecutive-loss chain
+  // gap from `heart_arbitrator.ts`). Both are observer-derived; neither
+  // is operator-tunable. The legacy `POSTCLOSE_COOLDOWN_MS` /
+  // `POSTWIN_COOLDOWN_MS` env vars are no longer read — the kernel sets
+  // its own cooldown from its own observations.
   /**
    * ML-outage observability counter (v0.8.3.5d). Increments every time
    * mlPredictionService.getTradingSignal returns {error: true}. Used to
@@ -5885,10 +5909,10 @@ export class MonkeyKernel extends EventEmitter {
     // apply to. Format: `Lside=Xs|Rside=Ys` or omitted when both 0.
     const cooldownLongAt = this.lastCloseAtMs.get(`${symbol}|long`);
     const cooldownShortAt = this.lastCloseAtMs.get(`${symbol}|short`);
-    const cooldownMs =
-      Number(process.env.POSTCLOSE_COOLDOWN_MS)
-      || Number(process.env.POSTWIN_COOLDOWN_MS)
-      || MonkeyKernel.POST_CLOSE_COOLDOWN_MS_DEFAULT;
+    // #1009 PR2: observer-derived cooldown for telemetry. Same composition
+    // as the entry-veto gate uses; tickCadence=0 because this is just
+    // surfacing remaining-seconds, not enforcing tick floor here.
+    const cooldownMs = composeCooldown({ symbol, tickCadenceMs: 0 }).finalMs;
     const cooldownLongRemS = cooldownLongAt
       ? Math.max(0, (cooldownMs - (Date.now() - cooldownLongAt)) / 1000)
       : 0;
@@ -7314,6 +7338,7 @@ export class MonkeyKernel extends EventEmitter {
     let exchangeQty = 0;
     try {
       const positions = await poloniexFuturesService.getPositions(credentials);
+      _feedFlatObserverFromPositions(positions);
       const forSymbol = (Array.isArray(positions) ? positions : []).filter(
         (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
       );
@@ -7694,6 +7719,7 @@ export class MonkeyKernel extends EventEmitter {
         // the close at exactly what is there. One retry only — no loop.
         try {
           const freshPositions = await poloniexFuturesService.getPositions(credentials);
+          _feedFlatObserverFromPositions(freshPositions);
           const freshForSymbol = (Array.isArray(freshPositions) ? freshPositions : []).filter(
             (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
           );
@@ -8039,21 +8065,21 @@ export class MonkeyKernel extends EventEmitter {
     // is the gated case. Opposite-side (reversal) isn't gated by THIS
     // check — it has its own gates (REGIME-2, directional_disagreement).
     this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
-    // #1009 safety_floor observer 1 (settlement-latency p99): DELIBERATELY
-    // NOT WIRED in PR1. The Cascade follow-up review (2026-05-29) flagged
-    // that calling `recordFlatObserved` from the DB-close timestamp is
-    // wrong-surface — a DB row status flip to 'closed' does NOT prove
-    // Poloniex has propagated the position as flat. Doing so could push
-    // the rolling settlement p99 to ~10ms (the DB commit latency) and
-    // cause Observer 1 to falsely report a sub-100ms safety floor,
-    // reintroducing the exact 21002 race this work is supposed to prevent.
-    //
-    // PR2 follow-up: wire `recordFlatObserved` to the next Polo
-    // /v3/trade/position/opens response that confirms the position is
-    // absent or qty=0. Until then Observer 1 stays cold-start and the
-    // composer returns `COLD_START_FALLBACK_MS = 500` — same as the
-    // previous production hardcoded wait. Observer 2 (21002 incidents)
-    // continues to push the floor up when warranted.
+    // #1009 PR2: HEART tilt-chain observer is fed from the SAME canonical
+    // surface as the reward chemistry — `pushPerAgentCloseRewards` for
+    // the synthetic path (gated by CANONICAL_POLO_PNL_LIVE !== 'true'),
+    // and `applyPoloRealizedPnlAfterClose` for the polo-authoritative
+    // path. Wiring HEART here would feed the chain detector with the
+    // mark-based gross `pnlAtDecision` even when the polo-authoritative
+    // net pnl (post-fees, the truth the kernel learns from) is about to
+    // arrive async. Cascade 2026-05-29 explicitly flagged that risk:
+    // HEART must learn tilt from the same surface the reward ledger uses.
+    // #1009 safety_floor observer 1 (settlement-latency p99) is fed by
+    // `observePositionSnapshot` at every kernel `getPositions` site
+    // (loop.ts:7316, 7696, 8363, 10061). When the snapshot returns
+    // without `symbol`, the settlement ring receives `tNow - tCloseAck`
+    // — the empirical Polo-side flat-observation latency, NOT the DB
+    // commit time (which would falsely push p99 to ~10ms).
     this.bus.publish({
       type: BusEventType.EXIT_TRIGGERED,
       source: this.instanceId,
@@ -8214,37 +8240,46 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
-    // REGIME-3 — post-close cooldown veto. After ANY close on this
-    // (symbol, side), suppress same-side re-entry for POSTCLOSE_COOLDOWN_MS
-    // to break post-close tilt. Originally post-WIN only (#806/#819);
-    // extended 2026-05-19 to any close after the 13:14:31 BTC -$0.22 loss
-    // came from re-entry 2min after a tiny loss (post-win-only gate missed it).
+    // #1009 PR2 — post-close cooldown veto, now observer-derived.
     //
-    // Env compat:
-    //   REGIME_POSTWIN_COOLDOWN_LIVE=true  → activates the gate (legacy name kept)
-    //   POSTCLOSE_COOLDOWN_MS overrides; POSTWIN_COOLDOWN_MS is a fallback alias.
-    //   DCA-adds bypass — defending an existing position is the explicit override.
+    // The legacy `POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000` wall is
+    // replaced by `composeCooldown({ symbol })`, which composes:
+    //   - safety floor       (settlement p99 + 21002 incidents + rate-limit headroom)
+    //   - heart arbitration  (empirical inter-loss chain gap)
+    //   - decoherence floor  (PERCEPTION stub, returns 0 in PR2)
+    //   - tick cadence       (set to 0 here — the kernel is already
+    //                         ticking when this gate fires)
+    //
+    // Per #1009 / PR #807 archaeology the 180_000ms conflated settlement
+    // (Polo state propagation) and tilt (kernel's own loss-chain
+    // behaviour). Composing them as `max(safety, heart, …)` separates
+    // the two concerns: safety stays grounded in Polo observations,
+    // tilt stays grounded in observed close-PnL chains. Neither is an
+    // operator-tunable threshold.
+    //
+    // Activation gate: REGIME_POSTWIN_COOLDOWN_LIVE=true. DCA-adds bypass
+    // (defending an existing position is the explicit override).
     if (
       !req.isDCAAdd
       && process.env.REGIME_POSTWIN_COOLDOWN_LIVE === 'true'
     ) {
-      const cooldownMs =
-        Number(process.env.POSTCLOSE_COOLDOWN_MS)
-        || Number(process.env.POSTWIN_COOLDOWN_MS)
-        || MonkeyKernel.POST_CLOSE_COOLDOWN_MS_DEFAULT;
       const lastCloseAt = this.lastCloseAtMs.get(`${symbol}|${side}`);
       if (lastCloseAt !== undefined) {
+        const cooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
+        const cooldownMs = cooldown.finalMs;
         const elapsedMs = Date.now() - lastCloseAt;
-        if (elapsedMs < cooldownMs) {
+        if (cooldownMs > 0 && elapsedMs < cooldownMs) {
           logger.info('[Monkey] postclose_cooldown veto', {
             symbol, side, elapsedMs, cooldownMs,
             remaining_s: ((cooldownMs - elapsedMs) / 1000).toFixed(1),
+            cooldown: formatCooldownTelemetry(cooldown),
           });
           return {
             executed: false, orderId: null,
             reason:
               `postclose_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last close on ${symbol}|${side}, `
-              + `${((cooldownMs - elapsedMs) / 1000).toFixed(1)}s remaining`,
+              + `${((cooldownMs - elapsedMs) / 1000).toFixed(1)}s remaining `
+              + `(${formatCooldownTelemetry(cooldown)})`,
           };
         }
       }
@@ -8362,6 +8397,7 @@ export class MonkeyKernel extends EventEmitter {
         poloniexFuturesService.getAccountBalance(credentials),
         poloniexFuturesService.getPositions(credentials),
       ]);
+      _feedFlatObserverFromPositions(positions);
       const equityUsdt = Number(balance?.totalBalance ?? balance?.eq ?? 0);
       const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
       const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
@@ -9089,6 +9125,15 @@ export class MonkeyKernel extends EventEmitter {
           authoritativeWillReachPy: process.env.CANONICAL_POLO_PNL_LIVE === 'true',
         });
       }
+      // #1009 PR2: HEART chain observer is fed ONLY from the
+      // polo-authoritative surface in `applyPoloRealizedPnlAfterClose`.
+      // Wiring it here from the mark-based synthetic per-agent surface
+      // would either double-count (one chain sample per close from gross,
+      // then a second from polo net) or require an env-gated bifurcation
+      // — both are knob-in-costume patterns the doctrine forbids.
+      // Operator 2026-05-29: no equivalent CANONICAL gate in HEART code.
+      // If polo data is unavailable for a close, HEART honestly receives
+      // no chain sample for that close.
     } catch { /* non-fatal */ }
   }
 
@@ -9385,6 +9430,14 @@ export class MonkeyKernel extends EventEmitter {
         marginUsdt, // #992: realistic scale so TS + Py observer_fib see correct pnl_frac
         kappaAtExit: undefined,
       });
+      // #1009 PR2: HEART chain observer fed from the polo-authoritative
+      // close surface. Mirror of `pushReward({source: 'polo_authoritative_close'})`
+      // — when polo data is available, the chain detector learns tilt
+      // from the SAME net-pnl surface the reward chemistry consumes.
+      // Cascade 2026-05-29: HEART must learn from canonical net, not
+      // mark-based gross, or tiny gross wins that net out as losses
+      // post-fees are missed as chain samples.
+      noteHeartClose(symbol, Date.now(), poloRealized);
 
       // PR #992 fan-out (completes the 2026-05-28 CC1): mirror the Polo-authoritative
       // net reward (with correct margin) into Python autonomic so BOTH chemistry
@@ -10060,6 +10113,7 @@ export class MonkeyKernel extends EventEmitter {
         poloniexFuturesService.getAccountBalance(credentials),
         poloniexFuturesService.getPositions(credentials),
       ]);
+      _feedFlatObserverFromPositions(positions);
       const equity = Number(bal?.totalBalance ?? bal?.eq ?? 0);
       const upl = Number(bal?.unrealizedPnL ?? bal?.upl ?? 0);
       const equityFraction = equity > 0 ? Math.min(1, equity / 27.15) : 0;

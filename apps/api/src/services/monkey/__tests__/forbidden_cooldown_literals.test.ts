@@ -87,23 +87,11 @@ interface AllowEntry {
 }
 
 const ALLOWLIST: AllowEntry[] = [
-  {
-    pattern: '180_000 literal',
-    file: 'loop.ts',
-    match: 'POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000',
-    reason:
-      'Legacy hardcoded POST_CLOSE_COOLDOWN — #1009 PR2 follow-up removes this. '
-      + 'PR1 (current) only replaces the reverse-reopen 500ms; the 180_000ms ' +
-      'tilt-chain wall is deferred (per Cascade advisory).',
-  },
-  {
-    pattern: 'COOLDOWN with raw literal',
-    file: 'loop.ts',
-    match: 'POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000',
-    reason:
-      'Same legacy constant under the COOLDOWN identifier-substring pattern. '
-      + 'PR2 follow-up removes it; allowlisted under both patterns until then.',
-  },
+  // #1009 PR2 (2026-05-29): `POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000`
+  // ALLOWLIST ENTRIES REMOVED. The constant itself was removed in PR2 —
+  // the cooldown is now `composeCooldown({symbol}).finalMs`, which composes
+  // safety_floor.ts (settlement p99 + 21002 incidents + rate-limit headroom)
+  // with heart_arbitrator.ts (empirical consecutive-loss chain gap).
   {
     pattern: '180_000 literal',
     file: 'loop.ts',

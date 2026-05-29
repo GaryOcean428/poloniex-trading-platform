@@ -28,6 +28,7 @@ import {
   recordCloseAck,
   recordFlatObserved,
   record21002Incident,
+  observePositionSnapshot,
   getCurrentSafetyFloorMs,
   getSafetyFloorBreakdown,
   COLD_START_FALLBACK_MS,
@@ -99,6 +100,55 @@ describe('safety_floor — observer behaviour', () => {
     expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(0);
     record21002Incident(sym, 100, 50); // delta would be -50
     expect(getSafetyFloorBreakdown(sym).incidentSamples).toBe(0);
+  });
+
+  // ─── #1009 PR2: observePositionSnapshot wiring ──────────────────────
+
+  it('observePositionSnapshot records tFlat when symbol is absent from snapshot', () => {
+    const sym = 'BTC_USDT_PERP';
+    recordCloseAck(sym, 1000);
+    // Snapshot at t=1250 contains ETH (still open) but NOT BTC → BTC
+    // is flat; settlement ring receives 250ms.
+    observePositionSnapshot(['ETH_USDT_PERP'], 1250);
+    expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(1);
+  });
+
+  it('observePositionSnapshot does NOT record when symbol IS present (position still open)', () => {
+    const sym = 'BTC_USDT_PERP';
+    recordCloseAck(sym, 1000);
+    observePositionSnapshot([sym, 'ETH_USDT_PERP'], 1250); // BTC still open
+    expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(0);
+  });
+
+  it('observePositionSnapshot is a no-op when there is no pending close-ack', () => {
+    const sym = 'BTC_USDT_PERP';
+    // No recordCloseAck → no pending. Snapshot fires anyway.
+    observePositionSnapshot(['ETH_USDT_PERP'], 5000);
+    expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(0);
+  });
+
+  it('observePositionSnapshot clears pending after recording (next close gets fresh measurement)', () => {
+    const sym = 'BTC_USDT_PERP';
+    recordCloseAck(sym, 1000);
+    observePositionSnapshot([], 1250); // BTC flat → 250ms recorded
+    expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(1);
+    // Second snapshot WITHOUT a new recordCloseAck must not double-count.
+    observePositionSnapshot([], 9999);
+    expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(1);
+  });
+
+  it('observePositionSnapshot accepts a Set as `presentSymbols`', () => {
+    const sym = 'BTC_USDT_PERP';
+    recordCloseAck(sym, 1000);
+    observePositionSnapshot(new Set(['ETH_USDT_PERP']), 1500);
+    expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(1);
+  });
+
+  it('observePositionSnapshot with NaN tNow is a no-op', () => {
+    const sym = 'BTC_USDT_PERP';
+    recordCloseAck(sym, 1000);
+    observePositionSnapshot([], Number.NaN);
+    expect(getSafetyFloorBreakdown(sym).settlementSamples).toBe(0);
   });
 
   it('per-symbol isolation: BTC observations do not pollute ETH', () => {
