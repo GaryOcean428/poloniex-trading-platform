@@ -365,10 +365,14 @@ class AutonomicKernel:
             # Honest model coefficients for the reward→chemistry transform.
             dop_scale = get_reward_dop_scale()
             ser_scale = get_reward_ser_scale()
-            loss_dop_scale = get_reward_loss_dop_scale()
             dop = float(np.tanh(pnl_frac * dop_scale) * 0.5 * ocean_coeff)
             ser = float(np.tanh(pnl_frac) * ser_scale * ocean_coeff)
         else:
+            # Loss-side coefficient is consumed only here; bind it on this
+            # branch (72895fcb regression bound it under `pnl_frac > 0`,
+            # so every losing close raised UnboundLocalError and the
+            # autonomic /reward endpoint 500'd before chemistry updated).
+            loss_dop_scale = get_reward_loss_dop_scale()
             dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
             ser = 0.0
 

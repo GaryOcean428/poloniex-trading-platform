@@ -249,3 +249,41 @@ def test_endo_at_kappa_star_saturates_envelope():
         external_coupling=0.5,
     ))
     assert nc.endorphins == pytest.approx(0.5, abs=0.05)
+
+
+def test_push_reward_on_loss_does_not_raise():
+    """Regression: loss-path reward (pnl_frac <= 0) must not crash.
+
+    Bug introduced by 72895fcb: loss_dop_scale was bound only in the
+    ``pnl_frac > 0`` branch but consumed in the ``else`` branch, so every
+    authoritative *losing* close raised UnboundLocalError and the Python
+    autonomic /reward endpoint 500'd — non-zero loss PnL never reached
+    chemistry. See [[polytrade_session_20260528_overnight_polo_chemistry_restored]].
+    """
+    k = AutonomicKernel(label="test")
+    reward = k.push_reward(
+        source="polo_authoritative_close",
+        realized_pnl_usdt=-3.5568,
+        margin_usdt=78.2,
+        symbol="ETH",
+    )
+    # Loss → negative, finite dopamine mood-dip; no serotonin/endorphin.
+    assert reward.dopamine_delta < 0.0
+    import math
+    assert math.isfinite(reward.dopamine_delta)
+    assert reward.serotonin_delta == 0.0
+    assert reward.endorphin_delta == 0.0
+    assert reward.pnl_fraction < 0.0
+
+
+def test_push_reward_on_win_still_binds_scales():
+    """Win-path must remain intact after the loss-path fix."""
+    k = AutonomicKernel(label="test")
+    reward = k.push_reward(
+        source="polo_authoritative_close",
+        realized_pnl_usdt=2.0,
+        margin_usdt=50.0,
+        symbol="BTC",
+    )
+    assert reward.dopamine_delta > 0.0
+    assert reward.serotonin_delta > 0.0
