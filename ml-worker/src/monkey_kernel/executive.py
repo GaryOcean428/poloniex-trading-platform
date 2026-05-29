@@ -48,6 +48,7 @@ from .emotions import EmotionState
 from .modes import MODE_PROFILES, MonkeyMode, effective_profile
 from .parameters import get_registry
 from .state import LaneType, NeurochemicalState
+from .substrate_observer import get_observed_lane_decision_period_ms
 # KAPPA_STAR import removed (retired universal per 2026-04-13 two-channel doctrine + v6.7B protocol).
 # All references below now use governed registry "physics.kappa_reference" or observer-derived
 # from kappa_history (P1). Bare "κ*" language is invalid per the protocol.
@@ -1122,16 +1123,17 @@ def should_scalp_exit(
 # ═══════════════════════════════════════════════════════════════
 
 
-# DCA PARAMETERs — mixed dispositions per P25:
+# DCA PARAMETERs.
 # - max_adds_per_position is a hard SAFETY_BOUND (capacity risk
-#   ceiling; live-governed via registry)
-# - cooldown / better_price_frac / min_sovereignty are still literals
-#   here but flagged for v0.8.4b DERIVE work (should emerge from
-#   Φ/serotonin/basin-velocity). They'll move to _registry.get() +
-#   derivation formulas in that pass. For v0.8.4a they stay hardcoded
-#   so behavior is bit-identical to pre-merge live — zero decision
-#   change in this PR.
-DCA_COOLDOWN_MS = 15 * 60 * 1000
+#   ceiling; live-governed via registry).
+# - The cooldown is observer-derived (substrate_observer) — operator
+#   2026-05-29 no-knob directive eliminated the prior
+#   `DCA_COOLDOWN_MS = 15 * 60 * 1000` table AND the
+#   `int((25.0 - 20.0 * ser) * 60_000)` serotonin formula. Both
+#   encoded designer intuition; the lane's empirical decision-change
+#   period is what the kernel actually observes.
+# - better_price_frac and min_sovereignty remain as DCA-specific
+#   geometric thresholds (separate domain from cooldown).
 DCA_BETTER_PRICE_FRAC = 0.01
 DCA_MIN_SOVEREIGNTY = 0.1
 
@@ -1158,29 +1160,22 @@ def should_dca_add(
     symbol DCA-adds, because they live in different lanes with their
     own retreat tolerance.
     """
-    _ = lane  # surfaced into derivation for telemetry; not gating logic
-    # v0.8.4b — when ExecBasinState is provided, DCA cooldown / better-price
-    # / min-sovereignty DERIVE from geometric state per P25. When not
-    # provided, fall back to the hardcoded pre-derivation values so older
-    # callers stay byte-compatible. tick.py's _decide_with_position will
-    # populate `s` after v0.8.4b; any other caller gets the legacy path.
+    # 2026-05-29 cascading-knob-strip: DCA cooldown is now observer-derived
+    # from substrate_observer (lane's empirical decision-change period).
+    # The prior `DCA_COOLDOWN_MS = 15 * 60 * 1000` fallback AND the
+    # `int((25.0 - 20.0 * ser) * 60_000)` serotonin formula are DELETED —
+    # both encoded designer intuition. Cold-start (no observations) returns
+    # 0 → no DCA cooldown until the kernel has observed its own cadence.
     #
-    # Cooldown: scales inversely with serotonin (stability). serotonin=0.5
-    #   → 15 min (matches pre-derivation); serotonin=0 → 25 min (unstable,
-    #   cautious); serotonin=1 → 5 min (stable, okay to add).
-    # Better-price threshold: scales with basin velocity. Fast-moving basin
-    #   → higher bar for calling it a "better" price. Anchored at 1% when
-    #   bv=0.02 (nominal); drops to 0.5% when basin is still, rises to 2%+
-    #   when basin is jumpy.
-    # Min-sovereignty: still a hard floor (SAFETY_BOUND — no DCA for
-    #   newborn kernels regardless of other state).
+    # better-price-frac stays observer-derived from basin velocity when
+    # ExecBasinState is provided; falls back to DCA_BETTER_PRICE_FRAC
+    # constant otherwise (separate geometric domain, tracked separately).
+    # min-sovereignty remains a SAFETY_BOUND floor.
+    cooldown_ms = get_observed_lane_decision_period_ms(lane)  # type: ignore[arg-type]
     if s is not None:
-        ser = s.neurochemistry.serotonin
         bv = s.basin_velocity
-        cooldown_ms = int((25.0 - 20.0 * ser) * 60_000)  # min → ms
         better_price_frac = max(0.005, min(0.03, 0.01 + (bv - 0.02) * 0.5))
     else:
-        cooldown_ms = DCA_COOLDOWN_MS
         better_price_frac = DCA_BETTER_PRICE_FRAC
 
     if held_side != side_candidate:
@@ -1203,7 +1198,7 @@ def should_dca_add(
             "reason": f"add cap reached ({add_count}/{max_adds})",
             "derivation": {"rule": 4, "add_count": add_count, "max_adds": max_adds},
         }
-    if now_ms - last_add_at_ms < cooldown_ms:
+    if cooldown_ms > 0 and now_ms - last_add_at_ms < cooldown_ms:
         sec_remain = round((cooldown_ms - (now_ms - last_add_at_ms)) / 1000)
         return {
             "value": False,

@@ -72,6 +72,7 @@ from .executive import (
     should_scalp_exit,
     upper_stack_executive_live,
 )
+from .substrate_observer import record_lane_decision
 from .foresight import ForesightPredictor
 from .heart import HeartMonitor
 from .kernel_bus import KernelBus
@@ -1141,6 +1142,13 @@ def run_tick(
         stud_live=stud_live,
     )
     pre_lane = pre_lane_d["value"]
+    # Substrate observer (#1025 cascading-knob-strip Py side): record
+    # the current (lane, decision) so the rolling decision-change
+    # interval supersedes the legacy DCA_COOLDOWN_MS table + serotonin
+    # multiplier formula. Tag is the lane value itself; identical-tag
+    # back-to-back calls do NOT push a new sample.
+    _pre_lane_norm = pre_lane if pre_lane in ("scalp", "swing", "trend") else "swing"
+    record_lane_decision(_pre_lane_norm, time.time() * 1000.0, str(pre_lane))
     size_d = current_position_size(
         basin_state,
         available_equity_usdt=capped_equity,
