@@ -149,7 +149,7 @@ def test_registry_get_call_count_within_budget():
 def test_autonomic_reward_constants_are_module_level(constant_name: str):
     """#1007 P0-B confirms the autonomic.py constants exist as honest
     module-level values, not wrapped in registry-get costume."""
-    text = (_MONKEY_KERNEL_DIR / "autonomic.py").read_text()
+    text = (_MONKEY_KERNEL_DIR / "autonomic.py").read_text(encoding="utf-8")
     pattern = re.compile(
         rf"^{constant_name}\s*[:=]", re.MULTILINE
     )
