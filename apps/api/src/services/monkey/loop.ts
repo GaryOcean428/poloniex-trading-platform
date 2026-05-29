@@ -22,6 +22,7 @@
 import { EventEmitter } from 'events';
 
 import { pool } from '../../db/connection.js';
+import { apiCache } from '../../utils/apiCache.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
 import { logger } from '../../utils/logger.js';
 import { apiCredentialsService } from '../apiCredentialsService.js';
@@ -43,6 +44,10 @@ import {
 import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
 import { noteClose as noteHeartClose } from './heart_arbitrator.js';
 import { evaluatePostCloseCooldownGate } from './postclose_cooldown_gate.js';
+import {
+  computePoloAuthoritativeReward,
+  detectFundingSignDiscrepancies,
+} from './polo_reward_ledger.js';
 
 /**
  * #1009 PR2 helper — extract the present-symbol set from a Polo
@@ -9289,32 +9294,178 @@ export class MonkeyKernel extends EventEmitter {
       // For USDT-M perp the feeCcy is consistently 'USDT'. We log + skip
       // any fill that comes back in a non-USDT fee (defensive, shouldn't
       // happen on these contracts).
+      const MAX_ATTEMPTS = 3;
+      const RETRY_DELAY_MS = 200;
       let totalCloseFees = 0;
       let fillCount = 0;
-      const nonUsdtFees: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
-      for (const ordId of closeOrderIds) {
-        try {
-          const resp = await poloniexFuturesService.getExecutionDetails(credentials, {
-            symbol, ordId, limit: 100,
-          });
-          const fills: any[] = Array.isArray(resp) ? resp : (resp?.data ?? []);
-          for (const f of fills) {
-            const feeCcy = String(f.feeCcy ?? '').toUpperCase();
-            const feeAmt = parseFloat(f.feeAmt ?? '0');
-            if (!Number.isFinite(feeAmt)) continue;
-            if (feeCcy && feeCcy !== 'USDT') {
-              nonUsdtFees.push({ ordId, feeCcy, feeAmt });
-              continue;
+      let nonUsdtFees: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
+      type FeeSummary = {
+        totalFees: number;
+        fillsSeen: number;
+        filledOrderIds: Set<string>;
+        skippedNonUsdt: Array<{ ordId: string; feeCcy: string; feeAmt: number }>;
+      };
+      const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+      const rowsFromResponse = (resp: unknown): Array<Record<string, unknown>> => {
+        if (Array.isArray(resp)) return resp as Array<Record<string, unknown>>;
+        if (resp && typeof resp === 'object' && Array.isArray((resp as { data?: unknown }).data)) {
+          return (resp as { data: Array<Record<string, unknown>> }).data;
+        }
+        return [];
+      };
+      const fetchFeeSummary = async (orderIds: string[], feeSide: 'open' | 'close'): Promise<FeeSummary> => {
+        let totalFees = 0;
+        let fillsSeen = 0;
+        const filledOrderIds = new Set<string>();
+        const skippedNonUsdt: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
+        await Promise.all(orderIds.map(async (ordId) => {
+          try {
+            const resp = await poloniexFuturesService.getExecutionDetails(credentials, {
+              symbol, ordId, limit: 100,
+            });
+            const fills = rowsFromResponse(resp);
+            for (const f of fills) {
+              const feeCcy = String(f.feeCcy ?? '').toUpperCase();
+              const feeAmt = parseFloat(String(f.feeAmt ?? '0'));
+              if (!Number.isFinite(feeAmt)) continue;
+              if (feeCcy && feeCcy !== 'USDT') {
+                skippedNonUsdt.push({ ordId, feeCcy, feeAmt });
+                continue;
+              }
+              // Polo's /v3/trade/order/trades docs expose feeAmt but do
+              // not specify a sign convention; treat it as a fee magnitude
+              // so a signed rebate cannot accidentally inflate reward PnL.
+              totalFees += Math.abs(feeAmt);
+              fillsSeen += 1;
+              filledOrderIds.add(ordId);
             }
-            totalCloseFees += feeAmt;
-            fillCount += 1;
+          } catch (fetchErr) {
+            logger.warn('[Monkey] /trade/order/trades fetch failed for fee subtraction', {
+              symbol, ordId, feeSide,
+              err: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+            });
           }
-        } catch (fetchErr) {
-          logger.warn('[Monkey] /trade/order/trades fetch failed for fee subtraction', {
-            symbol, ordId,
-            err: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+        }));
+        return { totalFees, fillsSeen, filledOrderIds, skippedNonUsdt };
+      };
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        const summary = await fetchFeeSummary(closeOrderIds, 'close');
+        totalCloseFees = summary.totalFees;
+        fillCount = summary.fillsSeen;
+        nonUsdtFees = summary.skippedNonUsdt;
+        if (summary.filledOrderIds.size >= closeOrderIds.length || attempt === MAX_ATTEMPTS) break;
+        apiCache.invalidatePrefix('GET:/trade/order/trades');
+        logger.info('[Monkey] Polo-authoritative close fills not indexed yet; retrying', {
+          symbol, side, attempt,
+          indexedOrderIds: summary.filledOrderIds.size,
+          closeOrderIdsCount: closeOrderIds.length,
+          nextDelayMs: RETRY_DELAY_MS,
+        });
+        await sleep(RETRY_DELAY_MS);
+      }
+
+      if (fillCount === 0) {
+        // Polo hasn't indexed the fills yet even after the bounded retry.
+        // Skip rather than write a gross value with no fee deduction.
+        logger.warn('[Monkey] Polo-authoritative skipped — no fills returned for close orderIds', {
+          symbol, side, closeOrderIdsCount: closeOrderIds.length, attempts: MAX_ATTEMPTS,
+        });
+        return;
+      }
+
+      const tradeRowsRes = await pool.query<{
+        id: string;
+        order_id: string | null;
+        entry_time: Date | string | null;
+      }>(
+        `SELECT id, order_id, entry_time
+           FROM autonomous_trades
+          WHERE id = ANY($1)`,
+        [tradeIds],
+      );
+      const openOrderIds: string[] = Array.from(new Set<string>(
+        tradeRowsRes.rows
+          .map((row) => row.order_id)
+          .filter((orderId): orderId is string => typeof orderId === 'string' && orderId.length > 0),
+      ));
+      let totalOpenFees = 0;
+      let openFeeFillCount = 0;
+      let openFeesComplete = openOrderIds.length > 0;
+      if (openOrderIds.length > 0) {
+        const openSummary = await fetchFeeSummary(openOrderIds, 'open');
+        totalOpenFees = openSummary.totalFees;
+        openFeeFillCount = openSummary.fillsSeen;
+        openFeesComplete = openSummary.filledOrderIds.size >= openOrderIds.length;
+        if (openSummary.skippedNonUsdt.length > 0) {
+          nonUsdtFees = nonUsdtFees.concat(openSummary.skippedNonUsdt);
+        }
+      }
+      if (!openFeesComplete) {
+        logger.warn('[Monkey] Polo full-net unavailable — no open-side fee fills found', {
+          symbol, side, openOrderIdsCount: openOrderIds.length,
+        });
+      }
+
+      let totalFundingFlows = 0;
+      let fundingRows = 0;
+      let fundingComplete = false;
+      const entryTimes = tradeRowsRes.rows
+        .map((row) => row.entry_time ? new Date(row.entry_time).getTime() : NaN)
+        .filter((ms) => Number.isFinite(ms));
+      const fundingStartMs = entryTimes.length > 0 ? Math.min(...entryTimes) : NaN;
+      if (Number.isFinite(fundingStartMs)) {
+        try {
+          const resp = await poloniexFuturesService.getFundingHistory(credentials, {
+            symbol,
+            posSide: side === 'long' ? 'LONG' : 'SHORT',
+            sTime: Math.max(0, fundingStartMs - 1_000),
+            eTime: closeTimeMs + 1_000,
+            limit: 100,
+          });
+          const rows = rowsFromResponse(resp);
+          // #1024 follow-up: also collect the per-row funding rate so we
+          // can sanity-check the sign of `fundingFee` against the
+          // expected direction implied by (position side, rate sign).
+          // The kernel's own pre-entry funding gate documents the
+          // convention; if Polo's history field deviates we want to
+          // know in production logs, not silently mis-attribute.
+          const fundingRowsForCheck: Array<{ fundingFee: number; rate: number }> = [];
+          for (const row of rows) {
+            const raw = row.fundingFee ?? row.fundingAmt ?? row.feeAmt ?? row.amount ?? row.amt ?? '0';
+            const amount = parseFloat(String(raw));
+            if (!Number.isFinite(amount)) continue;
+            totalFundingFlows += amount;
+            fundingRows += 1;
+            const rateRaw = row.fundingRate ?? row.fR ?? row.rate;
+            const rate = rateRaw === undefined ? NaN : parseFloat(String(rateRaw));
+            if (Number.isFinite(rate)) {
+              fundingRowsForCheck.push({ fundingFee: amount, rate });
+            }
+          }
+          fundingComplete = true;
+          // Surface API convention drift without breaking the reward
+          // channel. If discrepancies show up in production, the
+          // ADD-signed semantics in computePoloAuthoritativeReward
+          // needs revisiting.
+          const discrepancies = detectFundingSignDiscrepancies(side, fundingRowsForCheck);
+          if (discrepancies.length > 0) {
+            logger.warn('[Monkey] Polo funding sign discrepancy detected', {
+              symbol, side,
+              count: discrepancies.length,
+              sample: discrepancies.slice(0, 3),
+            });
+          }
+        } catch (fundingErr) {
+          logger.warn('[Monkey] /trade/funding fetch failed for full-net pnl', {
+            symbol, side,
+            err: fundingErr instanceof Error ? fundingErr.message : String(fundingErr),
           });
         }
+      } else {
+        logger.warn('[Monkey] Polo full-net unavailable — missing entry_time for funding window', {
+          symbol, side, tradeIdsCount: tradeIds.length,
+        });
       }
 
       if (nonUsdtFees.length > 0) {
@@ -9323,42 +9474,43 @@ export class MonkeyKernel extends EventEmitter {
         });
       }
 
-      if (fillCount === 0) {
-        // Polo hasn't indexed the fills yet (typical lag is sub-second
-        // but can be a few seconds). Skip rather than write a gross
-        // value with no fee deduction.
-        logger.warn('[Monkey] Polo-authoritative skipped — no fills returned for close orderIds', {
-          symbol, side, closeOrderIdsCount: closeOrderIds.length,
-        });
-        return;
-      }
-
-      // Net = gross - close-side fees. Open-side fees + funding are not
-      // yet subtracted (open fees would require fetching /order/trades
-      // for each row's entry order_id; funding is usually << close
-      // fees over typical hold windows). Close fees alone are the
-      // dominant correction relative to the synthetic gross.
-      const poloRealized = grossSum - totalCloseFees;
+      // #1024 follow-up: pure-helper composition (testable in isolation).
+      // `totalFundingFlows` is the SIGNED sum of fundingFee per the
+      // canonical Polo convention (positive = received, negative = paid).
+      // The helper ADDS this signed value to compute pnl_net_full —
+      // correcting the prior `- totalFundingFlows` which inverted the
+      // direction (paid funding would have INCREASED net pnl).
+      const reward = computePoloAuthoritativeReward({
+        grossSum,
+        totalCloseFees,
+        totalOpenFees,
+        openFeesComplete,
+        fundingFlowsSigned: totalFundingFlows,
+        fundingComplete,
+      });
+      const { pnlNetCloseFeesOnly, pnlNetFull, hasFullNet, poloRealized, pnlSource } = reward;
       if (!Number.isFinite(poloRealized)) return;
 
-      logger.info('[Monkey] Polo-authoritative: gross − close fees computed', {
+      logger.info('[Monkey] Polo-authoritative: reward-ledger pnl computed', {
         symbol, side,
         grossSum: grossSum.toFixed(4),
         totalCloseFees: totalCloseFees.toFixed(4),
+        totalOpenFees: totalOpenFees.toFixed(4),
+        totalFundingFlows: totalFundingFlows.toFixed(4),
         fillCount,
+        openFeeFillCount,
+        fundingRows,
+        pnlNetCloseFeesOnly: pnlNetCloseFeesOnly.toFixed(4),
+        pnlNetFull: hasFullNet ? pnlNetFull.toFixed(4) : null,
+        pnlSource,
         poloRealized: poloRealized.toFixed(4),
       });
 
-      // Write Polo authoritative net pnl to the rows, and preserve synthetic as gross_pnl.
-      // poloRealized is computed per-close-group (sum of gross − close fees);
+      // Write the best Polo-derived net pnl to the rows, and preserve synthetic as gross_pnl.
+      // poloRealized is computed per-close-group (full net when open fees + funding
+      // are available; otherwise gross − close fees with explicit provenance);
       // pro-rata across rows by their own gross share so each row's `pnl` reflects
       // its proportional share of the close-group's net.
-      //
-      // pnl_source stays 'polo_history' — that's the column's CHECK constraint
-      // (allowed values: 'polo_history' | 'synthetic_fallback', per migration
-      // 061_polo_authoritative_pnl_columns.sql:33). The provenance "gross − close
-      // fees" is captured in the preceding info log + this comment. A distinct
-      // provenance tag would require a migration to expand the CHECK enum.
       const grossAbsTotal = tradeIds.reduce(
         (s, id) => s + Math.abs(Number(grossPnlByRow?.[id] ?? 0)),
         0,
@@ -9369,17 +9521,25 @@ export class MonkeyKernel extends EventEmitter {
           ? Math.abs(Number(gross ?? 0)) / grossAbsTotal
           : 1 / tradeIds.length;
         const rowNet = poloRealized * share;
+        const rowCloseFeesOnly = pnlNetCloseFeesOnly * share;
+        const rowFullNet = hasFullNet ? pnlNetFull * share : null;
+        const rowOpenFees = totalOpenFees * share;
+        const rowFundingFlows = totalFundingFlows * share;
         await pool.query(
           `UPDATE autonomous_trades
               SET pnl = $1,
                   gross_pnl = COALESCE(gross_pnl, $2),
-                  pnl_source = 'polo_history',
+                  pnl_source = $4,
                   fees_paid = CASE
-                    WHEN $2 IS NOT NULL THEN $2 - $1
-                    ELSE fees_paid
-                  END
+                   WHEN $2 IS NOT NULL THEN $2 - $1
+                   ELSE fees_paid
+                  END,
+                  pnl_net_close_fees_only = $5,
+                  pnl_net_full = $6,
+                  open_fees_paid = $7,
+                  funding_paid = $8
             WHERE id = $3`,
-          [rowNet, gross ?? null, id]
+          [rowNet, gross ?? null, id, pnlSource, rowCloseFeesOnly, rowFullNet, rowOpenFees, rowFundingFlows]
         ).catch((err) => {
           // Promoted from silent catch 2026-05-28 (Copilot review on PR #1000):
           // the previous `.catch(() => {})` would swallow constraint violations
@@ -9394,7 +9554,7 @@ export class MonkeyKernel extends EventEmitter {
       }
 
       logger.info('[Monkey] Polo-authoritative pnl written for reward ledger', {
-        symbol, side, poloRealized: poloRealized.toFixed(4), rows: tradeIds.length,
+        symbol, side, pnlSource, poloRealized: poloRealized.toFixed(4), rows: tradeIds.length,
       });
 
       // PR #992 (2026-05-28): compute realistic margin_usdt from the closed trade rows
@@ -9535,8 +9695,9 @@ export class MonkeyKernel extends EventEmitter {
      *  back-compat with pre-2026-05-16 callsites that didn't pass it. */
     agent?: AgentLabel;
     /** Optional tradeId for canonical Polo surface: allows pushReward
-     *  to prefer the authoritative Polo realized pnl from autonomous_trades.pnl
-     *  (when pnl_source = 'polo_history') over the synthetic/estimated net. */
+     *  callers to tie rewards back to autonomous_trades.pnl provenance
+     *  (`polo_net_full` when open fees + funding were captured, otherwise
+     *  `polo_gross_minus_close_fees`). */
     tradeId?: string;
   }): void {
     const agent: AgentLabel = input.agent ?? 'K';
@@ -9564,8 +9725,10 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // "Reward based on actual profit" doctrine (operator 2026-05-27 / 28):
-    //   polo_authoritative_close: realizedPnlUsdt IS the Polo net (fees +
-    //     funding already subtracted by the exchange). Use it directly.
+    //   polo_authoritative_close: realizedPnlUsdt is the best Polo-derived
+    //     ledger value from applyPoloRealizedPnlAfterClose. It is full net
+    //     when open fees + funding were captured, otherwise explicitly
+    //     tagged as gross-minus-close-fees for telemetry/backfill.
     //   any other source (synthetic immediate-close): chemistry waits.
     //     The follow-up applyPoloRealizedPnlAfterClose call will push a
     //     polo_authoritative_close event within ~1 tick.

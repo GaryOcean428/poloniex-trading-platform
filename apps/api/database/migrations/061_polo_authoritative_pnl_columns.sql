@@ -1,6 +1,6 @@
 -- 061_polo_authoritative_pnl_columns.sql
 -- Make Polo getPositionHistory.realizedPnl the canonical source for
--- autonomous_trades.pnl (net of fees + funding). The previous synthetic
+-- autonomous_trades.pnl (Polo-derived net when available). The previous synthetic
 -- compute (SAFE_PNL_FROM_ROW) becomes gross_pnl for forensic divergence
 -- audit only.
 --
@@ -22,12 +22,14 @@ ALTER TABLE autonomous_trades
 ALTER TABLE autonomous_trades
   ADD COLUMN IF NOT EXISTS fees_paid NUMERIC;
 
--- pnl_source: 'polo_history' | 'synthetic_fallback'
+-- Initial pnl_source values: 'polo_history' | 'synthetic_fallback'
 -- 'polo_history' means we successfully matched a row from
 -- getPositionHistory and wrote the realized value.
 -- 'synthetic_fallback' means we fell back to the row's own arithmetic
 -- (brief window after close before Polo history is available, or
 -- during reconciliation for very old ghosts).
+-- Migration 063 expands this with the per-fill provenance tags
+-- 'polo_gross_minus_close_fees' and 'polo_net_full'.
 ALTER TABLE autonomous_trades
   ADD COLUMN IF NOT EXISTS pnl_source TEXT
     CHECK (pnl_source IS NULL OR pnl_source IN ('polo_history', 'synthetic_fallback'));
@@ -44,7 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_autonomous_trades_pnl_source
 COMMIT;
 
 -- After this migration, the canonical surface is:
---   autonomous_trades.pnl          = Polo realized (authoritative for reward/ledger)
+--   autonomous_trades.pnl          = best available Polo-derived realized PnL
 --   autonomous_trades.gross_pnl    = kernel synthetic (for diff audit)
 --   autonomous_trades.fees_paid    = gross - net (when available)
 --   autonomous_trades.pnl_source   = provenance tag
