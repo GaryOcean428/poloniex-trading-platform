@@ -8065,14 +8065,15 @@ export class MonkeyKernel extends EventEmitter {
     // is the gated case. Opposite-side (reversal) isn't gated by THIS
     // check — it has its own gates (REGIME-2, directional_disagreement).
     this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
-    // #1009 PR2: HEART tilt-chain observer — records the close + PnL so
-    // consecutive-loss chains can be detected. The chain-gap ring
-    // supersedes the legacy `POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000`
-    // wall: HEART contributes 0 until the kernel has demonstrated a
-    // consecutive-loss chain, then returns the rolling-max inter-loss
-    // gap as the empirically-grounded tilt floor.  Pure observer; no
-    // hardcoded thresholds.
-    noteHeartClose(symbol, Date.now(), pnlAtDecision);
+    // #1009 PR2: HEART tilt-chain observer is fed from the SAME canonical
+    // surface as the reward chemistry — `pushPerAgentCloseRewards` for
+    // the synthetic path (gated by CANONICAL_POLO_PNL_LIVE !== 'true'),
+    // and `applyPoloRealizedPnlAfterClose` for the polo-authoritative
+    // path. Wiring HEART here would feed the chain detector with the
+    // mark-based gross `pnlAtDecision` even when the polo-authoritative
+    // net pnl (post-fees, the truth the kernel learns from) is about to
+    // arrive async. Cascade 2026-05-29 explicitly flagged that risk:
+    // HEART must learn tilt from the same surface the reward ledger uses.
     // #1009 safety_floor observer 1 (settlement-latency p99) is fed by
     // `observePositionSnapshot` at every kernel `getPositions` site
     // (loop.ts:7316, 7696, 8363, 10061). When the snapshot returns
@@ -9124,6 +9125,15 @@ export class MonkeyKernel extends EventEmitter {
           authoritativeWillReachPy: process.env.CANONICAL_POLO_PNL_LIVE === 'true',
         });
       }
+      // #1009 PR2: HEART chain observer is fed ONLY from the
+      // polo-authoritative surface in `applyPoloRealizedPnlAfterClose`.
+      // Wiring it here from the mark-based synthetic per-agent surface
+      // would either double-count (one chain sample per close from gross,
+      // then a second from polo net) or require an env-gated bifurcation
+      // — both are knob-in-costume patterns the doctrine forbids.
+      // Operator 2026-05-29: no equivalent CANONICAL gate in HEART code.
+      // If polo data is unavailable for a close, HEART honestly receives
+      // no chain sample for that close.
     } catch { /* non-fatal */ }
   }
 
@@ -9420,6 +9430,14 @@ export class MonkeyKernel extends EventEmitter {
         marginUsdt, // #992: realistic scale so TS + Py observer_fib see correct pnl_frac
         kappaAtExit: undefined,
       });
+      // #1009 PR2: HEART chain observer fed from the polo-authoritative
+      // close surface. Mirror of `pushReward({source: 'polo_authoritative_close'})`
+      // — when polo data is available, the chain detector learns tilt
+      // from the SAME net-pnl surface the reward chemistry consumes.
+      // Cascade 2026-05-29: HEART must learn from canonical net, not
+      // mark-based gross, or tiny gross wins that net out as losses
+      // post-fees are missed as chain samples.
+      noteHeartClose(symbol, Date.now(), poloRealized);
 
       // PR #992 fan-out (completes the 2026-05-28 CC1): mirror the Polo-authoritative
       // net reward (with correct margin) into Python autonomic so BOTH chemistry
