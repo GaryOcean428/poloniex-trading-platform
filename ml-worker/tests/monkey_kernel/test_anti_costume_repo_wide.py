@@ -45,6 +45,10 @@ import pytest
 
 _MONKEY_KERNEL_DIR = Path(__file__).parents[2] / "src" / "monkey_kernel"
 _REPO_ROOT = Path(__file__).parents[3]
+_HOLD_BIAS_LITERAL_RE = re.compile(
+    r"[A-Za-z_]*HOLD_BIAS[A-Za-z_]*\s*[:=]\s*(?!1(?:\.0+)?(?:\s|$))[0-9.]+",
+    re.I,
+)
 
 # #1007 P0-B: these parameter keys describe knobs-in-costume that should
 # never reappear ANYWHERE in monkey_kernel sources. They were retired to
@@ -191,7 +195,7 @@ def test_qig_warp_forbidden_literal_patterns_absent_repo_wide():
     forbidden = [
         (
             "HOLD_BIAS raw non-neutral literal",
-            re.compile(r"[A-Za-z_]*HOLD_BIAS[A-Za-z_]*\s*[:=]\s*(?!1(?:\.0+)?\b)[0-9.]+", re.I),
+            _HOLD_BIAS_LITERAL_RE,
         ),
         (
             "REWARD *_SCALE raw literal",
@@ -226,16 +230,14 @@ def test_qig_warp_forbidden_literal_patterns_absent_repo_wide():
 
 
 def test_qig_warp_forbidden_literal_regex_positive_controls():
-    hold_bias = re.compile(
-        r"[A-Za-z_]*HOLD_BIAS[A-Za-z_]*\s*[:=]\s*(?!1(?:\.0+)?\b)[0-9.]+",
-        re.I,
-    )
     reward_scale = re.compile(
         r"[A-Za-z_]*REWARD[A-Za-z_]*_SCALE[A-Za-z_]*\s*[:=]\s*[0-9.]+",
         re.I,
     )
     suppress_hold = re.compile(r"expectation_action\s*==\s*[\"']suppress_hold[\"']")
-    assert hold_bias.search("expectation_hold_bias = 0.85")
-    assert not hold_bias.search("expectation_hold_bias = 1.0")
+    assert _HOLD_BIAS_LITERAL_RE.search("expectation_hold_bias = 0.85")
+    assert _HOLD_BIAS_LITERAL_RE.search("expectation_hold_bias = 1.00001")
+    assert _HOLD_BIAS_LITERAL_RE.search("expectation_hold_bias = 10.0")
+    assert not _HOLD_BIAS_LITERAL_RE.search("expectation_hold_bias = 1.0")
     assert reward_scale.search("const SHADOW_REWARD_GAIN_SCALE = 0.4")
     assert suppress_hold.search('expectation_action == "suppress_hold"')

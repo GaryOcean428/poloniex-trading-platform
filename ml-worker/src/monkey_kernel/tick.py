@@ -116,6 +116,7 @@ from .state import LaneType, NeurochemicalState
 logger = logging.getLogger("monkey.tick")
 
 _registry = get_registry()
+DEFAULT_PY_KERNEL_ID = "monkey-py-shadow"
 
 
 # CHOP-regime entry suppression — when the regime classifier reads
@@ -1866,7 +1867,10 @@ def run_tick(
                     ),
                     None,
                 )
-                matched_position = lane_match if held_side is None else (held_match or lane_match)
+                if held_side is not None:
+                    matched_position = held_match or lane_match
+                else:
+                    matched_position = lane_match
                 if matched_position is not None:
                     expectation_trade_id = matched_position.trade_id
             if action in ("scalp_exit", "exit", "flatten"):
@@ -1895,7 +1899,7 @@ def run_tick(
             )
             publish_expectation_decision({
                 "trade_id": str(expectation_trade_id) if expectation_trade_id is not None else None,
-                "kernel_id": os.environ.get("MONKEY_PY_INSTANCE_ID", "monkey-py-shadow"),
+                "kernel_id": os.environ.get("MONKEY_PY_INSTANCE_ID", DEFAULT_PY_KERNEL_ID),
                 "tape_trend": float(getattr(expectation_decision, "tape_trend", tape_trend)),
                 "basin_direction": float(getattr(expectation_decision, "basin_direction", basin_dir)),
                 "fisher_rao_disagreement": float(drift_now),
@@ -1988,7 +1992,7 @@ def run_tick(
             pred_terminal = prediction_sign * notional * max(0.000001, float(entry_thr_d["value"]))
             payload = build_prediction_payload(
                 trade_id=str(trade_id) if trade_id is not None else None,
-                kernel_id=os.environ.get("MONKEY_PY_INSTANCE_ID", "monkey-py-shadow"),
+                kernel_id=os.environ.get("MONKEY_PY_INSTANCE_ID", DEFAULT_PY_KERNEL_ID),
                 perception_basin=basin,
                 strategy_forecast_basin=state.identity_basin,
                 basin_velocity=float(bv),

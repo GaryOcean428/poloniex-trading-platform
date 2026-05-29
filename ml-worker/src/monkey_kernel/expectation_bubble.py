@@ -43,6 +43,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
@@ -51,6 +52,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 _EXPECTATION_BUBBLE_DISABLED_WARNED = False
+_EXPECTATION_BUBBLE_DISABLED_WARN_LOCK = threading.Lock()
 
 
 try:
@@ -104,12 +106,14 @@ def expectation_bubble_live() -> bool:
     """
     global _EXPECTATION_BUBBLE_DISABLED_WARNED
     live = os.environ.get("EXPECTATION_BUBBLE_LIVE", "true").strip().lower() == "true"
-    if not live and not _EXPECTATION_BUBBLE_DISABLED_WARNED:
-        logger.warning(
-            "[expectation_bubble] EXPECTATION_BUBBLE_LIVE disabled; qig-warp "
-            "incident kill switch engaged (not a strategy/config knob)"
-        )
-        _EXPECTATION_BUBBLE_DISABLED_WARNED = True
+    if not live:
+        with _EXPECTATION_BUBBLE_DISABLED_WARN_LOCK:
+            if not _EXPECTATION_BUBBLE_DISABLED_WARNED:
+                logger.warning(
+                    "[expectation_bubble] EXPECTATION_BUBBLE_LIVE disabled; qig-warp "
+                    "incident kill switch engaged (not a strategy/config knob)"
+                )
+                _EXPECTATION_BUBBLE_DISABLED_WARNED = True
     return live
 
 
