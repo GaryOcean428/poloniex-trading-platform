@@ -1032,9 +1032,9 @@ def run_tick(
     expectation_hold_bias = 1.0
     if expectation_decision is not None and getattr(expectation_decision, "reverse_tape_window", False):
         action = getattr(expectation_decision, "expectation_action", None)
-        if action in ("suppress_hold", "exit_now"):
+        if action == "observe_only":
             expectation_hold_bias = 0.6   # meaningfully easier to exit / harder to hold
-        elif action == "hold_with_reduced_confidence":
+        elif action == "reduce_size":
             expectation_hold_bias = 0.85  # modest reduction
 
     self_obs_bias = 1.0
@@ -1337,7 +1337,15 @@ def run_tick(
                 if expectation_decision is not None
                 else {"live": False, "source": "none"}
             ),
-            "expectation_live_flag": expectation_bubble_live() and expectation_decision is not None,
+            "expectation_live_flag": (
+                expectation_bubble_live()
+                and expectation_decision is not None
+                and getattr(
+                    expectation_decision,
+                    "qig_warp_source",
+                    None,
+                ) == "QIG_WARP_RUNTIME"
+            ),
             # #1003: Full ExpectationDecision now surfaced for downstream use and future
             # kernel_expectation_decisions audit writes (reverse_tape_window, expectation_action,
             # tape_trend, basin_direction, before/after ready in the object).

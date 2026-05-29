@@ -11,9 +11,9 @@ default=N)`` appears unless one of these holds:
 Implementation:
 
   * **Banned-key list** — the exact reward-transform parameter names
-    #1007 P0-B retired. These must NEVER reappear in any ml-worker source
-    file regardless of file. Catches the failure mode where a knob is
-    moved between modules to evade the autonomic-specific test.
+    #1007 P0-B retired. These must NEVER reappear in any monkey_kernel
+    source file. Catches the failure mode where a knob is moved between
+    modules to evade the autonomic-specific test.
 
   * **Snapshot-based file budget** — every monkey_kernel module that
     currently uses ``_registry.get(`` gets a recorded call count. New
@@ -46,8 +46,8 @@ import pytest
 _MONKEY_KERNEL_DIR = Path(__file__).parents[2] / "src" / "monkey_kernel"
 
 # #1007 P0-B: these parameter keys describe knobs-in-costume that should
-# never reappear ANYWHERE in ml-worker. They were retired to honest module
-# constants in autonomic.py:145-149.
+# never reappear ANYWHERE in monkey_kernel sources. They were retired to
+# honest module constants in autonomic.py:145-149.
 _BANNED_REGISTRY_KEYS = (
     "autonomic.reward_half_life_ms",
     "autonomic.pnl_frac_history_max",
@@ -58,10 +58,11 @@ _BANNED_REGISTRY_KEYS = (
 )
 
 # Snapshot of legitimate (or pre-existing) ``_registry.get(`` call sites
-# per file. Most are observer-derived primitives (heart rhythm modulation,
-# ocean-sleep quantile thresholds, candle-pattern ratios) seeded with
-# documented defaults. The test BUDGETs each file at its current count
-# so adding a new costume to a previously-clean file is blocked.
+# per path relative to _MONKEY_KERNEL_DIR. Most are observer-derived
+# primitives (heart rhythm modulation, ocean-sleep quantile thresholds,
+# candle-pattern ratios) seeded with documented defaults. The test BUDGETs
+# each file at its current count so adding a new costume to a previously-clean
+# file is blocked.
 #
 # Bump deliberately in the same PR that adds a new call site, with a
 # one-line justification.
@@ -88,12 +89,12 @@ def _all_kernel_sources() -> list[Path]:
 
 def test_banned_reward_transform_keys_absent_repo_wide():
     """#1007 P0-B: the retired reward-transform parameter names must never
-    appear in any ml-worker source. A reintroduction anywhere — even in
-    a comment-only sense in a different module — must fail the suite so
-    a careless refactor can't smuggle the knob back."""
+    appear in any monkey_kernel source. A reintroduction anywhere within
+    that package — even in a comment-only sense in a different module —
+    must fail the suite so a careless refactor can't smuggle the knob back."""
     offenders: list[tuple[str, str]] = []
     for src in _all_kernel_sources():
-        text = src.read_text()
+        text = src.read_text(encoding="utf-8")
         for key in _BANNED_REGISTRY_KEYS:
             if key in text:
                 offenders.append((str(src.relative_to(_MONKEY_KERNEL_DIR)), key))
@@ -110,22 +111,22 @@ def test_registry_get_call_count_within_budget():
     one-line justification only after verifying the new caller has a
     real lived-telemetry population path or is an explicit safety bound.
     """
-    pattern = re.compile(r"_registry\.get\(")
+    pattern = re.compile(r"_registry\.get\s*\(")
     overages: list[tuple[str, int, int]] = []
     untracked: list[tuple[str, int]] = []
     for src in _all_kernel_sources():
-        name = src.name
-        if name == "__init__.py":
+        rel_path = str(src.relative_to(_MONKEY_KERNEL_DIR))
+        if rel_path == "__init__.py":
             continue
-        text = src.read_text()
+        text = src.read_text(encoding="utf-8")
         count = len(pattern.findall(text))
-        budget = _REGISTRY_GET_BUDGET.get(name)
+        budget = _REGISTRY_GET_BUDGET.get(rel_path)
         if budget is None:
             if count > 0:
-                untracked.append((name, count))
+                untracked.append((rel_path, count))
             continue
         if count > budget:
-            overages.append((name, count, budget))
+            overages.append((rel_path, count, budget))
     assert not overages, (
         "_registry.get( count exceeded budget — new knob-in-costume? "
         "Bump the budget in _REGISTRY_GET_BUDGET only with a real "
