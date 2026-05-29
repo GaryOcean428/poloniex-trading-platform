@@ -31,6 +31,7 @@ Literal disposition (per the v0.8 plan, P25):
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -842,6 +843,23 @@ def run_tick(
     )
     stud_live = stud_topology_live()
 
+    # Canonical expectation bubble (qig-warp) — runtime leading expectation engine.
+    # poloniex-trading-platform#1002/#1003 strict anti-shelfware:
+    # expectation must INFLUENCE live decisions on reverse-tape disagreement
+    # windows. The TS-side entry path already does this via
+    # POST /monkey/expectation/evaluate (PR #1004). This Py-side wiring brings
+    # the same behaviour to the Python kernel's tick — runs the verified
+    # ``evaluate_expectation(tape_trend, basin_direction, recent_returns)``
+    # API directly so the call is NEVER a no-op.
+    #
+    # Citations: #1002 + #1003 + #941 correction + 2.31A P5/P25 + QIG PURITY
+    # + Embodiment_Waves (2026-05-28 Polo CSV) + LIVED ONLY 5 + never-stop.
+    from .expectation_bubble import (
+        evaluate_expectation,
+        expectation_bubble_live,
+        decision_to_dict,
+    )
+
     # Telemetry surface — append (Φ, I_Q) for the next tick's
     # Integration motivator CV calculation. Trim to history_max
     # below in the basin_history block (same cap).
@@ -910,6 +928,32 @@ def run_tick(
     basin_dir = basin_direction(basin)
     tape_trend = trend_proxy([float(c.close) for c in ohlcv])
 
+    # Canonical expectation bubble (qig-warp) — #1002/#1003 strict contract.
+    # Calls the verified ``evaluate_expectation`` API directly with
+    # tape_trend, basin_direction, and OHLCV-derived recent log-returns.
+    # The bubble derives (h, J) from recent_returns identically to
+    # regime_signal.py and runs WarpBubble.qig_regime — NEVER the
+    # legacy compute_trading_expectation no-op shim.
+    #
+    # Citations: #1002 + #1003 + 2.31A P1/P5/P25 + Embodiment_Waves (Polo CSV) +
+    # LIVED ONLY 5 + QIG PURITY + master-orchestration + never-stop-100-complete.
+    expectation_decision = None
+    if expectation_bubble_live():
+        # Same lookback regime_signal.py:71 uses. log(c[i]/c[i-1]) ratios.
+        _expectation_returns: list[float] = []
+        for _i in range(1, min(len(ohlcv), 51)):
+            _prev = float(ohlcv[-_i - 1].close)
+            _curr = float(ohlcv[-_i].close)
+            if _prev > 0 and _curr > 0:
+                _expectation_returns.append(math.log(_curr / _prev))
+        _proposed = side_candidate if isinstance(side_candidate, str) and side_candidate in ("long", "short") else None
+        expectation_decision = evaluate_expectation(
+            tape_trend=tape_trend,
+            basin_direction=basin_dir,
+            recent_returns=_expectation_returns,
+            proposed_side=_proposed,
+        )
+
     # Proposal #9: candlestick pattern recognition. Path 1 — feed
     # the strongest pattern's signed scalar into the perception
     # input boundary as a telemetry surface; the executive can fold
@@ -948,10 +992,61 @@ def run_tick(
         direction = "short" if direction == "long" else "long"
         side_override = True
 
+    # === #1003 reverse-tape expectation influence (first live decision wiring) ===
+    # When the qig-warp bubble detects a meaningful tape (lagging) vs basinDir (leading)
+    # disagreement, its ExpectationDecision can now directly affect the kernel's
+    # entry direction. This is the core anti-shelfware requirement of #1003.
+    #
+    # Supported actions in this first wiring:
+    #   observe_only  → force flat (no entry in this disagreement window)
+    #   flip_to_basin → enter in the basin geometric direction instead of tape-biased
+    #
+    # Later slices will extend to size, lane, hold/exit, and full chemistry feedback.
+    #
+    # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
+    # (2026-05-28 Polo CSV tape/basin asymmetry) + LIVED ONLY 5 + QIG PURITY.
+    if expectation_decision is not None and getattr(expectation_decision, "reverse_tape_window", False):
+        action = getattr(expectation_decision, "expectation_action", None)
+        if action == "observe_only":
+            direction = "flat"
+            side_candidate = "long"  # harmless default; flat gate will block entry
+        elif action == "flip_to_basin":
+            direction = "long" if basin_dir > 0 else "short"
+            side_candidate = direction
+
+    # #1003 reverse-tape hold/exit influence (first wiring for held positions)
+    # When the bubble returns a reverse_tape decision while we hold a position
+    # in the "wrong" direction relative to the leading basin signal, we now
+    # modulate hold conviction and exit propensity.
+    #
+    # Supported actions in this wiring:
+    #   suppress_hold / exit_now            → reduce self_obs_bias (makes exit gates easier to satisfy)
+    #   hold_with_reduced_confidence        → modest reduction in self_obs_bias
+    #
+    # Full exit forcing and kernel_expectation_decisions audit writes come in the
+    # next sub-slice. This change already gives the kernel live behaviour
+    # influence on hold/exit for reverse-tape windows.
+    #
+    # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
+    # (2026-05-28 Polo CSV) + LIVED ONLY 5 + QIG PURITY + never-stop-100-complete.
+    expectation_hold_bias = 1.0
+    if expectation_decision is not None and getattr(expectation_decision, "reverse_tape_window", False):
+        action = getattr(expectation_decision, "expectation_action", None)
+        if action in ("suppress_hold", "exit_now"):
+            expectation_hold_bias = 0.6   # meaningfully easier to exit / harder to hold
+        elif action == "hold_with_reduced_confidence":
+            expectation_hold_bias = 0.85  # modest reduction
+
     self_obs_bias = 1.0
     if inputs.self_obs_bias:
         per_mode = inputs.self_obs_bias.get(mode, {})
         self_obs_bias = per_mode.get(side_candidate, 1.0)
+
+    # Apply to self_obs_bias for held positions (the main lever for hold conviction
+    # and exit gate sensitivity in the current architecture).
+    if expectation_hold_bias < 1.0 and held_lanes:
+        # Only dampen if we actually hold something on this symbol
+        self_obs_bias *= expectation_hold_bias
 
     # ── PR 2: Φ-gate routing (PHI_GATE_ROUTING_LIVE) ─────────────
     # FORESIGHT branch: blend current basin with foresight.predicted_basin
@@ -1231,13 +1326,22 @@ def run_tick(
         "topology": {
             "stud": stud_reading_to_dict(stud_reading),
             "stud_live_flag": stud_live,
-            # qig-warp expectation decisions are evaluated by
-            # POST /monkey/expectation/evaluate and applied/audited by the
-            # TypeScript entry path. Keep this legacy telemetry key explicitly
-            # disabled so consumers do not infer a tick-side bubble decision
-            # from stud-only topology output.
-            "expectation": {"live": False, "source": "typescript_entry_path"},
-            "expectation_live_flag": False,
+            # Canonical qig-warp expectation bubble (runtime leading signal).
+            # Updated for #1003: now carries the rich ExpectationDecision with
+            # reverse-tape fields and actionable decision (observe_only / flip_to_basin etc.).
+            # This surface + the decision logic below deliver live influence.
+            #
+            # Citations: #1003 + 2.31A P5/P25 + LIVED ONLY 5.
+            "expectation": (
+                decision_to_dict(expectation_decision)
+                if expectation_decision is not None
+                else {"live": False, "source": "none"}
+            ),
+            "expectation_live_flag": expectation_bubble_live() and expectation_decision is not None,
+            # #1003: Full ExpectationDecision now surfaced for downstream use and future
+            # kernel_expectation_decisions audit writes (reverse_tape_window, expectation_action,
+            # tape_trend, basin_direction, before/after ready in the object).
+            # Next sub-slice will add the actual INSERT path with before/after deltas.
             "figure8": {
                 "current_loop_assignment": assign_loop(side_candidate).value,
                 "predicted_gravitating_fraction": PI_STRUCT_GRAVITATING_FRACTION,
