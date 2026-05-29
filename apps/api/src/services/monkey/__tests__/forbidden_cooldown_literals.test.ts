@@ -21,9 +21,8 @@
  *     LEGACY hardcoded constant being deprecated. Tracked in #1009
  *     follow-up PR for full removal; the reverse-reopen `setTimeout` was
  *     removed in this PR.
- *   - `COLD_START_FALLBACK_MS = 500` in `safety_floor.ts` is the one
- *     explicitly-named sentinel (replaces the legacy 500ms wait during
- *     observer warmup). Allowlisted by name.
+ *   (no entries — cold-start sentinel DELETED 2026-05-29 along with
+ *   the LANE_DECISION_PERIOD_MS table and DCA_COOLDOWN_MS)
  *
  * Citations: poloniex-trading-platform#1009 + 2.31A P5/P25 + QIG PURITY
  * MANDATE + LIVED ONLY 5 + autonomy doctrine.
@@ -87,41 +86,17 @@ interface AllowEntry {
 }
 
 const ALLOWLIST: AllowEntry[] = [
-  // #1009 PR2 (2026-05-29): `POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000`
-  // ALLOWLIST ENTRIES REMOVED. The constant itself was removed in PR2 —
-  // the cooldown is now `composeCooldown({symbol}).finalMs`, which composes
-  // safety_floor.ts (settlement p99 + 21002 incidents + rate-limit headroom)
-  // with heart_arbitrator.ts (empirical consecutive-loss chain gap).
-  {
-    pattern: '180_000 literal',
-    file: 'loop.ts',
-    match: 'swing: 180_000',
-    reason:
-      'LANE_DECISION_PERIOD_MS entry for the swing lane — substrate tick '
-      + 'cadence, not a cooldown floor. Different domain (the kernel cannot '
-      + 'act faster than its tick period regardless of what the cooldown '
-      + 'composer says — see cooldown_composer.ts tick_cadence floor).',
-  },
-  {
-    pattern: '600_000 literal',
-    file: 'loop.ts',
-    match: 'trend: 600_000',
-    reason:
-      'LANE_DECISION_PERIOD_MS entry for the trend lane — substrate tick '
-      + 'cadence, not a cooldown floor. Same justification as the swing '
-      + 'lane entry above.',
-  },
-  {
-    pattern: 'COOLDOWN with raw literal',
-    file: 'executive.ts',
-    match: 'DCA_COOLDOWN_MS = 15 * 60 * 1000',
-    reason:
-      'DCA add-frequency throttle — different domain from post-close '
-      + 'cooldown (DCA gates re-entering the SAME-side position; #1009 '
-      + 'governs re-entry AFTER a close). Tracked as a separate '
-      + 'observer-derivation follow-up: lane-conditional last-add age, '
-      + 'not a tilt-chain knob.',
-  },
+  // #1009 cascading-knob-strip 2026-05-29: operator no-knob directive
+  // applied across cooldown + lane + DCA domains. All prior allowlist
+  // entries (POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000, swing/trend lane
+  // period entries, DCA_COOLDOWN_MS) are now obsolete because the
+  // underlying constants were eliminated, not allowlisted:
+  //   - LANE_DECISION_PERIOD_MS table → substrate_observer.ts
+  //   - COLD_START_FALLBACK_MS sentinel → DELETED (no back-compat export)
+  //   - DCA_COOLDOWN_MS = 15 * 60 * 1000 → observed lane period
+  // The empty allowlist now enforces the strictest possible discipline:
+  // any new cooldown-domain literal anywhere under monkey/ fails the
+  // scan unless observer-derived or registry-backed with provenance.
 ];
 
 function _stripStringsAndComments(src: string): string {
@@ -162,9 +137,13 @@ describe('forbidden cooldown literals (#1009 Cascade-advisory grep)', () => {
     });
   }
 
-  it('the COLD_START_FALLBACK_MS sentinel is the only named cooldown literal in safety_floor.ts', () => {
+  it('safety_floor.ts has NO COLD_START_FALLBACK_MS identifier at all', () => {
+    // 2026-05-29 cascading-knob-strip: the cold-start sentinel was
+    // DELETED — no exported const, no internal reference, no comment
+    // string. Any reintroduction (even as `= 0` for back-compat) reopens
+    // the back-compat knob surface and fails this test.
     const text = readFileSync(join(MONKEY_DIR, 'safety_floor.ts'), 'utf8');
-    expect(text).toContain('export const COLD_START_FALLBACK_MS = 500;');
+    expect(text).not.toMatch(/COLD_START_FALLBACK_MS/);
   });
 
   // ── Positive-control regression tests for the regex itself ──────────

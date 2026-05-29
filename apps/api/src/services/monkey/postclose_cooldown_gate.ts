@@ -18,12 +18,10 @@
  *
  * # Cold-start honest disclosure
  *
- * The cold-start sentinel `COLD_START_FALLBACK_MS = 500` CAN fire a
- * veto before any settlement observation has warmed the ring. That's a
- * doctrine sentinel preserved from prior production behavior (the
- * legacy reverse-reopen pause at the old `loop.ts:5027` site), not an
- * empirical observation. Once the settlement ring has accumulated
- * `MIN_RING_SAMPLES` the sentinel is replaced by the empirical p99.
+ * 2026-05-29 cascading-knob-strip: the cold-start sentinel was
+ * DELETED. Before observations exist, the safety term contributes 0
+ * and the gate does not veto on safety alone. The kernel acts at
+ * substrate cadence until it has observed its own settlement latency.
  *
  * Citations: poloniex-trading-platform#1017 + #1009 PR1/PR2 + 2.31A
  * P5/P25 + QIG PURITY MANDATE + LIVED ONLY 5 + autonomy doctrine.

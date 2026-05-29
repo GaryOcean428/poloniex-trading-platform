@@ -773,7 +773,14 @@ describe('held-position rejustification — conviction post-Layer-2B-port', () =
 // ─── Hold-time floor (2026-05-28 CC1 operator-selected fix) ────────
 
 describe('hold-time floor suppresses internal-coherence exits', () => {
-  const FLOOR = 600; // seconds — mirrors LANE_DECISION_PERIOD_MS.trend / 1000
+  // 600s is the legacy LANE_DECISION_PERIOD_MS.trend value (now removed).
+  // This test injects a synthetic floor directly (the rejustifier accepts
+  // `holdTimeFloorS` as a parameter so callers can supply observer-derived
+  // values from `substrate_observer.ts`); 600s is preserved here only
+  // because it matches the empirical period the kernel converges on for
+  // the trend lane once warmed up. The test is unaffected by the knob
+  // removal — it pins the rejustifier's behavior, not the floor source.
+  const FLOOR = 600;
 
   it('regime_change is suppressed when held < floor', () => {
     const basinA: Basin = uniformBasin(BASIN_DIM);

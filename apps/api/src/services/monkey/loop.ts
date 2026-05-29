@@ -48,6 +48,10 @@ import {
   computePoloAuthoritativeReward,
   detectFundingSignDiscrepancies,
 } from './polo_reward_ledger.js';
+import {
+  recordLaneDecision,
+  getObservedLaneDecisionPeriodMs,
+} from './substrate_observer.js';
 
 /**
  * #1009 PR2 helper — extract the present-symbol set from a Polo
@@ -413,21 +417,25 @@ function stabilityTicksFromPhi(phi: number): number {
  *  what the derivation produces at tickMs=60s — i.e. they were
  *  calibrated for the slowest mode and didn't adapt to the
  *  cadence governor. */
-const LANE_DECISION_PERIOD_MS: Record<'scalp' | 'swing' | 'trend', number> = {
-  scalp: 60_000,
-  swing: 180_000,
-  trend: 600_000,
-};
+// LANE_DECISION_PERIOD_MS table removed 2026-05-29 per operator no-knob
+// directive. The lane's effective decision period is now observed
+// directly from the kernel's behavior — see `substrate_observer.ts`
+// (`getObservedLaneDecisionPeriodMs(lane)`). Cold-start: 0 (no
+// designer-supplied floor).
 
 /** Derive the lane multiplier from the active tick period. Floor 2
  *  (Cascade brief: "Math.max(2, Math.round(...))") so a position
- *  never fires its streak gate on a single tick. Exported for tests. */
+ *  never fires its streak gate on a single tick. Reads lane decision
+ *  period from the substrate observer; returns floor 2 when the
+ *  observer is cold-start (no decision-change samples yet). Exported
+ *  for tests. */
 export function laneMultiplierFromTickPeriod(
   lane: 'scalp' | 'swing' | 'trend',
   tickPeriodMs: number,
 ): number {
-  const periodMs = LANE_DECISION_PERIOD_MS[lane];
   if (!Number.isFinite(tickPeriodMs) || tickPeriodMs <= 0) return 2;
+  const periodMs = getObservedLaneDecisionPeriodMs(lane);
+  if (periodMs <= 0) return 2; // cold-start: no observed floor
   return Math.max(2, Math.round(periodMs / tickPeriodMs));
 }
 
@@ -3112,6 +3120,12 @@ export class MonkeyKernel extends EventEmitter {
     const chosenLane: LaneType = laneDecision.value;
     const positionLane: 'scalp' | 'swing' | 'trend' =
       chosenLane === 'observe' ? 'swing' : chosenLane;
+    // Substrate observer (#1009 cascading-knob-strip): record the
+    // current (lane, decision) so the rolling decision-change interval
+    // can supersede the legacy LANE_DECISION_PERIOD_MS table. Tag
+    // captures the lane's behavioral output; identical-tag back-to-back
+    // calls do NOT push a new sample (decision unchanged).
+    recordLaneDecision(positionLane, Date.now(), chosenLane);
     // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
     // trades from autonomous_trades — lane-filtered so each lane learns
     // from its own closed trades (scalp from scalps, etc.).
@@ -3541,13 +3555,15 @@ export class MonkeyKernel extends EventEmitter {
               currentRoi,
               origin: heldOrigin,
               // Hold-time floor (2026-05-28, CC1 operator-selected fix):
-              // Derived from the lane's canonical decision period (60s
-              // scalp / 180s swing / 600s trend). Suppresses regime/phi/
-              // conviction exits before the position has been held long
-              // enough for the kernel's own thesis to develop. TP, SL,
-              // directional_disagreement, stale_bleed remain unaffected.
+              // Now observer-derived from the lane's empirical decision
+              // change interval (substrate_observer). Cold-start: 0
+              // (no extra hold-time floor until the kernel has observed
+              // its own decision cadence). Suppresses regime/phi/
+              // conviction exits before the position has been held
+              // long enough; TP, SL, directional_disagreement,
+              // stale_bleed remain unaffected.
               // See held_position_rejustification.ts:holdTimeFloorS docs.
-              holdTimeFloorS: LANE_DECISION_PERIOD_MS[heldLane] / 1000,
+              holdTimeFloorS: getObservedLaneDecisionPeriodMs(heldLane) / 1000,
             })
           : {
               checked: false, fired: null, reason: '', phiFloor: null,
@@ -5070,10 +5086,10 @@ export class MonkeyKernel extends EventEmitter {
             // Previously hardcoded `setTimeout(resolve, 500)`; now the
             // cooldown_composer reads the three rolling rings in safety_floor.ts
             // (settlement p99 + 21002 incident bound + rate-limit headroom) and
-            // returns the binding floor for the symbol. During warmup the
-            // composer falls through to its sentinel (`COLD_START_FALLBACK_MS`
-            // = the previous 500ms) so behaviour is unchanged until enough
-            // samples accumulate.
+            // returns the binding floor. 2026-05-29 cascading-knob-strip
+            // eliminated the cold-start sentinel — during warmup the
+            // composer returns 0 and the kernel re-enters at substrate
+            // cadence (no synthetic delay).
             const reverseReopenCooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
             logger.debug(`[Monkey] ${symbol} reverse-reopen ${formatCooldownTelemetry(reverseReopenCooldown)}`);
             if (reverseReopenCooldown.finalMs > 0) {
@@ -8276,14 +8292,12 @@ export class MonkeyKernel extends EventEmitter {
     // bifurcations.
     //
     // The threshold inside `evaluatePostCloseCooldownGate` is fully
-    // observer-derived via `composeCooldown`. During cold-start (before
-    // settlement-ring warmup) the COLD_START_FALLBACK_MS sentinel
-    // (500ms, the legacy reverse-reopen pause) IS binding — it's a
-    // doctrine sentinel preserved from prior production behavior, NOT
-    // an empirical observation. Once the settlement ring has accumulated
-    // MIN_RING_SAMPLES the sentinel is replaced by the empirical p99
-    // and the floor reflects observed settlement / 21002-incident /
-    // rate-limit / HEART-chain reality.
+    // observer-derived via `composeCooldown`. 2026-05-29 cascading-knob-strip:
+    // the cold-start sentinel was DELETED — during warmup the safety term
+    // contributes 0 and the gate does NOT veto on safety alone. Once the
+    // settlement ring has accumulated `MIN_RING_SAMPLES` the floor reflects
+    // observed settlement / 21002-incident / rate-limit / HEART-chain
+    // reality.
     //
     // DCA-adds bypass — defending an existing position is the explicit
     // override (covers re-add scenarios where the cooldown would block

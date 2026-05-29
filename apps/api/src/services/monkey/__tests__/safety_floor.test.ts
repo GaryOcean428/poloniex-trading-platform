@@ -31,16 +31,18 @@ import {
   observePositionSnapshot,
   getCurrentSafetyFloorMs,
   getSafetyFloorBreakdown,
-  COLD_START_FALLBACK_MS,
   _resetSafetyFloorState,
 } from '../safety_floor.js';
 
 describe('safety_floor — observer behaviour', () => {
   beforeEach(() => _resetSafetyFloorState());
 
-  it('cold start: returns the fallback when settlement ring is empty', () => {
+  it('cold start: returns 0 (no sentinel) when settlement ring is empty', () => {
+    // 2026-05-29 cascading-knob-strip: COLD_START_FALLBACK_MS sentinel
+    // DELETED (no export). Cold-start safety contributes 0; coldStartActive
+    // remains true (ring is unwarmed) but no synthetic ms is injected.
     const floor = getCurrentSafetyFloorMs('BTC_USDT_PERP');
-    expect(floor).toBe(COLD_START_FALLBACK_MS);
+    expect(floor).toBe(0);
     expect(getSafetyFloorBreakdown('BTC_USDT_PERP').coldStartActive).toBe(true);
   });
 
@@ -159,8 +161,8 @@ describe('safety_floor — observer behaviour', () => {
       recordFlatObserved(btc, i * 1000 + 100);
     }
     expect(getCurrentSafetyFloorMs(btc)).toBe(100);
-    // ETH still cold-start, unaffected.
-    expect(getCurrentSafetyFloorMs(eth)).toBe(COLD_START_FALLBACK_MS);
+    // ETH still cold-start (no observations) — returns 0 (no sentinel).
+    expect(getCurrentSafetyFloorMs(eth)).toBe(0);
   });
 });
 
@@ -181,8 +183,8 @@ describe('safety_floor — literal-purity guard (#1009 sign-off criterion 1)', (
    *   - INCIDENT_RING_CAPACITY = 50 (sample count, not a physical
    *     quantity)
    *   - MIN_RING_SAMPLES = 50 (sample count threshold)
-   *   - COLD_START_FALLBACK_MS = 500 (the one sentinel — used during
-   *     warmup, replaced by Observer 1 once samples accumulate)
+   *   (no COLD_START_FALLBACK_MS — 2026-05-29 cascading-knob-strip
+   *   DELETED the export entirely; cold-start is 0 inline)
    *
    * Any other numeric literal would be a knob hidden behind a doctrine
    * comment — the specific anti-pattern #1009 forbids.
@@ -207,23 +209,24 @@ describe('safety_floor — literal-purity guard (#1009 sign-off criterion 1)', (
     }
 
     const allowed = new Set([
-      '0',     // Math.max(0, ...) clamp
+      '0',     // Math.max(0, ...) clamp + cold-start return
       '1',     // cursor wrap (idx + 1)
       '2',     // rate-limit token threshold (Observer 3)
       '50',    // INCIDENT_RING_CAPACITY + MIN_RING_SAMPLES (sample counts)
       '99',    // p99 ratio numerator
       '100',   // p99 ratio denominator
       '200',   // SETTLEMENT_RING_CAPACITY (sample count)
-      '500',   // COLD_START_FALLBACK_MS sentinel (named, single use)
       '1000',  // seconds → milliseconds unit conversion in Observer 3
     ]);
     const offenders = found.filter((v) => !allowed.has(v));
     expect(offenders, `unexpected numeric literals in safety_floor.ts: ${offenders.join(', ')}`).toEqual([]);
   });
 
-  it('the COLD_START_FALLBACK_MS sentinel is named, single-line, exported', () => {
+  it('COLD_START_FALLBACK_MS is fully deleted — no export, no const, no literal', () => {
+    // 2026-05-29 cascading-knob-strip: the prior sentinel was eliminated
+    // outright. Any reintroduction (even as `= 0`) reopens the back-compat
+    // surface and trips this test.
     const src = readFileSync(SRC, 'utf8');
-    const matches = src.match(/^export const COLD_START_FALLBACK_MS = \d+;/m);
-    expect(matches, 'COLD_START_FALLBACK_MS must be an exported const with a documented literal').not.toBeNull();
+    expect(src).not.toMatch(/COLD_START_FALLBACK_MS/);
   });
 });

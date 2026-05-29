@@ -23,6 +23,7 @@ import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 import type { EmotionState } from './emotions.js';
 import { ROTATION_WR_MIN_SAMPLES } from './kernel_rotation.js';
+import { getObservedLaneDecisionPeriodMs } from './substrate_observer.js';
 
 export type Direction = 'long' | 'short' | 'flat';
 
@@ -544,7 +545,11 @@ export function currentLeverage(
  * risk-kernel per-symbol cap (5× equity).
  */
 export const DCA_MAX_ADDS_PER_POSITION = 1;
-export const DCA_COOLDOWN_MS = 15 * 60 * 1000;           // 15 min
+// #1009 cascading-knob-strip 2026-05-29: `DCA_COOLDOWN_MS = 15 * 60 * 1000`
+// removed. The DCA add cooldown now reads from substrate_observer
+// (`getObservedLaneDecisionPeriodMs(lane)`) — the kernel uses its own
+// observed decision cadence for the lane instead of a designer's 15-min
+// table. Cold-start: 0 (no DCA cooldown until observations exist).
 export const DCA_BETTER_PRICE_FRAC = 0.01;                // ≥ 1 % better entry
 export const DCA_MIN_SOVEREIGNTY = 0.1;
 
@@ -578,8 +583,9 @@ export function shouldDCAAdd(req: {
   if (addCount >= DCA_MAX_ADDS_PER_POSITION) {
     return { value: false, reason: `add cap reached (${addCount}/${DCA_MAX_ADDS_PER_POSITION})`, derivation: { rule: 4, addCount } };
   }
-  if (nowMs - lastAddAtMs < DCA_COOLDOWN_MS) {
-    const secRemain = Math.round((DCA_COOLDOWN_MS - (nowMs - lastAddAtMs)) / 1000);
+  const observedCooldownMs = getObservedLaneDecisionPeriodMs(lane);
+  if (observedCooldownMs > 0 && nowMs - lastAddAtMs < observedCooldownMs) {
+    const secRemain = Math.round((observedCooldownMs - (nowMs - lastAddAtMs)) / 1000);
     return { value: false, reason: `cooldown (${secRemain}s remaining)`, derivation: { rule: 3, secRemain } };
   }
   if (sovereignty < DCA_MIN_SOVEREIGNTY) {
