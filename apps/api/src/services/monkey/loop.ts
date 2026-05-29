@@ -32,6 +32,17 @@ import poloniexFuturesService from '../poloniexFuturesService.js';
 import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
 import { callExpectationBubble, type ExpectationDecision } from './expectation_client.js';
 import {
+  recordCloseAck,
+  // `recordFlatObserved` deliberately not imported — Cascade follow-up
+  // review (2026-05-29) flagged that calling it from the DB-close
+  // timestamp is wrong-surface and could push the rolling settlement
+  // p99 to ~10ms DB latency, falsely lowering the safety floor below
+  // exchange-settlement reality. PR2 wires it to a real Polo
+  // /v3/trade/position/opens flat-observation hook.
+  record21002Incident,
+} from './safety_floor.js';
+import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
+import {
   paperClosePosition,
   paperPlaceOrder,
 } from '../paperExchangeSimulator.js';
@@ -5023,8 +5034,19 @@ export class MonkeyKernel extends EventEmitter {
                 leg: 'reverse_reopen',
               });
             } else {
-            // Settle delay — give the exchange ~500ms to flatten net.
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            // Settle delay — observer-derived per #1009.
+            // Previously hardcoded `setTimeout(resolve, 500)`; now the
+            // cooldown_composer reads the three rolling rings in safety_floor.ts
+            // (settlement p99 + 21002 incident bound + rate-limit headroom) and
+            // returns the binding floor for the symbol. During warmup the
+            // composer falls through to its sentinel (`COLD_START_FALLBACK_MS`
+            // = the previous 500ms) so behaviour is unchanged until enough
+            // samples accumulate.
+            const reverseReopenCooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
+            logger.debug(`[Monkey] ${symbol} reverse-reopen ${formatCooldownTelemetry(reverseReopenCooldown)}`);
+            if (reverseReopenCooldown.finalMs > 0) {
+              await new Promise((resolve) => setTimeout(resolve, reverseReopenCooldown.finalMs));
+            }
             const execResult = await this.executeEntry({
               symbol,
               side: newSide,
@@ -7494,6 +7516,10 @@ export class MonkeyKernel extends EventEmitter {
     const isHedge = this.positionDirectionMode === 'HEDGE';
     const closePosSide: 'LONG' | 'SHORT' | undefined =
       isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
+    // #1009: timestamp at the start of the close attempt — declared above
+    // the try/catch so both the success observer (recordCloseAck) and the
+    // 21002 catch observer (record21002Incident) can read it.
+    const tCloseAttemptStart = Date.now();
     try {
 
       // MAKER-CLOSE for preservation-mandate exits (REGIME-2, trailing_harvest,
@@ -7619,6 +7645,11 @@ export class MonkeyKernel extends EventEmitter {
       // Audit: when chunks > 1, expose the full chain so the close row's
       // exit_order_id reflects every leg. Single-order legacy keeps a single id.
       orderId = orderIds.length === 1 ? orderIds[0]! : orderIds.join(',');
+      // #1009 safety_floor observer 1: record the close-ack timestamp so
+      // subsequent flat-observation calls can compute the settlement-
+      // latency delta. Best-effort; no behaviour change if the ring's
+      // pending state was already set by a previous in-flight close.
+      recordCloseAck(symbol, Date.now());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // 21002 "Position not enough" with a sibling close in the cooldown
@@ -7627,6 +7658,20 @@ export class MonkeyKernel extends EventEmitter {
       const is21002 = message.includes('21002') || message.toLowerCase().includes('position not enough');
       if (is21002) {
         const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
+        // #1009 safety_floor observer 2: 21002 incidents are empirical
+        // evidence Polo's state was still propagating from a recent close.
+        // The MEANINGFUL window is (sibling-close-ack → 21002), not (our
+        // failed-attempt-start → 21002). When `race.raced` is true the
+        // race tracker already knows when the sibling closed: synthesise
+        // a tCloseAck = now - race.ageMs so the recorded delta is the
+        // actual settlement window. When not raced, the 21002 is on OUR
+        // own close (orphan/qty-drift) so the original tCloseAttemptStart
+        // is correct.
+        const tNow = Date.now();
+        const tCloseAckForIncident = race.raced
+          ? tNow - race.ageMs
+          : tCloseAttemptStart;
+        record21002Incident(symbol, tCloseAckForIncident, tNow);
         if (race.raced) {
           // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
           await pool.query(
@@ -7994,6 +8039,21 @@ export class MonkeyKernel extends EventEmitter {
     // is the gated case. Opposite-side (reversal) isn't gated by THIS
     // check — it has its own gates (REGIME-2, directional_disagreement).
     this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
+    // #1009 safety_floor observer 1 (settlement-latency p99): DELIBERATELY
+    // NOT WIRED in PR1. The Cascade follow-up review (2026-05-29) flagged
+    // that calling `recordFlatObserved` from the DB-close timestamp is
+    // wrong-surface — a DB row status flip to 'closed' does NOT prove
+    // Poloniex has propagated the position as flat. Doing so could push
+    // the rolling settlement p99 to ~10ms (the DB commit latency) and
+    // cause Observer 1 to falsely report a sub-100ms safety floor,
+    // reintroducing the exact 21002 race this work is supposed to prevent.
+    //
+    // PR2 follow-up: wire `recordFlatObserved` to the next Polo
+    // /v3/trade/position/opens response that confirms the position is
+    // absent or qty=0. Until then Observer 1 stays cold-start and the
+    // composer returns `COLD_START_FALLBACK_MS = 500` — same as the
+    // previous production hardcoded wait. Observer 2 (21002 incidents)
+    // continues to push the floor up when warranted.
     this.bus.publish({
       type: BusEventType.EXIT_TRIGGERED,
       source: this.instanceId,
