@@ -1020,8 +1020,8 @@ def run_tick(
     # modulate hold conviction and exit propensity.
     #
     # Supported actions in this wiring:
-    #   suppress_hold / exit_now            → reduce self_obs_bias (makes exit gates easier to satisfy)
-    #   hold_with_reduced_confidence        → modest reduction in self_obs_bias
+    #   observe_only  → meaningfully reduce self_obs_bias (makes exit gates easier to satisfy)
+    #   reduce_size   → modest reduction in self_obs_bias
     #
     # Full exit forcing and kernel_expectation_decisions audit writes come in the
     # next sub-slice. This change already gives the kernel live behaviour
