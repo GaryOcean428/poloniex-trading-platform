@@ -42,6 +42,7 @@ import {
 } from './safety_floor.js';
 import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
 import { noteClose as noteHeartClose } from './heart_arbitrator.js';
+import { evaluatePostCloseCooldownGate } from './postclose_cooldown_gate.js';
 
 /**
  * #1009 PR2 helper — extract the present-symbol set from a Polo
@@ -8261,42 +8262,45 @@ export class MonkeyKernel extends EventEmitter {
     // operator-tunable threshold.
     //
     // No activation gate. The legacy `REGIME_POSTWIN_COOLDOWN_LIVE` env
-    // flag was a knob-in-costume of the same shape as `CANONICAL_POLO_PNL_LIVE`
-    // — a binary that bifurcates code paths and lets a feature exist in
-    // the source while sitting dark in production. Operator 2026-05-29:
-    // doctrine forbids env-gated bifurcations.
+    // flag was a knob-in-costume of the same shape as
+    // `CANONICAL_POLO_PNL_LIVE` — a binary that bifurcates code paths and
+    // lets a feature exist in the source while sitting dark in
+    // production. Operator 2026-05-29: doctrine forbids env-gated
+    // bifurcations.
     //
-    // The threshold inside this block is fully observer-derived
-    // (`composeCooldown` returns 0 when no observer asks for a veto:
-    // safety = cold-start sentinel or empirical settlement, HEART = 0
-    // until a chain is observed). An always-on gate that defers to
-    // observers is the canonical shape — no veto fires when no
-    // observation justifies one.
+    // The threshold inside `evaluatePostCloseCooldownGate` is fully
+    // observer-derived via `composeCooldown`. During cold-start (before
+    // settlement-ring warmup) the COLD_START_FALLBACK_MS sentinel
+    // (500ms, the legacy reverse-reopen pause) IS binding — it's a
+    // doctrine sentinel preserved from prior production behavior, NOT
+    // an empirical observation. Once the settlement ring has accumulated
+    // MIN_RING_SAMPLES the sentinel is replaced by the empirical p99
+    // and the floor reflects observed settlement / 21002-incident /
+    // rate-limit / HEART-chain reality.
     //
     // DCA-adds bypass — defending an existing position is the explicit
     // override (covers re-add scenarios where the cooldown would block
     // the kernel from defending its own position).
-    if (!req.isDCAAdd) {
-      const lastCloseAt = this.lastCloseAtMs.get(`${symbol}|${side}`);
-      if (lastCloseAt !== undefined) {
-        const cooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
-        const cooldownMs = cooldown.finalMs;
-        const elapsedMs = Date.now() - lastCloseAt;
-        if (cooldownMs > 0 && elapsedMs < cooldownMs) {
-          logger.info('[Monkey] postclose_cooldown veto', {
-            symbol, side, elapsedMs, cooldownMs,
-            remaining_s: ((cooldownMs - elapsedMs) / 1000).toFixed(1),
-            cooldown: formatCooldownTelemetry(cooldown),
-          });
-          return {
-            executed: false, orderId: null,
-            reason:
-              `postclose_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last close on ${symbol}|${side}, `
-              + `${((cooldownMs - elapsedMs) / 1000).toFixed(1)}s remaining `
-              + `(${formatCooldownTelemetry(cooldown)})`,
-          };
-        }
-      }
+    const cooldownDecision = evaluatePostCloseCooldownGate({
+      symbol,
+      side,
+      isDCAAdd: req.isDCAAdd === true,
+      lastCloseAtMs: this.lastCloseAtMs.get(`${symbol}|${side}`),
+      nowMs: Date.now(),
+    });
+    if (cooldownDecision.vetoed) {
+      logger.info('[Monkey] postclose_cooldown veto', {
+        symbol, side,
+        elapsedMs: cooldownDecision.elapsedMs,
+        cooldownMs: cooldownDecision.cooldownMs,
+        remaining_s: ((cooldownDecision.cooldownMs - cooldownDecision.elapsedMs) / 1000).toFixed(1),
+        cooldown: cooldownDecision.cooldownTelemetry,
+      });
+      return {
+        executed: false,
+        orderId: null,
+        reason: cooldownDecision.reason ?? 'postclose_cooldown',
+      };
     }
 
     // FUNDING-GATE — pre-entry funding-cost suppression. Block entries
