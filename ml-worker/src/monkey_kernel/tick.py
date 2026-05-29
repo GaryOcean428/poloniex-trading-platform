@@ -929,8 +929,12 @@ def run_tick(
     ]
     regime_reading: RegimeReading = classify_regime(regime_history)
 
+    # Pass stud_reading so kernel_direction can use stud topology as the
+    # observer-derived "expectation" (leading regime signal) to resolve
+    # tape (lagging) vs basinDir (geometric) disagreements per QIG principles.
     direction: str = kernel_direction(
         basin_dir=basin_dir, tape_trend=tape_trend, emotions=emo,
+        stud_reading=stud_reading if stud_live else None,
     )
     side_candidate: str = direction if direction != "flat" else "long"
     side_override = False
@@ -1227,6 +1231,13 @@ def run_tick(
         "topology": {
             "stud": stud_reading_to_dict(stud_reading),
             "stud_live_flag": stud_live,
+            # qig-warp expectation decisions are evaluated by
+            # POST /monkey/expectation/evaluate and applied/audited by the
+            # TypeScript entry path. Keep this legacy telemetry key explicitly
+            # disabled so consumers do not infer a tick-side bubble decision
+            # from stud-only topology output.
+            "expectation": {"live": False, "source": "typescript_entry_path"},
+            "expectation_live_flag": False,
             "figure8": {
                 "current_loop_assignment": assign_loop(side_candidate).value,
                 "predicted_gravitating_fraction": PI_STRUCT_GRAVITATING_FRACTION,

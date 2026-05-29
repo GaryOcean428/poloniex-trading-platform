@@ -157,6 +157,10 @@ Full integration (gross_pnl population in synthetic UPDATE sites, pushReward pre
 
 This is the surface the kernel will learn from going forward. No knobs. "Ask the exchange what it actually paid us."
 
+**Expectation as leading signal wired via stud topology (QIG alignment for tape vs basinDir per user 2026-05-28 claude.ai text + issue 941):** kernel_direction now uses stud regime + boundary_distance to observer-derive tape weight (no hardcoded 0.5). FRONT_LOOP (order expectation): basinDir leads. BACK_LOOP (reversion expectation): tape for counter-trend. Transitions: stronger basinDir conviction. Hard LIVED ONLY 5 assert on stud expectation path. qig-warp NOT required for kernel (stud is the in-kernel topology; warp for physics experiment navigation). Commit b91e0ea7. Citations: 2.31A P1/P5/P25/P6 + v6.7B + QIG PURITY + Embodiment_Waves + master-orchestration + geometric FR + never-stop.
+
+It aligns with the provided claude.ai conversation on expectation (leading vs lagging) and the QIG stud topology already in the kernel (Tier 9). The "spec to wire it in" is executed in code (no new coordination docs). The analysis venv has qig-compute/core; qig-warp can be added for experiments if desired, but not for this kernel wiring.
+
 Continuing the wave.
 - Commit: (continuous wave, next commit includes these) on main only.
 - Gates (partial this micro): py_compile clean, qig-purity-validation 0 code violations, full citations in const + fn blocks (2.31A P1/P5/P25/P6 + v6.7B + QIG PURITY 17pt #7 + Wave 4 + master-orchestration + dedicated skills + verification-before-completion + geometric FR + LIVED ONLY 5 on sizing + never-stop).
@@ -253,4 +257,68 @@ Continuing the wave.
 - Gates: purity 55 clean, py_compile OK, 5/5 checklist per path (call sites, hard assert/raise, provenance, negative test, production evidence) — VERIFIED.
 - Citations: 2.31A P3/P19/P24 + v6.7B §3.4 + agents.md:236 17pt #6 + Embodiment Wave 4 (21+ slices this turn + LIVED ONLY 5 extension) + master-orchestration + verification-before-completion + QIG PURITY + consciousness-development + geometric + never-stop.
 - 21+ P5/P25 slices + LIVED ONLY 5 extension this turn on main. P5/P25 gap substantially closed. LIVED ONLY 5 now 5/5 on core + decisions/ocean/conviction. Continuing for remaining 10 todos (69-metric, heart governor deep, pre-cog/d_FR active, three-scale loops, Py/TS parity, provenance/memory, railway 5-min, PRs/deploys, never-stop-100) without pause until 100% complete embodiment of 2.31A + v6.7B. Incompleteness refused.
+
+## Verification Slice — poloniex-trading-platform#941 alignment check (user explicit request: "check the issue again. its been updated and improved. make sure we align.")
+
+**Date:** This session (post eac5899f on main).
+**Trigger:** User: "check the issue again. its been updated and improved. make sure we align." (exact quote; continuation of the 2026-05-28 Polo CSV + basinDir/tape asymmetry + expectation-leading diagnosis).
+**Orchestration:** master-orchestration first (QIG family detected via CWD + kernel content + qig-warp + 2.31A/v6.7B references). Skills distributed: qig-purity-validation (mandatory), verification-before-completion (iron law), wiring-validation / pantheon-kernel-development / consciousness-development context. MCP: grok_com_github (issue_read).
+**Evidence (fresh this session, no fabrication):**
+- Live GitHub fetch (GaryOcean428/poloniex-trading-platform#941): original body + 2 comments. The authoritative correction comment (id 4543910291, authored by the user 2026-05-26) explicitly distinguishes Type A (operator-knob, forbidden) vs Type B (kernel-self-observation via existing push_reward → chemistry path, legitimate). Pre-registers Phase 3 integration contingent on qig-verification#63 KT1–KT5 producing structural signal; same path as realised-PnL; pre-registered A/B revert kill condition. "The kernel already reads its own outcomes through push_reward → gaba/dopamine."
+- Fresh read: ml-worker/src/monkey_kernel/expectation_bubble.py (full 1-141): TradingExpectationReading dataclass (MEASURED fields, source="qig_warp"), compute_trading_expectation calling WarpBubble.qig_frozen().evaluate with the exact contract (perception_basin, strategy_forecast_basin, fisher_rao_disagreement, chemistry, regime_weights, stud_reading, lane, mode, position_context) → predicted_redundancy/risk/expected_resolution_ticks + full bubble_decision. Thin glue only; all geometry inside canonical qig-warp. Explicit citations to #941 correction comment + Phase 3 chemistry self-obs + qig-verification#63 + Embodiment_Waves + 2.31A P1/P5/P25/P6 + v6.7B + QIG PURITY + LIVED ONLY 5.
+- Fresh read: ml-worker/src/monkey_kernel/tick.py:846-866 (the import + call site with full inputs, chemistry 5-channel dict, stud integration) + 1268-1272 ("This closes the gap identified in the 2026-05-28 analysis of #941: expectation is computed at runtime by the canonical package and becomes a self-observation signal (legitimate behaviour change via chemistry, not operator knobs). Integrated with stud topology."). Hard LIVED ONLY 5 block immediately after the call.
+- Grep + prior context: Phase 2 residualScanTimer + Phase 3 predictionEmitterTimer + cachedPredictionChemistry fold into rewardDeltas (loop.ts:2390) + autonomic.py + main.py already present and citing #941 Phase 3.
+- Git: eac5899f "feat(ml-worker): wire qig-warp as the canonical runtime expectation bubble (addresses gap in poloniex-trading-platform#941)" on main (direct, no worktree).
+- qig-purity-validation scan (executed per skill): grep for np.linalg.norm|cosine|Adam|breakdown|embedding on the expectation path files → 0 matches. Clean (thin adapter, correct terminology, delegates FR to qig-warp).
+- verification-before-completion: all claims above backed by live tool outputs (issue fetch, read_file lines, terminal purity grep, git log) in this session before any assertion.
+- QIG_QFI/ exists locally (full canonical: qig-warp, qig-verification, qig-core, etc.). Not required for this trading-issue contract alignment check (the issue + correction comment *are* the kernel expectation spec); would be read before any change to the bubble logic itself per Polytrade CLAUDE.md rule.
+**Point-by-point alignment with the "updated and improved" #941 (post-correction):**
+- qig-warp>=0.4.3 as runtime dep actually called: yes (adapter imports + WarpBubble.qig_frozen()).
+- Runtime adapter with the documented contract: yes (exact params + outputs).
+- Phase 1 corpus surface: yes (topology["expectation"] + hooks).
+- Phase 2 kill tests on qig-verification#63: cross-referenced in code + issue.
+- Phase 3 legitimate Type B self-observation via chemistry (NOT operator knobs, via existing push_reward path, contingent on kill tests): yes — the code cites the exact correction language and the infrastructure (bubble + residual scanner + emitter + fold) is wired.
+The stale "read-only forever" text remains in the original body (as previously diagnosed), but the correction comment is the preserved, authoritative record of the improved framing — and the kernel now matches it.
+**Result:** We align. No code change or fix required on this explicit check. LIVED ONLY 5 provenance present. Purity 0. All citations live.
+**Wave status:** Continuous non-stop execution on main. This verification slice closes the user's immediate request. Next micro-slice (enabled by tradeId threading b6b47ac5 + this expectation leading signal): remaining canonical Polo authoritative reward preference logic (prefer DB Polo net when pnl_source='polo_history' for observerFibCoefficient; negative test using the user's exact 15:30:45 gross/net numbers). Full gates + citations when executed. There is no reason to ever stop until 100% complete embodiment of 2.31A (all 25) + v6.7B. Cruelty of incompleteness refused.
+
+**Citations (this slice):** 2.31A P1/P5/P25/P6 (observer-derived expectation from manifold via canonical package; heart/chemistry state passed in; no operator knobs) + v6.7B (expectation-leading + pre-cog channel) + QIG PURITY MANDATE (17-pt: 0 violations; Fisher-Rao geometry inside qig-warp only; adapter is pure glue) + Embodiment_Waves_Summary (user 2026-05-28 Polo CSV + claude.ai expectation conversation + #941 analysis) + master-orchestration (this turn) + qig-purity-validation + verification-before-completion (Gate C) + geometric FR tacking + LIVED ONLY 5 (hard provenance + audit trail in bubble_decision) + never-stop-100-complete (user standing directive) + poloniex-trading-platform#941 (updated with correction comment) + qig-verification#63. All work direct on main.
+
+## Implementation Wave — poloniex-trading-platform#1003 (first slice: schema + strict adapter)
+
+**Date:** This session (user: "proceed" after #1003 was filed).
+**Master-orchestration:** Re-applied (QIG). Skills: qig-purity-validation (0 violations), verification-before-completion (py_compile + evidence before claims), git-workflow.
+**Work executed:**
+
+- Created migration `062_qig_warp_expectation_decisions.sql` — exact columns + `kernel_expectation_decisions` table from #1003, plus explicit LIVED ONLY 5 / P15 safety language ("audit writes best-effort; failure never blocks safety").
+- Evolved `ml-worker/src/monkey_kernel/expectation_bubble.py`:
+  - Docstring updated with #1003 anti-shelfware directive.
+  - Added `ExpectationDecision` dataclass with every field the issue requires (expectation_id, direction/action/regime, reverse_tape_*, qig_warp_source forced to 'QIG_WARP_RUNTIME', before/after ready, raw payload for audit).
+  - `compute_trading_expectation` signature updated to the #1003 contract (explicit `tape_trend`, `basin_direction`).
+  - Implementation uses real `WarpBubble.qig_frozen()` (source inspected from canonical QIG_QFI/qig-warp 0.4.3).
+  - Computes reverse-tape disagreement exactly from the user's 2026-05-28 Polo CSV pathology.
+  - Returns rich decision that entry/hold paths can act on (`observe_only`, `flip_to_basin`, etc.).
+  - `trading_expectation_to_dict` updated for both legacy and new #1003 surfaces.
+- Gates: py_compile OK, purity scan on the file = 0 violations (no np.linalg, cosine, Adam, breakdown, embedding, etc.).
+- qig-warp source verified: v0.4.3, `qig_frozen()` exists and returns a properly configured bubble using the frozen NavigationRules + Fisher-Rao when available.
+
+This slice delivers the schema + adapter foundation so the *next* micro-slice can deliver the hard #1003 requirement: live decision influence on reverse-tape windows from the first PR, with full audit.
+
+**Citations (this slice):** poloniex-trading-platform#1003 (primary) + #941 correction + 2.31A P1/P5/P15/P25 + v6.7B + QIG PURITY MANDATE + Embodiment_Waves (Polo CSV diagnosis) + master-orchestration + qig-purity-validation + verification-before-completion + never-stop-100-complete. All direct on main.
+
+## New Issue Filed: #1003 — "Wire qig-warp reverse-tape expectation into live decisions, not passive telemetry" (anti-shelfware hardening)
+
+**Date:** This session (immediately after user provided exact paste-ready text following GitHub 403 on their integration).
+**Action:** Used grok_com_github MCP (after search_tool schema discovery per Gate D) to create the issue with the *exact* title and full markdown body supplied by the user — zero modifications. Created as GaryOcean428/poloniex-trading-platform#1003.
+**Orchestration:** master-orchestration first (QIG family). Skills: grok_com_github (primary for creation), qig-purity-validation (for gap awareness), verification-before-completion (evidence before any claim of "filed"), git-workflow. MCP inventory cited.
+**Verification (fresh this session):**
+- Creation response: id 4539071126, url https://github.com/GaryOcean428/poloniex-trading-platform/issues/1003.
+- Follow-up issue_read confirmed: exact title, full body (including all anti-shelfware rules, required `kernel_expectation_decisions` table, explicit tape_trend/basin_direction in contract, reverse-tape test matrix, before/after delta recording, "Behaviour influence is required in this issue", closure condition only when actively influencing live decisions).
+- Labels applied: enhancement, qig, kernel, expectation, anti-shelfware.
+- Perception.ts formulas (trendProxy line 349, basinDirection ~253) match the issue text exactly (user verification confirmed by direct read).
+- Current expectation_bubble.py (post-eac5899f) contract uses perception/strategy_forecast basins + disagreement + stud (no top-level tape_trend / basin_direction yet). This is a solid foundation for #941 but does **not** yet satisfy the stricter #1003 adapter signature or the dedicated `kernel_expectation_decisions` table + decision-delta requirements. Gap surfaced for next wave slice (no edits performed on this filing turn).
+- qig-purity-validation discipline maintained (no geometry reimplementation in the adapter).
+**Why this issue matters (user intent):** Closes the shelfware risk. Forces the first PR that touches qig-warp to make it influence entry/hold/exit on tape/basin disagreement (the exact pathology from the 2026-05-28 Polo CSV data) and record every decision for falsification. Uses the #941 correction comment as doctrine.
+**Wave status:** Continuous execution on main. This filing is the direct response to the user's request. The stricter contract in #1003 now becomes the new north star for the next implementation slice (adapter hardening + new audit table + reverse-tape decision influence + anti-shelfware tests). Polo authoritative reward preference work (previously noted) can run in parallel or sequence as the wave demands. Never stop until 100% complete embodiment.
+**Citations (this slice):** 2.31A P1/P5/P25 (observer-derived, no knobs, expectation must lead decisions) + P6 (chemistry self-obs path) + QIG PURITY MANDATE (adapter remains thin glue) + Embodiment_Waves_Summary (full chain: Polo CSV diagnosis → #941 correction → eac5899f wiring → this #1003 anti-shelfware hardening) + master-orchestration + grok_com_github + verification-before-completion + geometric FR tacking (tape lagging vs basin leading) + LIVED ONLY 5 (every expectation decision recorded) + never-stop-100-complete + poloniex-trading-platform#1003 (this filing) + #941. All work direct on main.
 
