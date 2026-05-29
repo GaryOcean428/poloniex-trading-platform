@@ -850,6 +850,14 @@ class PoloniexFuturesService {
   }
 
   /**
+   * Get account funding history.
+   * Endpoint: GET /v3/trade/funding
+   */
+  async getFundingHistory(credentials, params = {}) {
+    return this.makeRequest(credentials, 'GET', '/trade/funding', null, params);
+  }
+
+  /**
    * Close a position at market price.
    * Endpoint: POST /v3/trade/position
    *
