@@ -104,6 +104,7 @@ import {
   type PredictionSnapshotReason,
 } from './kernel_predictions.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
+import { recoveredOutcomeMatchesInstance } from './recovered_outcome_routing.js';
 import { logParityDiff } from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
@@ -1418,6 +1419,7 @@ export class MonkeyKernel extends EventEmitter {
           src === 'manual_close_recovered' ||
           src.startsWith('reconciler_recovered');
         if (!isRecovered) return;
+        if (!recoveredOutcomeMatchesInstance(payload, this.instanceId)) return;
         // Reconciler-recovered events use marginUsdt=5 to match the
         // global pushReward path's constant for ghost-close recoveries
         // (see lines below this subscriber, marginUsdt: 5).

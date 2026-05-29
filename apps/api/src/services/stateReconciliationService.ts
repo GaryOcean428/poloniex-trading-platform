@@ -14,6 +14,7 @@ import { monitoringService } from './monitoringService.js';
 import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { BusEventType, getKernelBus } from './monkey/kernel_bus.js';
+import { extractKernelInstanceIdFromReason } from './monkey/recovered_outcome_routing.js';
 import { inferLaneFromLeverage, kernelAdoptLive } from './laneFromLeverage.js';
 import { getPrecisions } from './marketCatalog.js';
 
@@ -399,6 +400,7 @@ class StateReconciliationService {
         dbTrade: typeof sortedDbTrades[0];
         ghostReason: string;
         agent: 'K' | 'M' | 'T' | 'L' | null;
+        instanceId: string | null;
       };
       const pendingGhosts: PendingGhost[] = [];
 
@@ -427,6 +429,7 @@ class StateReconciliationService {
 
         let ghostReason = 'reconciled_not_on_exchange';
         let agent: 'K' | 'M' | 'T' | 'L' | null = null;
+        let instanceId: string | null = null;
         try {
           const ctxRow = await pool.query(
             `SELECT exit_order_id, reason, agent FROM autonomous_trades WHERE id = $1`,
@@ -435,6 +438,7 @@ class StateReconciliationService {
           const ctx = ctxRow.rows[0] as
             | { exit_order_id: string | null; reason: string | null; agent: string | null }
             | undefined;
+          instanceId = extractKernelInstanceIdFromReason(ctx?.reason);
           if (ctx?.exit_order_id) {
             ghostReason = 'reconciled_post_close_race';
           } else if (
@@ -458,7 +462,7 @@ class StateReconciliationService {
         } catch {
           /* fail-soft: keep generic reason */
         }
-        pendingGhosts.push({ dbTrade, ghostReason, agent });
+        pendingGhosts.push({ dbTrade, ghostReason, agent, instanceId });
       }
 
       // Phase 2: group + recover + write.
@@ -556,14 +560,17 @@ class StateReconciliationService {
               : null;
 
           try {
-            // LIVED ONLY 5 guard on ghost recovery (Finding 1)
-            // Be conservative: do not write aggregate-derived recoveredPnl on ghost rows
-            // unless we can fully verify it. For now, skip writing it here to avoid phantoms.
+            // LIVED ONLY 5 guard on ghost recovery (Finding 1).
+            // Be conservative: do not write or publish aggregate-derived
+            // recoveredPnl on ghost rows unless we can fully verify it. Do
+            // still close the ghost row; otherwise the same already-closed
+            // exchange position is rediscovered every reconciler tick.
+            let pnlForLedger: number | null = recoveredPnl;
             if (recoveredPnl !== null) {
               logger.warn('[LIVED ONLY] skipping aggregate recoveredPnl write during ghost recovery (conservative LIVED ONLY)', {
                 tradeId: g.dbTrade.id,
               });
-              continue;
+              pnlForLedger = null;
             }
 
             await pool.query(
@@ -573,14 +580,14 @@ class StateReconciliationService {
                    exit_time = NOW(),
                    pnl = COALESCE($3, pnl)
                WHERE id = $2`,
-              [g.ghostReason, g.dbTrade.id, recoveredPnl],
+              [g.ghostReason, g.dbTrade.id, pnlForLedger],
             );
             logger.info(
               `[RECONCILE] Closed ghost DB record ${g.dbTrade.id} for user ${userId}: ${g.dbTrade.symbol} ${g.dbTrade.side} (reason=${g.ghostReason}${
-                recoveredPnl !== null ? `, share=${(rowShare * 100).toFixed(1)}%, recovered_pnl=${recoveredPnl.toFixed(4)}` : ''
+                pnlForLedger !== null ? `, share=${(rowShare * 100).toFixed(1)}%, recovered_pnl=${pnlForLedger.toFixed(4)}` : ''
               })`,
             );
-            if (recoveredPnl !== null && g.agent !== null) {
+            if (pnlForLedger !== null && g.agent !== null) {
               try {
                 const bus = getKernelBus();
                 bus.publish({
@@ -589,8 +596,9 @@ class StateReconciliationService {
                   symbol: g.dbTrade.symbol,
                   payload: {
                     agent: g.agent,
+                    instanceId: g.instanceId,
                     side: normalizeDbSide(g.dbTrade.side),
-                    pnl: recoveredPnl,
+                    pnl: pnlForLedger,
                     source: `reconciler_recovered:${g.ghostReason}`,
                     ghostReason: g.ghostReason,
                     tradeId: g.dbTrade.id,
