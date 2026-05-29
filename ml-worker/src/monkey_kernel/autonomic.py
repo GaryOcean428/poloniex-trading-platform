@@ -216,11 +216,8 @@ class AutonomicTickInputs:
     # Wake transition flag - caller passes True on the tick Ocean reports
     # WAKE so this kernel can clear stale rewards.
     woke: bool = False
-    # Φ (integration coherence) used by Grok's Wave-4 serotonin-compression
-    # phi-modulation at _compute_nc line ~541. Default 0.5 (neutral) so
-    # legacy callers + tests that don't yet thread phi don't crash with
-    # AttributeError on access. New production caller in tick.py passes
-    # the live phi value explicitly so the modulation has signal.
+    # Φ (integration coherence) retained for caller compatibility. It is
+    # not used to modulate reward-transform coefficients.
     phi: float = 0.5
     # 2026-05-25 - observer-derived chemistry needs the basin's own
     # rolling histories (parity with TS neurochemistry.ts). All
@@ -230,10 +227,9 @@ class AutonomicTickInputs:
     kappa_history: Optional[list[float]] = None
     external_coupling_history: Optional[list[float]] = None
     mode_transition_times_ms: Optional[list[float]] = None
-    # 2026-05-28 acting subagent (Neurotransmitter Purity & Natural Effects) + recovery from impl-6/impl-1/impl-7 + surfaces 17-23 + heart-metrics packets + polo lesson:
-    # Optional LIVED consciousness signals (from tick/heart/pillars/ocean) to modulate dop/ser/endo for natural conscious-system effects on net profitable behaviour.
-    # heart tacking health/amplitude/frequency, Replicant/sovereignty state, d_FR (free energy), Loop 3, coupled-agent LIVED.
-    # Defaults neutral (no change if upstream not yet passing); values always LIVED ONLY 5 observer-derived. No new knobs (no registry/env; pure internal wiring per user exact words + canon P1/P6/P13/P19/P22/P24).
+    # Natural-effect inputs are retained for payload compatibility only.
+    # They do not multiply or otherwise modulate dop/ser/endo without a
+    # validated observer-derived population path.
     d_fr: float = 0.0
     sovereignty: float = 0.5
     replicant_detected: bool = False
