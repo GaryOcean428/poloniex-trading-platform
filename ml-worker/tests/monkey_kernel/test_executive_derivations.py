@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from monkey_kernel.executive import (  # noqa: E402
     ExecBasinState,
     current_leverage,
+    dca_lane_tick_cadence_ms,
     should_dca_add,
     should_exit,
     should_profit_harvest,
@@ -346,20 +347,20 @@ class TestPillar1Guard:
 # ────────────────────────────────────────────────────────────────
 
 class TestDCADerivations:
-    def test_cooldown_anchored_at_nominal_serotonin(self):
-        """serotonin=0.5 → cooldown = (25 - 10) * 60000 = 900000 ms (15 min)."""
+    def test_cooldown_reads_lane_decision_period(self):
+        """DCA add-frequency is gated by the observed lane period."""
         s = _nominal_state()
         r = should_dca_add(
             held_side="long", side_candidate="long",
             current_price=100.0, initial_entry_price=101.0,
-            add_count=0, last_add_at_ms=9_990_000, now_ms=10_000_000,
-            sovereignty=0.5, s=s,
+            add_count=0, last_add_at_ms=10_000, now_ms=20_000,
+            sovereignty=0.5, s=s, lane="swing",
         )
         assert r["value"] is False  # cooldown blocks
-        assert r["derivation"]["cooldown_ms"] == 900_000
+        assert r["derivation"]["cooldown_ms"] == dca_lane_tick_cadence_ms("swing")
 
-    def test_high_serotonin_shorter_cooldown(self):
-        """serotonin=1.0 → 5 min cooldown."""
+    def test_serotonin_does_not_tune_dca_add_frequency(self):
+        """The cooldown floor is supplied by the lane/substrate observer, not NC."""
         nc = NeurochemicalState(
             acetylcholine=0.5, dopamine=0.5, serotonin=1.0,
             norepinephrine=0.5, gaba=0.5, endorphins=0.5,
@@ -368,21 +369,20 @@ class TestDCADerivations:
         r = should_dca_add(
             held_side="long", side_candidate="long",
             current_price=100.0, initial_entry_price=101.0,
-            add_count=0, last_add_at_ms=9_990_000, now_ms=10_000_000,
-            sovereignty=0.5, s=s,
+            add_count=0, last_add_at_ms=10_000, now_ms=20_000,
+            sovereignty=0.5, s=s, lane="scalp",
         )
-        assert r["derivation"]["cooldown_ms"] == 300_000
+        assert r["derivation"]["cooldown_ms"] == dca_lane_tick_cadence_ms("scalp")
 
-    def test_legacy_caller_without_s_gets_hardcoded_cooldown(self):
-        """Backward-compat: caller without `s` gets pre-derivation 15min."""
+    def test_caller_can_supply_composed_tick_cadence_floor(self):
+        """Parity seam: callers may pass the already-composed tick floor."""
         r = should_dca_add(
             held_side="long", side_candidate="long",
             current_price=100.0, initial_entry_price=101.0,
-            add_count=0, last_add_at_ms=9_990_000, now_ms=10_000_000,
-            sovereignty=0.5,  # no s=
+            add_count=0, last_add_at_ms=10_000, now_ms=20_000,
+            sovereignty=0.5, tick_cadence_ms=42_000,
         )
-        # Hardcoded DCA_COOLDOWN_MS = 15 * 60 * 1000 = 900_000
-        assert r["derivation"]["cooldown_ms"] == 900_000
+        assert r["derivation"]["cooldown_ms"] == 42_000
 
 
 if __name__ == "__main__":

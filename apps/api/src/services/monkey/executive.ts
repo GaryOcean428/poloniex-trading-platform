@@ -23,6 +23,7 @@ import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 import type { EmotionState } from './emotions.js';
 import { ROTATION_WR_MIN_SAMPLES } from './kernel_rotation.js';
+import { composeCooldown, type CooldownBreakdown } from './cooldown_composer.js';
 
 export type Direction = 'long' | 'short' | 'flat';
 
@@ -532,7 +533,7 @@ export function currentLeverage(
  *
  *   1. SAME SIDE   proposed side matches currently held side (no reversal)
  *   2. BETTER PRICE for long: now < entry × 0.99; for short: > × 1.01
- *   3. COOLDOWN    ≥ COOLDOWN_MS since last add (no flurry on one candle)
+ *   3. COOLDOWN    ≥ composed observer floor since last add (no flurry on one candle)
  *   4. ADD CAP     addCount < MAX_ADDS_PER_POSITION (v0.6.2 = 1)
  *   5. EARNED      sovereignty > 0.1 — newborn can't DCA
  *
@@ -544,7 +545,6 @@ export function currentLeverage(
  * risk-kernel per-symbol cap (5× equity).
  */
 export const DCA_MAX_ADDS_PER_POSITION = 1;
-export const DCA_COOLDOWN_MS = 15 * 60 * 1000;           // 15 min
 export const DCA_BETTER_PRICE_FRAC = 0.01;                // ≥ 1 % better entry
 export const DCA_MIN_SOVEREIGNTY = 0.1;
 
@@ -561,6 +561,11 @@ export function shouldDCAAdd(req: {
    *  internal to one lane — another lane on the same symbol can hold
    *  the opposite side without blocking this lane's DCA decision. */
   lane?: 'scalp' | 'swing' | 'trend';
+  symbol?: string;
+  /** Observer-derived lane/substrate period to feed the shared cooldown composer. */
+  tickCadenceMs?: number;
+  /** Test seam for pre-composed observer floors; production callers omit this. */
+  cooldownBreakdown?: Pick<CooldownBreakdown, 'finalMs'>;
 }): ExecutiveDecision<boolean> {
   const {
     heldSide, sideCandidate, currentPrice, initialEntryPrice,
@@ -578,9 +583,18 @@ export function shouldDCAAdd(req: {
   if (addCount >= DCA_MAX_ADDS_PER_POSITION) {
     return { value: false, reason: `add cap reached (${addCount}/${DCA_MAX_ADDS_PER_POSITION})`, derivation: { rule: 4, addCount } };
   }
-  if (nowMs - lastAddAtMs < DCA_COOLDOWN_MS) {
-    const secRemain = Math.round((DCA_COOLDOWN_MS - (nowMs - lastAddAtMs)) / 1000);
-    return { value: false, reason: `cooldown (${secRemain}s remaining)`, derivation: { rule: 3, secRemain } };
+  const cooldown = req.cooldownBreakdown ?? composeCooldown({
+    symbol: req.symbol ?? '',
+    tickCadenceMs: req.tickCadenceMs ?? 0,
+  });
+  const lastAddAgeMs = nowMs - lastAddAtMs;
+  if (lastAddAgeMs < cooldown.finalMs) {
+    const secRemain = Math.round((cooldown.finalMs - lastAddAgeMs) / 1000);
+    return {
+      value: false,
+      reason: `cooldown (${secRemain}s remaining)`,
+      derivation: { rule: 3, secRemain, cooldownMs: cooldown.finalMs, lastAddAgeMs },
+    };
   }
   if (sovereignty < DCA_MIN_SOVEREIGNTY) {
     return { value: false, reason: `sovereignty too low (${sovereignty.toFixed(3)} < ${DCA_MIN_SOVEREIGNTY})`, derivation: { rule: 5, sovereignty } };

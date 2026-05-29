@@ -217,6 +217,19 @@ describe('shouldDCAAdd lane scope (proposal #10)', () => {
     expect(String(result.reason)).toContain('DCA_OK[scalp]');
   });
 
+  it('DCA add age is blocked by the composed observer floor, not a raw constant', () => {
+    const result = shouldDCAAdd({
+      heldSide: 'long', sideCandidate: 'long',
+      currentPrice: 98, initialEntryPrice: 100,
+      addCount: 0, lastAddAtMs: 10_000, nowMs: 20_000,
+      sovereignty: 0.5, lane: 'swing',
+      cooldownBreakdown: { finalMs: 180_000 },
+    });
+    expect(result.value).toBe(false);
+    expect(result.derivation.rule).toBe(3);
+    expect(result.derivation.cooldownMs).toBe(180_000);
+  });
+
   it('lane defaults to swing when omitted', () => {
     const result = shouldDCAAdd({
       heldSide: 'long', sideCandidate: 'short',

@@ -111,17 +111,6 @@ const ALLOWLIST: AllowEntry[] = [
       + 'cadence, not a cooldown floor. Same justification as the swing '
       + 'lane entry above.',
   },
-  {
-    pattern: 'COOLDOWN with raw literal',
-    file: 'executive.ts',
-    match: 'DCA_COOLDOWN_MS = 15 * 60 * 1000',
-    reason:
-      'DCA add-frequency throttle — different domain from post-close '
-      + 'cooldown (DCA gates re-entering the SAME-side position; #1009 '
-      + 'governs re-entry AFTER a close). Tracked as a separate '
-      + 'observer-derivation follow-up: lane-conditional last-add age, '
-      + 'not a tilt-chain knob.',
-  },
 ];
 
 function _stripStringsAndComments(src: string): string {

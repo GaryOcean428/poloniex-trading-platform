@@ -67,6 +67,7 @@ from .executive import (
     kernel_should_enter,
     should_auto_flatten,
     should_dca_add,
+    dca_lane_tick_cadence_ms,
     should_exit,
     should_profit_harvest,
     should_scalp_exit,
@@ -2321,8 +2322,10 @@ def _decide_with_position(
         last_add_at_ms=lane_last_entry_ms or 0,
         now_ms=now_ms,
         sovereignty=inputs.sovereignty,
-        s=basin_state,  # v0.8.4b — enables cooldown / better-price derivation from NC + bv
+        s=basin_state,  # v0.8.4b — enables better-price derivation from basin velocity
         lane=position_lane,
+        symbol=inputs.symbol,
+        tick_cadence_ms=dca_lane_tick_cadence_ms(position_lane),
     )
     derivation["dca"] = dca["derivation"]
     if (

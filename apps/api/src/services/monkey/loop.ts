@@ -4135,6 +4135,9 @@ export class MonkeyKernel extends EventEmitter {
             lastAddAtMs: state.lastEntryAtMs ?? 0,
             nowMs: Date.now(),
             sovereignty,
+            symbol,
+            tickCadenceMs: LANE_DECISION_PERIOD_MS[heldLane],
+            lane: heldLane,
           });
           derivation.dca = dca.derivation;
           if (

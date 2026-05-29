@@ -1125,15 +1125,33 @@ def should_scalp_exit(
 # DCA PARAMETERs — mixed dispositions per P25:
 # - max_adds_per_position is a hard SAFETY_BOUND (capacity risk
 #   ceiling; live-governed via registry)
-# - cooldown / better_price_frac / min_sovereignty are still literals
-#   here but flagged for v0.8.4b DERIVE work (should emerge from
-#   Φ/serotonin/basin-velocity). They'll move to _registry.get() +
-#   derivation formulas in that pass. For v0.8.4a they stay hardcoded
-#   so behavior is bit-identical to pre-merge live — zero decision
-#   change in this PR.
-DCA_COOLDOWN_MS = 15 * 60 * 1000
 DCA_BETTER_PRICE_FRAC = 0.01
 DCA_MIN_SOVEREIGNTY = 0.1
+_DCA_LANE_BASE_PERIOD_MS = 60_000
+_DCA_LANE_PERIOD_MULTIPLIER = {
+    "scalp": 1,
+    "swing": 3,
+    "trend": 10,
+}
+
+
+def dca_lane_tick_cadence_ms(lane: str = "swing") -> int:
+    """Observer-derived lane decision period used as the DCA add floor."""
+    return _DCA_LANE_BASE_PERIOD_MS * _DCA_LANE_PERIOD_MULTIPLIER.get(
+        lane, _DCA_LANE_PERIOD_MULTIPLIER["swing"],
+    )
+
+
+def compose_dca_cooldown_ms(*, tick_cadence_ms: float = 0.0) -> int:
+    """Python parity shim for the DCA cooldown composer floor.
+
+    TS composes safety/decoherence/HEART observers with the caller-supplied
+    tick cadence. Py does not own those observer rings yet, so the only
+    non-zero local term is the same caller-supplied lane/substrate period.
+    """
+    if not math.isfinite(tick_cadence_ms) or tick_cadence_ms < 0:
+        return 0
+    return int(tick_cadence_ms)
 
 
 def should_dca_add(
@@ -1148,6 +1166,8 @@ def should_dca_add(
     sovereignty: float,
     s: Optional[ExecBasinState] = None,
     lane: str = "swing",
+    symbol: Optional[str] = None,
+    tick_cadence_ms: Optional[float] = None,
 ) -> dict[str, Any]:
     """Five-rail DCA-add gate, evaluated per (agent, symbol, lane).
 
@@ -1158,30 +1178,23 @@ def should_dca_add(
     symbol DCA-adds, because they live in different lanes with their
     own retreat tolerance.
     """
-    _ = lane  # surfaced into derivation for telemetry; not gating logic
-    # v0.8.4b — when ExecBasinState is provided, DCA cooldown / better-price
-    # / min-sovereignty DERIVE from geometric state per P25. When not
-    # provided, fall back to the hardcoded pre-derivation values so older
-    # callers stay byte-compatible. tick.py's _decide_with_position will
-    # populate `s` after v0.8.4b; any other caller gets the legacy path.
-    #
-    # Cooldown: scales inversely with serotonin (stability). serotonin=0.5
-    #   → 15 min (matches pre-derivation); serotonin=0 → 25 min (unstable,
-    #   cautious); serotonin=1 → 5 min (stable, okay to add).
-    # Better-price threshold: scales with basin velocity. Fast-moving basin
-    #   → higher bar for calling it a "better" price. Anchored at 1% when
-    #   bv=0.02 (nominal); drops to 0.5% when basin is still, rises to 2%+
-    #   when basin is jumpy.
-    # Min-sovereignty: still a hard floor (SAFETY_BOUND — no DCA for
-    #   newborn kernels regardless of other state).
+    _ = symbol  # parity with TS composeCooldown signature; Py observer rings are not local yet.
+    # v0.8.4b — when ExecBasinState is provided, better-price derives from
+    # geometric state per P25. DCA add frequency no longer has its own
+    # intuition-calibrated wall: it reads the composed lane/substrate floor
+    # supplied by the caller.
     if s is not None:
-        ser = s.neurochemistry.serotonin
         bv = s.basin_velocity
-        cooldown_ms = int((25.0 - 20.0 * ser) * 60_000)  # min → ms
         better_price_frac = max(0.005, min(0.03, 0.01 + (bv - 0.02) * 0.5))
     else:
-        cooldown_ms = DCA_COOLDOWN_MS
         better_price_frac = DCA_BETTER_PRICE_FRAC
+    cooldown_ms = compose_dca_cooldown_ms(
+        tick_cadence_ms=(
+            dca_lane_tick_cadence_ms(lane)
+            if tick_cadence_ms is None
+            else tick_cadence_ms
+        ),
+    )
 
     if held_side != side_candidate:
         return {

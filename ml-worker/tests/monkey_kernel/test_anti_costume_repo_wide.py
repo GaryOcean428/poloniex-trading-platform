@@ -104,6 +104,22 @@ def test_banned_reward_transform_keys_absent_repo_wide():
     )
 
 
+def test_dca_cooldown_constant_absent_repo_wide():
+    """#1011 follow-up: DCA add-frequency must stay observer-derived."""
+    offenders: list[tuple[str, str]] = []
+    for src in _all_kernel_sources():
+        text = src.read_text(encoding="utf-8")
+        rel = str(src.relative_to(_MONKEY_KERNEL_DIR))
+        if "DCA_COOLDOWN_MS" in text:
+            offenders.append((rel, "DCA_COOLDOWN_MS"))
+        if rel == "executive.py" and "15 * 60 * 1000" in text:
+            offenders.append((rel, "15 * 60 * 1000"))
+    assert not offenders, (
+        "Banned DCA cooldown constant/literal reappeared (#1011): "
+        f"{offenders}"
+    )
+
+
 def test_registry_get_call_count_within_budget():
     """#1007 P0-C: snapshot-based budget on ``_registry.get(`` calls per
     file. A new costume in a previously-clean file lifts the count above
