@@ -44,6 +44,7 @@ from pathlib import Path
 import pytest
 
 _MONKEY_KERNEL_DIR = Path(__file__).parents[2] / "src" / "monkey_kernel"
+_REPO_ROOT = Path(__file__).parents[3]
 
 # #1007 P0-B: these parameter keys describe knobs-in-costume that should
 # never reappear ANYWHERE in monkey_kernel sources. They were retired to
@@ -85,6 +86,29 @@ def _all_kernel_sources() -> list[Path]:
         p for p in _MONKEY_KERNEL_DIR.rglob("*.py")
         if "__pycache__" not in p.parts
     )
+
+
+def _all_repo_code_sources() -> list[Path]:
+    ignored_parts = {
+        ".git",
+        ".yarn",
+        "node_modules",
+        "dist",
+        "__pycache__",
+        ".pytest_cache",
+        "__tests__",
+        "tests",
+    }
+    return sorted(
+        p for p in _REPO_ROOT.rglob("*")
+        if p.suffix in {".py", ".ts"}
+        and not any(part in ignored_parts for part in p.parts)
+        and not p.name.endswith(".d.ts")
+    )
+
+
+def _strip_line_comments(src: str) -> str:
+    return re.sub(r"//[^\n]*|#[^\n]*", "", src)
 
 
 def test_banned_reward_transform_keys_absent_repo_wide():
@@ -158,3 +182,60 @@ def test_autonomic_reward_constants_are_module_level(constant_name: str):
         f"{constant_name} must be a module-level constant in autonomic.py "
         "(#1007 P0-B)."
     )
+
+
+def test_qig_warp_forbidden_literal_patterns_absent_repo_wide():
+    """#1003/#1008 anti-shelfware extension: catch hidden expectation/reward
+    constants outside the explicit #1007 autonomic allowlist, including TS
+    sources and non-monkey Python modules."""
+    forbidden = [
+        (
+            "HOLD_BIAS raw non-neutral literal",
+            re.compile(r"[A-Za-z_]*HOLD_BIAS[A-Za-z_]*\s*[:=]\s*(?!1(?:\.0+)?\b)[0-9.]+", re.I),
+        ),
+        (
+            "REWARD *_SCALE raw literal",
+            re.compile(r"[A-Za-z_]*REWARD[A-Za-z_]*_SCALE[A-Za-z_]*\s*[:=]\s*[0-9.]+", re.I),
+        ),
+        (
+            "handled suppress_hold without emitted-action alignment",
+            re.compile(r"expectation_action\s*==\s*[\"']suppress_hold[\"']"),
+        ),
+    ]
+    reward_scale_allowlist = {
+        ("ml-worker/src/monkey_kernel/autonomic.py", "REWARD_DOP_SCALE: float = 1.5"),
+        ("ml-worker/src/monkey_kernel/autonomic.py", "REWARD_SER_SCALE: float = 0.15"),
+        ("ml-worker/src/monkey_kernel/autonomic.py", "REWARD_LOSS_DOP_SCALE: float = 0.5"),
+    }
+    offenders: list[tuple[str, int, str, str]] = []
+    for src in _all_repo_code_sources():
+        rel_path = str(src.relative_to(_REPO_ROOT))
+        text = _strip_line_comments(src.read_text(encoding="utf-8"))
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            for name, pattern in forbidden:
+                if not pattern.search(line):
+                    continue
+                stripped = line.strip()
+                if name == "REWARD *_SCALE raw literal" and (rel_path, stripped) in reward_scale_allowlist:
+                    continue
+                offenders.append((rel_path, line_no, name, stripped))
+    assert not offenders, (
+        "Forbidden qig-warp expectation literal/action patterns reappeared: "
+        f"{offenders}"
+    )
+
+
+def test_qig_warp_forbidden_literal_regex_positive_controls():
+    hold_bias = re.compile(
+        r"[A-Za-z_]*HOLD_BIAS[A-Za-z_]*\s*[:=]\s*(?!1(?:\.0+)?\b)[0-9.]+" ,
+        re.I,
+    )
+    reward_scale = re.compile(
+        r"[A-Za-z_]*REWARD[A-Za-z_]*_SCALE[A-Za-z_]*\s*[:=]\s*[0-9.]+",
+        re.I,
+    )
+    suppress_hold = re.compile(r"expectation_action\s*==\s*[\"']suppress_hold[\"']")
+    assert hold_bias.search("expectation_hold_bias = 0.85")
+    assert not hold_bias.search("expectation_hold_bias = 1.0")
+    assert reward_scale.search("const SHADOW_REWARD_GAIN_SCALE = 0.4")
+    assert suppress_hold.search('expectation_action == "suppress_hold"')

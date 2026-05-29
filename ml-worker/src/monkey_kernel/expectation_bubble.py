@@ -50,6 +50,7 @@ from typing import Any, Optional, Sequence
 import numpy as np
 
 logger = logging.getLogger(__name__)
+_EXPECTATION_BUBBLE_DISABLED_WARNED = False
 
 
 try:
@@ -95,12 +96,21 @@ class ExpectationDecision:
 
 
 def expectation_bubble_live() -> bool:
-    """Master kill switch. Default ON. When disabled, the call site reads
-    ``action='allow'`` and falls back to its existing logic.
+    """Fail-safe incident kill switch. Default ON.
 
-    This is an explicit operator kill switch for incident response.
+    This is for incident response only, not a strategy/config knob. When
+    disabled, the call site skips qig-warp and existing kernel logic owns the
+    tick; the first disabled read logs a warn-level event for audit.
     """
-    return os.environ.get("EXPECTATION_BUBBLE_LIVE", "true").strip().lower() == "true"
+    global _EXPECTATION_BUBBLE_DISABLED_WARNED
+    live = os.environ.get("EXPECTATION_BUBBLE_LIVE", "true").strip().lower() == "true"
+    if not live and not _EXPECTATION_BUBBLE_DISABLED_WARNED:
+        logger.warning(
+            "[expectation_bubble] EXPECTATION_BUBBLE_LIVE disabled; qig-warp "
+            "incident kill switch engaged (not a strategy/config knob)"
+        )
+        _EXPECTATION_BUBBLE_DISABLED_WARNED = True
+    return live
 
 
 def _classify_disagreement_window(

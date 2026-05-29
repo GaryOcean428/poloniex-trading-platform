@@ -21,6 +21,7 @@ from .basin_sync_db import basin_sync_db_live
 logger = logging.getLogger("monkey_kernel.prediction_capture")
 
 PREDICTION_WRITE_CHANNEL = "monkey:prediction:writes"
+EXPECTATION_DECISION_WRITE_CHANNEL = "monkey:expectation:decisions"
 _redis_pub_client = None  # type: ignore[var-annotated]
 
 
@@ -113,3 +114,15 @@ def publish_prediction(payload: dict[str, Any]) -> None:
         client.publish(PREDICTION_WRITE_CHANNEL, json.dumps(payload))
     except Exception as err:  # noqa: BLE001
         logger.debug("[PredictionCapture] redis publish failed: %s", err)
+
+
+def publish_expectation_decision(payload: dict[str, Any]) -> None:
+    if not basin_sync_db_live():
+        return
+    client = _get_redis_publisher()
+    if client is None:
+        return
+    try:
+        client.publish(EXPECTATION_DECISION_WRITE_CHANNEL, json.dumps(payload))
+    except Exception as err:  # noqa: BLE001
+        logger.debug("[PredictionCapture] expectation decision publish failed: %s", err)
