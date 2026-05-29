@@ -877,7 +877,46 @@ Full gates via verification-before-completion (fresh cmds + exit 0 + untruncated
 
 (End of two-stage review section. Consolidated with prior acting updates for surfaces 17-23 / fib / net profit telemetry. No duplication.)
 
-## Final Dead/Legacy Code Cleanup Complete — 2026-05-28 (user direct "complete the cleanup" after master 019e6caf synthesis)
+## Immediate Error Hunt + Fixes (user: "check logs and fix errors immediately") — 2026-05-28
+
+**Context:** Post-cleanup + master synthesis, user escalated to live error hunting. MCP log fetches on linked Railway context returned no matching recent deploy logs for the armed reward terms (common when no new deploy in window or project context). Used test execution (tick_telemetry + autonomic_observer_parity, which exercise the exact reward/NT/telemetry paths that would log errors in live ticks) as high-fidelity proxy for deployed behavior.
+
+**Errors found and fixed (chain of NameError/UnboundLocalError residuals from rate-limited wave actors):**
+- ocean.py: multiple ( _PHI_HISTORY_MAX at 415, _registry.get in 8+ helper functions for damping/mushroom/narrow/tukey, _PHI_DAMPING_LOWER in observe() ).
+- candle_patterns.py: multiple _registry.get (hammer, inverted_hammer) + added missing `from .parameters import get_registry`.
+- regime.py: _registry.get in trend/chop helpers + added import.
+- tick.py: UnboundLocalError for `self_obs_bias` at 774 (added safe default 0.0 with comment).
+
+All replaced with correct `get_registry().get(...)` or numeric defaults (consistent with working_memory pattern and the file's own "registry-backed" comments). No behavior change for correct paths.
+
+**Verification after fixes:**
+- Purity scan on monkey_kernel: core reward/NT files clean (only expected non-violations in comments/non-core like foresight).
+- The 5 critical tick_telemetry tests now surface fewer NameErrors (chain significantly reduced; one remaining scope issue for 'phi' in _chop_suppress_entry at tick.py:205 noted for follow-up).
+- 14/19 tests passing in the suite (the 5 failures are the remaining scope one).
+
+**Auditor note:** Reward/NT core (ocean_reward after legacy removal, autonomic push_reward LIVED paths, tick telemetry) is now substantially cleaner. The wave left a broad "undefined name" debt across consciousness kernel files. Immediate fixes above eliminated the ones blocking the main reward/telemetry tests. Recommend serialized narrow reviewer pass on the full monkey_kernel for the rest (per master throttling plan).
+
+(End of immediate error hunt section. Previous cleanup + master synthesis sections below remain authoritative.)
+
+## Completion of the error hunt — 2026-05-29 (the follow-up noted above, finished)
+
+The "remaining scope issue for `phi`" is now fixed: `_chop_suppress_entry` takes
+`phi: float` and all 4 call sites in `run_tick` pass it through. Also fixed a
+second residual the prior pass missed — `_CONVICTION_HESITATION_WINDOW` (a
+deleted module const) at tick.py:2314 → now `_registry.get("executive.conviction_hesitation_window", default=20)`.
+
+**Suite impact (full `tests/monkey_kernel/`):** 113 failed → 13 failed (922 passed).
+The ~100 fixed were all the NameError/UnboundLocalError/phi-scope residuals from
+the rate-limited wave actors. The **13 that remain reproduce identically on clean
+`main`** (verified by stashing this work) — they are pre-existing breakage
+unrelated to this `_registry` migration (executive flatness TypeError, heart
+cold-start kappa = 63.8 vs stale `KAPPA_STAR` expectation, sensations at
+kappa_star, forge fracture, consciousness 33-field surface, pillars replicant).
+
+**Systemic root cause filed separately:** the full pytest suite is NOT a CI gate
+(the knob-strip PRs merged with ~100 red kernel tests because CI only runs
+import-smoke + vocab-scan + type-check). Sequencing: fix the 13 pre-existing →
+then add the pytest suite as a gate.
 
 **Targeted narrow execution (throttling respected; no new broad subagents or reviewer dispatches; only the last non-functional remnant in reward/NT kernel):**
 - Dead legacy `fibonacci_reward_coefficient` (absolute 1% floor, pre-observer fib; the retired non-P1 path) fully excised from ocean_reward.py.
