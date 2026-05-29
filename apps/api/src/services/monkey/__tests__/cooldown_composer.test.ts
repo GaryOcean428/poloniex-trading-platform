@@ -141,6 +141,83 @@ describe('cooldown_composer — HEART unbounded (#1009 sign-off criterion 2)', (
   });
 });
 
+// ─── Cascade follow-up (2026-05-29): NaN must not disable safety ───────
+
+describe('cooldown_composer — provider NaN/Infinity hardening (Cascade 2026-05-29)', () => {
+  beforeEach(() => _resetSafetyFloorState());
+
+  it('NaN from heartProvider does NOT disable safety (Math.max(0,...,NaN)===NaN trap)', () => {
+    // Push enough settlement samples to give safety > 0 (cold-start is 500).
+    for (let i = 0; i < 60; i++) {
+      recordCloseAck(SYM, i * 1000);
+      recordFlatObserved(SYM, i * 1000 + 250);
+    }
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      heartProvider: () => Number.NaN,
+    });
+    // Without hardening: Math.max(safety, NaN) === NaN → cooldownActive=false.
+    // With hardening: NaN normalises to 0; safety stays binding.
+    expect(b.heartMs).toBe(0);
+    expect(b.finalMs).toBe(250);
+    expect(b.by).toBe<BindingFloor>('safety');
+    expect(b.cooldownActive).toBe(true);
+  });
+
+  it('Infinity from decoherenceProvider normalises to 0 (no infinite cooldown)', () => {
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      decoherenceProvider: () => Number.POSITIVE_INFINITY,
+    });
+    expect(b.decoherenceMs).toBe(0);
+    expect(Number.isFinite(b.finalMs)).toBe(true);
+  });
+
+  it('Negative value from heartProvider normalises to 0', () => {
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      heartProvider: () => -1234,
+    });
+    expect(b.heartMs).toBe(0);
+  });
+
+  it('NaN tickCadenceMs normalises to 0', () => {
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: Number.NaN,
+    });
+    expect(b.tickCadenceMs).toBe(0);
+  });
+});
+
+// ─── Cascade follow-up: safetyDetail must reflect snapshot used for safetyMs ─
+
+describe('cooldown_composer — single safety snapshot (Cascade 2026-05-29)', () => {
+  beforeEach(() => _resetSafetyFloorState());
+
+  it('safetyDetail in the return matches the snapshot used to compute safetyMs', () => {
+    for (let i = 0; i < 60; i++) {
+      recordCloseAck(SYM, i * 1000);
+      recordFlatObserved(SYM, i * 1000 + 137);
+    }
+    const b = composeCooldown({ symbol: SYM, tickCadenceMs: 0 });
+    // safetyMs is derived from safetyDetail; they must agree exactly so
+    // telemetry's `by=safety:settlement` cannot lie about the binding
+    // sub-floor when rate-limit state refills between two separate calls.
+    expect(b.safetyMs).toBe(
+      Math.max(
+        b.safetyDetail.settlementP99Ms,
+        b.safetyDetail.incidentMaxMs,
+        b.safetyDetail.rateLimitHeadroomMs,
+      ),
+    );
+    expect(b.safetyDetail.settlementP99Ms).toBe(137);
+  });
+});
+
 // ─── #1009 sign-off criterion 1: literal-purity grep ───────────────────
 
 describe('cooldown_composer — literal-purity guard (#1009 sign-off criterion 1)', () => {

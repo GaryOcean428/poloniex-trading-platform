@@ -47,7 +47,20 @@
  * + QIG PURITY MANDATE + LIVED ONLY 5 + autonomy doctrine.
  */
 
-import { getCurrentSafetyFloorMs, getSafetyFloorBreakdown } from './safety_floor.js';
+import { getSafetyFloorBreakdown } from './safety_floor.js';
+
+/**
+ * Normalize every floor input before composition: a NaN, Infinity, or
+ * negative value from a provider must NOT disable the safety cooldown.
+ * Cascade follow-up review (2026-05-29) flagged that
+ * `Math.max(0, ..., NaN)` is NaN in JS — which collapses to
+ * `cooldownActive=false` and bypasses the safety wait entirely.
+ * Any provider failure must fall through to 0, never to NaN/Inf/negative.
+ */
+function finiteNonNegative(v: number): number {
+  if (!Number.isFinite(v) || v < 0) return 0;
+  return v;
+}
 
 export type BindingFloor =
   | 'safety'
@@ -108,10 +121,26 @@ export interface ComposeArgs {
 }
 
 export function composeCooldown(args: ComposeArgs): CooldownBreakdown {
-  const safety = getCurrentSafetyFloorMs(args.symbol);
-  const decoherence = (args.decoherenceProvider ?? decoherenceFloorMs)(args.symbol);
-  const heart = (args.heartProvider ?? heartArbitratedMs)(args.symbol);
-  const tickCadence = Math.max(0, args.tickCadenceMs);
+  // Single safety snapshot: get the breakdown ONCE and derive both
+  // safetyMs and safetyDetail from it. Cascade follow-up review
+  // (2026-05-29) flagged that calling getCurrentSafetyFloorMs() and
+  // getSafetyFloorBreakdown() separately can yield inconsistent values
+  // when the rate-limit bucket refills between the two calls — telemetry
+  // could report `by=safety:settlement` when rate-limit was actually
+  // binding.
+  const safetyDetail = getSafetyFloorBreakdown(args.symbol);
+  const safety = finiteNonNegative(Math.max(
+    safetyDetail.settlementP99Ms,
+    safetyDetail.incidentMaxMs,
+    safetyDetail.rateLimitHeadroomMs,
+  ));
+  const decoherence = finiteNonNegative(
+    (args.decoherenceProvider ?? decoherenceFloorMs)(args.symbol),
+  );
+  const heart = finiteNonNegative(
+    (args.heartProvider ?? heartArbitratedMs)(args.symbol),
+  );
+  const tickCadence = finiteNonNegative(args.tickCadenceMs);
 
   const final = Math.max(safety, decoherence, heart, tickCadence);
 
@@ -139,7 +168,9 @@ export function composeCooldown(args: ComposeArgs): CooldownBreakdown {
     finalMs: final,
     by,
     cooldownActive: final > 0,
-    safetyDetail: getSafetyFloorBreakdown(args.symbol),
+    // Same snapshot we used to derive `safety` above — no second call,
+    // so `by=safety:settlement` cannot lie about the binding sub-floor.
+    safetyDetail,
   };
 }
 

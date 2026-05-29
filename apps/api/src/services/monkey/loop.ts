@@ -33,7 +33,12 @@ import { resolveExchangePositionSide, resolveExchangePositionNotional } from '..
 import { callExpectationBubble, type ExpectationDecision } from './expectation_client.js';
 import {
   recordCloseAck,
-  recordFlatObserved,
+  // `recordFlatObserved` deliberately not imported — Cascade follow-up
+  // review (2026-05-29) flagged that calling it from the DB-close
+  // timestamp is wrong-surface and could push the rolling settlement
+  // p99 to ~10ms DB latency, falsely lowering the safety floor below
+  // exchange-settlement reality. PR2 wires it to a real Polo
+  // /v3/trade/position/opens flat-observation hook.
   record21002Incident,
 } from './safety_floor.js';
 import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
@@ -8034,16 +8039,21 @@ export class MonkeyKernel extends EventEmitter {
     // is the gated case. Opposite-side (reversal) isn't gated by THIS
     // check — it has its own gates (REGIME-2, directional_disagreement).
     this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
-    // #1009 safety_floor observer 1 (settlement-latency p99): at this
-    // point the kernel has observed the close completion via the DB row
-    // status flipping to 'closed'. This is the kernel's "flat-observed"
-    // timestamp. NOTE: a more precise reading would be the next Polo
-    // position-state poll returning the position absent — that's a PR2
-    // follow-up. For PR1 the kernel-side observation gives a real
-    // (if slightly conservative) settlement delta that warms Observer 1
-    // out of cold-start so the 21002 incident observer + the live floor
-    // can begin to influence cooldown.
-    recordFlatObserved(symbol, Date.now());
+    // #1009 safety_floor observer 1 (settlement-latency p99): DELIBERATELY
+    // NOT WIRED in PR1. The Cascade follow-up review (2026-05-29) flagged
+    // that calling `recordFlatObserved` from the DB-close timestamp is
+    // wrong-surface — a DB row status flip to 'closed' does NOT prove
+    // Poloniex has propagated the position as flat. Doing so could push
+    // the rolling settlement p99 to ~10ms (the DB commit latency) and
+    // cause Observer 1 to falsely report a sub-100ms safety floor,
+    // reintroducing the exact 21002 race this work is supposed to prevent.
+    //
+    // PR2 follow-up: wire `recordFlatObserved` to the next Polo
+    // /v3/trade/position/opens response that confirms the position is
+    // absent or qty=0. Until then Observer 1 stays cold-start and the
+    // composer returns `COLD_START_FALLBACK_MS = 500` — same as the
+    // previous production hardcoded wait. Observer 2 (21002 incidents)
+    // continues to push the floor up when warranted.
     this.bus.publish({
       type: BusEventType.EXIT_TRIGGERED,
       source: this.instanceId,
