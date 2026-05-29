@@ -1232,10 +1232,10 @@ def run_tick(
             "stud": stud_reading_to_dict(stud_reading),
             "stud_live_flag": stud_live,
             # qig-warp expectation decisions are evaluated by the ml-worker
-            # HTTP endpoint and applied/audited by the TS entry path. tick.py
-            # surfaces stud topology only until it consumes the endpoint's
-            # ExpectationDecision directly in a later slice.
-            "expectation": {"live": False, "source": "http_entry_path"},
+            # HTTP endpoint and applied/audited by the TS entry path. Keep
+            # this legacy telemetry key explicitly disabled so consumers do not
+            # infer a tick-side bubble decision from stud-only topology output.
+            "expectation": {"live": False, "source": "ts_entry_path"},
             "expectation_live_flag": False,
             "figure8": {
                 "current_loop_assignment": assign_loop(side_candidate).value,
