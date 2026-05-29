@@ -7652,12 +7652,21 @@ export class MonkeyKernel extends EventEmitter {
       // row closed and surface a clear reason; don't spam ERROR.
       const is21002 = message.includes('21002') || message.toLowerCase().includes('position not enough');
       if (is21002) {
-        // #1009 safety_floor observer 2: 21002 incidents are empirical
-        // evidence the cooldown floor was too low at the time of retry.
-        // tCloseAttemptStart was captured at the top of the try block.
-        // Falls back to a 0-delta no-op if we don't have the start time.
-        record21002Incident(symbol, tCloseAttemptStart, Date.now());
         const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
+        // #1009 safety_floor observer 2: 21002 incidents are empirical
+        // evidence Polo's state was still propagating from a recent close.
+        // The MEANINGFUL window is (sibling-close-ack → 21002), not (our
+        // failed-attempt-start → 21002). When `race.raced` is true the
+        // race tracker already knows when the sibling closed: synthesise
+        // a tCloseAck = now - race.ageMs so the recorded delta is the
+        // actual settlement window. When not raced, the 21002 is on OUR
+        // own close (orphan/qty-drift) so the original tCloseAttemptStart
+        // is correct.
+        const tNow = Date.now();
+        const tCloseAckForIncident = race.raced
+          ? tNow - race.ageMs
+          : tCloseAttemptStart;
+        record21002Incident(symbol, tCloseAckForIncident, tNow);
         if (race.raced) {
           // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
           await pool.query(
@@ -8025,6 +8034,16 @@ export class MonkeyKernel extends EventEmitter {
     // is the gated case. Opposite-side (reversal) isn't gated by THIS
     // check — it has its own gates (REGIME-2, directional_disagreement).
     this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
+    // #1009 safety_floor observer 1 (settlement-latency p99): at this
+    // point the kernel has observed the close completion via the DB row
+    // status flipping to 'closed'. This is the kernel's "flat-observed"
+    // timestamp. NOTE: a more precise reading would be the next Polo
+    // position-state poll returning the position absent — that's a PR2
+    // follow-up. For PR1 the kernel-side observation gives a real
+    // (if slightly conservative) settlement delta that warms Observer 1
+    // out of cold-start so the 21002 incident observer + the live floor
+    // can begin to influence cooldown.
+    recordFlatObserved(symbol, Date.now());
     this.bus.publish({
       type: BusEventType.EXIT_TRIGGERED,
       source: this.instanceId,

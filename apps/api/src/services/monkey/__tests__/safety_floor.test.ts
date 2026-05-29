@@ -157,14 +157,15 @@ describe('safety_floor — literal-purity guard (#1009 sign-off criterion 1)', (
     }
 
     const allowed = new Set([
-      '0',
-      '1',
-      '2',
-      '50',
-      '99',
-      '100',
-      '200',
-      '500',
+      '0',     // Math.max(0, ...) clamp
+      '1',     // cursor wrap (idx + 1)
+      '2',     // rate-limit token threshold (Observer 3)
+      '50',    // INCIDENT_RING_CAPACITY + MIN_RING_SAMPLES (sample counts)
+      '99',    // p99 ratio numerator
+      '100',   // p99 ratio denominator
+      '200',   // SETTLEMENT_RING_CAPACITY (sample count)
+      '500',   // COLD_START_FALLBACK_MS sentinel (named, single use)
+      '1000',  // seconds → milliseconds unit conversion in Observer 3
     ]);
     const offenders = found.filter((v) => !allowed.has(v));
     expect(offenders, `unexpected numeric literals in safety_floor.ts: ${offenders.join(', ')}`).toEqual([]);

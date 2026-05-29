@@ -193,25 +193,37 @@ export function record21002Incident(
 
 /**
  * Observer 3 — current rate-limit headroom expressed as a milliseconds
- * floor. If the bucket is full, returns 0. If a refill is needed, returns
- * the time until the bucket has at least 2 tokens. Reads from the existing
- * rateLimiter.js — no new constants here.
+ * floor.
+ *
+ * Reads `rateLimiter.getBucket('orders').{tokens, refillRate}` and computes
+ * the time until the bucket has at least 2 tokens. Returns 0 when headroom
+ * is healthy. If the rateLimiter shape changes, the try/catch falls back
+ * to 0 — Observer 3 quietly contributes nothing rather than blocking
+ * the kernel.
+ *
+ * No new constants here: the `2` is the token threshold (matches the
+ * "headroom for the next close + immediate next entry" intent), the
+ * refill math is `(2 - tokens) / refillRate × 1000` in ms.
  */
 function rateLimitHeadroomMs(): number {
-  // The existing rateLimiter is a token-bucket per endpoint. Public surface
-  // is `execute`; internal `getRemaining`/`getRefillMs` are accessed
-  // defensively via `(rateLimiter as any)` because the type isn't exported.
-  // If the API changes, this falls back to 0 (no contribution to floor).
   const rl = rateLimiter as unknown as {
-    getRemaining?: (endpointType: string) => number;
-    getRefillIntervalMs?: (endpointType: string) => number;
+    getBucket?: (endpointType: string) => {
+      tokens: number;
+      refillRate: number;
+    };
+    refillBucket?: (bucket: { tokens: number; refillRate: number }) => void;
   };
   try {
-    const remaining = rl.getRemaining?.('orders');
-    if (typeof remaining !== 'number') return 0;
-    if (remaining >= 2) return 0;
-    const refillMs = rl.getRefillIntervalMs?.('orders');
-    return typeof refillMs === 'number' && refillMs > 0 ? refillMs : 0;
+    if (typeof rl.getBucket !== 'function') return 0;
+    const bucket = rl.getBucket('orders');
+    if (!bucket || typeof bucket.tokens !== 'number'
+        || typeof bucket.refillRate !== 'number') return 0;
+    // Settle the bucket's lazy refill first so `tokens` reflects current
+    // reality, not the value at last bucket touch.
+    rl.refillBucket?.(bucket);
+    if (bucket.tokens >= 2) return 0;
+    if (bucket.refillRate <= 0) return 0;
+    return Math.ceil(((2 - bucket.tokens) / bucket.refillRate) * 1000);
   } catch {
     return 0;
   }
