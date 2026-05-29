@@ -29,6 +29,7 @@ Reference implementations:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -373,7 +374,33 @@ class AutonomicKernel:
             # so every losing close raised UnboundLocalError and the
             # autonomic /reward endpoint 500'd before chemistry updated).
             loss_dop_scale = get_reward_loss_dop_scale()
-            dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
+            # ── Loss-side de-saturation (MONKEY_HINDSIGHT_REGRET_LIVE) ──────
+            # The legacy shape `-tanh(-pnl_frac * 0.5) * 0.1` SATURATES: at
+            # real trading scale a -3% ROE loss is pnl_frac≈-0.03, so
+            # tanh(0.015)≈0.015 → dop≈-0.0015, and even a -50% loss only
+            # reaches dop≈-0.025. Big losses ≈ small losses in pain — the
+            # kernel cannot "feel" magnitude. For the counterfactual-regret
+            # signal to register, loss magnitude must be preserved.
+            #
+            # Fix (flag-gated, observer-derived, P1): normalise pnl_frac by
+            # the MAD of the kernel's own realised pnl_frac history (exactly
+            # the pushReward / observer pattern — no hardcoded scale) before
+            # tanh, and apply a cap that lets a typical loss reach a
+            # meaningful mood dip while staying BELOW the win-side dop cap
+            # (0.5) so losses still aren't a punishment, just felt. Byte-
+            # identical to legacy when the flag is OFF.
+            if os.environ.get("MONKEY_HINDSIGHT_REGRET_LIVE") == "true":
+                from .hindsight_regret import median_absolute_deviation
+                hist = self._pnl_frac_history if hasattr(self, "_pnl_frac_history") else []
+                pnl_frac_norm = pnl_frac
+                if len(hist) >= 5:
+                    mad = median_absolute_deviation(hist)
+                    if mad > 1e-12:
+                        pnl_frac_norm = pnl_frac / mad
+                # cap 0.3 < win cap 0.5: losses felt with magnitude, not punished
+                dop = float(-np.tanh(-pnl_frac_norm) * 0.3)
+            else:
+                dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
             ser = 0.0
 
         # Per 2026-04-13 two-channel doctrine (Frozen Facts v1.01F 20260527) + P1:

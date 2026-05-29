@@ -217,6 +217,12 @@ import {
   computePredictionChemistry,
   type PredictionChemistryDeltas,
 } from './predictionRewardEmitter.js';
+import {
+  advanceWatch,
+  resolveRegret,
+  isHindsightRegretLive,
+  type HindsightWatch,
+} from './hindsightRegret.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { observeEquity, sizeDeflection, type EquityRichContext } from './equity_gradient.js';
 import {
@@ -1029,6 +1035,23 @@ export class MonkeyKernel extends EventEmitter {
   /** Cached prediction-error chemistry deltas, refreshed by
    *  predictionEmitterTimer. Null until the first emitter pass. */
   private cachedPredictionChemistry: PredictionChemistryDeltas | null = null;
+  /**
+   * Hindsight / counterfactual-regret subsystem (MONKEY_HINDSIGHT_REGRET_LIVE,
+   * default OFF). After a kernel close we keep watching the symbol for a
+   * forward window; if holding would have beaten the realised close (the
+   * trend continued in the position's favour) we emit an aversive dopamine
+   * delta scaled by the foregone gain. Asymmetric: a correct close earns a
+   * mild positive, never a penalty. In-memory + best-effort — never blocks
+   * trading, no DB.
+   *
+   * `hindsightWatches`: symbol → list of active watches (a symbol can have
+   * several overlapping closes in the window). `cachedHindsightDopamine` is
+   * folded additively into rewardDopamineDelta in tick(), exactly like
+   * predDop. It decays toward 0 each tick so a resolved regret is a transient
+   * mood event, not a permanent bias.
+   */
+  private hindsightWatches: Map<string, HindsightWatch[]> = new Map();
+  private cachedHindsightDopamine = 0;
   private tickMs: number;
   private readonly baseTickMs: number;
   private readonly symbols: string[];
@@ -2228,6 +2251,14 @@ export class MonkeyKernel extends EventEmitter {
       price: lastPrice,
     });
 
+    // Hindsight / counterfactual-regret evaluation (flag-gated, default OFF).
+    // Advance any active watches for this symbol with the fresh price and
+    // resolve the ones whose window has elapsed into a dopamine delta.
+    // Best-effort; never throws into the tick.
+    if (isHindsightRegretLive()) {
+      this.evaluateHindsightWatches(symbol, lastPrice);
+    }
+
     // SENSE-2 Phase 2 (#768) — BTC beacon shared price cache. BTC ticks
     // write the latest mark; non-BTC ticks read it for cross-symbol
     // correlation. The beacon reading itself is computed below (after
@@ -2492,6 +2523,22 @@ export class MonkeyKernel extends EventEmitter {
     const predDop = predChem?.dopamineDelta ?? 0;
     const predSer = predChem?.serotoninDelta ?? 0;
 
+    // Hindsight / counterfactual-regret dopamine (flag-gated, default OFF).
+    // `cachedHindsightDopamine` accumulates resolved regret deltas
+    // (evaluateHindsightWatches) and decays toward 0 each tick so the
+    // "closed too early" sting is a transient mood event, not a permanent
+    // bias. Decay uses the same 20-min half-life as the reward queue: a
+    // per-tick factor of 0.5^(tickMs / halfLife). P14: its own channel,
+    // not folded into pnl-frac history.
+    let hindsightDop = 0;
+    if (isHindsightRegretLive()) {
+      hindsightDop = this.cachedHindsightDopamine;
+      const HINDSIGHT_HALF_LIFE_MS = 20 * 60 * 1000;
+      const decay = Math.pow(0.5, this.tickMs / HINDSIGHT_HALF_LIFE_MS);
+      this.cachedHindsightDopamine *= decay;
+      if (Math.abs(this.cachedHindsightDopamine) < 1e-6) this.cachedHindsightDopamine = 0;
+    }
+
     // 2026-05-16 (#715/#716/#717 derivation refactor): build the
     // BasinObservables block from the basin's OWN per-tick history.
     // Every chemical's per-tick scale is set by what's typical FOR
@@ -2511,7 +2558,7 @@ export class MonkeyKernel extends EventEmitter {
       quantumWeight: regimeWeights.quantum,
       kappa: state.kappa,
       externalCoupling: couplingHealth,
-      rewardDopamineDelta: rewardDeltas.dopamine + predDop,
+      rewardDopamineDelta: rewardDeltas.dopamine + predDop + hindsightDop,
       rewardSerotoninDelta: rewardDeltas.serotonin + predSer,
       rewardEndorphinDelta: rewardDeltas.endorphin,
       observables: {
@@ -9178,6 +9225,60 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
+   * Advance + resolve hindsight/counterfactual-regret watches for one
+   * symbol (MONKEY_HINDSIGHT_REGRET_LIVE, default OFF; caller gates).
+   *
+   * For each active watch: update its running best counterfactual pnl with
+   * the fresh price. When a watch's forward window has elapsed, resolve it
+   * into a dopamine delta (aversive iff holding would have beaten the close;
+   * mild positive for a correct close) and fold the delta into the decaying
+   * `cachedHindsightDopamine` cache, which tick() adds to rewardDopamineDelta.
+   *
+   * Pure helpers do the math (hindsightRegret.ts); this method only does the
+   * orchestration. Best-effort — wrapped so it never disturbs the tick.
+   */
+  private evaluateHindsightWatches(symbol: string, price: number): void {
+    try {
+      const list = this.hindsightWatches.get(symbol);
+      if (!list || list.length === 0) return;
+      const now = Date.now();
+      const symState = this.symbolStates.get(symbol);
+      const pnlFracHistory = symState?.pnlFracHistory ?? [];
+      const survivors: HindsightWatch[] = [];
+      for (let w of list) {
+        w = advanceWatch(w, price);
+        if (now < w.expiresAtMs) {
+          survivors.push(w);
+          continue;
+        }
+        // Window elapsed — resolve into a chemistry delta.
+        const deltas = resolveRegret(w, pnlFracHistory);
+        // Fold additively into the decaying cache. K-only: hindsight is a
+        // mood event for the kernel that did the closing, like the K-scoped
+        // reward channel in tick().
+        this.cachedHindsightDopamine += deltas.dopamineDelta;
+        logger.info('[Monkey] hindsight watch resolved', {
+          symbol,
+          source: deltas.source,
+          foregoneGainUsdt: deltas.foregoneGainUsdt.toFixed(4),
+          realizedPnl: w.realizedPnlUsdt.toFixed(4),
+          bestCounterfactual: w.bestCounterfactualPnlUsdt.toFixed(4),
+          dopamineDelta: deltas.dopamineDelta.toFixed(4),
+        });
+      }
+      if (survivors.length === 0) {
+        this.hindsightWatches.delete(symbol);
+      } else {
+        this.hindsightWatches.set(symbol, survivors);
+      }
+    } catch (err) {
+      logger.warn('[Monkey] hindsight evaluation failed (non-fatal)', {
+        symbol, err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Canonical Polo-authoritative PnL surface (user-specified 2026-05-28).
    *
    * After a close order fills successfully:
@@ -9667,6 +9768,70 @@ export class MonkeyKernel extends EventEmitter {
       // mark-based gross, or tiny gross wins that net out as losses
       // post-fees are missed as chain samples.
       noteHeartClose(symbol, Date.now(), poloRealized);
+
+      // Hindsight / counterfactual-regret watch registration (flag-gated,
+      // default OFF). Operator 2026-05-29: the kernel "needs to feel the
+      // pain of [cutting a winning-direction position on noise]... enough
+      // that it thinks about thinking about the trend a second time before
+      // closing." We register a forward watch on the symbol; if the trend
+      // continues in the CLOSED position's favour over the window, the
+      // kernel pays an aversive dopamine delta scaled by the foregone gain
+      // (asymmetric — a correct close never incurs a penalty). Best-effort:
+      // wrapped so a bad row never disturbs the close path.
+      if (isHindsightRegretLive()) {
+        try {
+          const sideSign: 1 | -1 = side === 'long' ? 1 : -1;
+          // qty + exit price from the closed rows we just persisted.
+          const qres = await pool.query<{ qty: string; exit_price: string }>(
+            `SELECT COALESCE(SUM(COALESCE(quantity, 0)), 0) AS qty,
+                    COALESCE(AVG(NULLIF(exit_price, 0)), 0) AS exit_price
+               FROM autonomous_trades
+              WHERE id = ANY($1)`,
+            [tradeIds],
+          );
+          const qty = Number(qres.rows[0]?.qty ?? 0);
+          const exitPrice = Number(qres.rows[0]?.exit_price ?? 0);
+          // Best-effort: skip the watch when we have no authoritative exit
+          // price (some close paths don't persist it). No fallback guess —
+          // a wrong exit price would produce a wrong counterfactual.
+          if (Number.isFinite(qty) && qty > 0 && Number.isFinite(exitPrice) && exitPrice > 0) {
+            // Forward window length — FLAGGED FOR OPERATOR REVIEW. 30 min is
+            // a deliberately conservative bound: long enough that a genuine
+            // continuing trend registers, short enough that the watch is
+            // retired before the regime turns over (mirrors the 20-min
+            // reward half-life + the predictionRewardEmitter 5-min scan
+            // window). This is the single non-observer-derived constant in
+            // the signal; see the PR body for the calibration discussion.
+            const HINDSIGHT_WINDOW_MS = 30 * 60 * 1000;
+            const now = Date.now();
+            const watch: HindsightWatch = {
+              symbol,
+              sideSign,
+              qty,
+              exitPrice,
+              realizedPnlUsdt: poloRealized,
+              marginUsdt,
+              closedAtMs: now,
+              expiresAtMs: now + HINDSIGHT_WINDOW_MS,
+              bestCounterfactualPnlUsdt: poloRealized,
+            };
+            const list = this.hindsightWatches.get(symbol) ?? [];
+            list.push(watch);
+            // Bound per-symbol watch list to avoid unbounded growth on a
+            // symbol that closes repeatedly.
+            if (list.length > 16) list.shift();
+            this.hindsightWatches.set(symbol, list);
+            logger.info('[Monkey] hindsight watch registered', {
+              symbol, side, qty, exitPrice, realizedPnl: poloRealized.toFixed(4),
+              expiresInMs: HINDSIGHT_WINDOW_MS,
+            });
+          }
+        } catch (err) {
+          logger.warn('[Monkey] hindsight watch registration failed (non-fatal)', {
+            symbol, err: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
 
       // PR #992 fan-out (completes the 2026-05-28 CC1): mirror the Polo-authoritative
       // net reward (with correct margin) into Python autonomic so BOTH chemistry
