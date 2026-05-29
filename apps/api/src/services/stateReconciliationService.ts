@@ -15,6 +15,11 @@ import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { BusEventType, getKernelBus } from './monkey/kernel_bus.js';
 import { extractKernelInstanceIdFromReason } from './monkey/recovered_outcome_routing.js';
+import {
+  composePoloBillsReward,
+  decideExternalCloseReward,
+  type PoloBillRow,
+} from './monkey/polo_reward_ledger.js';
 import { inferLaneFromLeverage, kernelAdoptLive } from './laneFromLeverage.js';
 import { getPrecisions } from './marketCatalog.js';
 
@@ -110,7 +115,13 @@ class StateReconciliationService {
 
       // ── 4. Fetch DB-recorded open trades ────────────────────────────────────
       const dbResult = await pool.query(
-        `SELECT id, symbol, side, entry_price, quantity, order_id, entry_time
+        // `leverage` (nullable INTEGER, migration 048) is needed to compute the
+        // real position margin for the external-close reward (#1033 refine):
+        // margin = entry_price × quantity / leverage. Without it the chemistry
+        // scale would fall back to a synthetic constant (the retired
+        // marginUsdt=5 knob). quantity is base-asset (migration 060) so
+        // entry_price × quantity is the USDT notional directly.
+        `SELECT id, symbol, side, entry_price, quantity, leverage, order_id, entry_time
          FROM autonomous_trades
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
@@ -121,6 +132,7 @@ class StateReconciliationService {
         side: string;
         entry_price: string;
         quantity: string;
+        leverage: number | string | null;
         order_id: string | null;
         entry_time: Date | string;
       }[] = dbResult.rows;
@@ -545,6 +557,169 @@ class StateReconciliationService {
           );
         }
 
+        // ── External-close reward: bills-authoritative realized PnL ──────────
+        //
+        // The "operator-close hole" (#1033): externally/operator-closed
+        // positions (closed in the exchange UI, or by a CC/operator exemplar
+        // trade — NOT by a kernel-issued close) feed realized PnL into
+        // bookkeeping above but DO NOT feed the kernel's reward chemistry. The
+        // existing loop.ts subscriber for `reconciler_recovered:*` OUTCOME
+        // events is starved because the conservative LIVED ONLY guard nulls
+        // `pnlForLedger` and gates the publish on it being non-null.
+        //
+        // Behind MONKEY_REWARD_EXTERNAL_CLOSES_LIVE (default OFF), for external
+        // (`manual_close_user`) closes we recover the authoritative realized
+        // PnL from /v3/account/bills (type=PNL sum, #1028 — the SAME surface
+        // the kernel's own close path consumes) and publish the OUTCOME event
+        // so the kernel learns from these exemplar closes. The lossy ±90s
+        // position-history match above is NOT used for the reward magnitude.
+        //
+        // Best-effort: any failure here is swallowed and never blocks
+        // reconciliation. Flag OFF → this block is inert and behaviour is
+        // byte-identical to today (bookkeeping-only).
+        const externalRewardEnabled =
+          process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE === 'true';
+        const groupHasExternalGhost = groupGhosts.some(
+          (g) => g.ghostReason === 'manual_close_user' && g.agent !== null,
+        );
+        let externalBillsRealizedPnl = 0;
+        let externalBillsPnlRowCount = 0;
+        if (externalRewardEnabled && groupHasExternalGhost && credentials && symbol) {
+          try {
+            // Tight close window around the time the reconciler is finalizing
+            // these ghosts (NOW); funding hold window back to the oldest
+            // ghost's entry_time. Bills carry no ordId — PNL rows are matched
+            // by symbol + this window (PNL bill cTime == close fill cTime).
+            const nowMs = Date.now();
+            const oldestEntryMs = Math.min(
+              ...groupGhosts.map(
+                (g) => new Date(g.dbTrade.entry_time).getTime() || nowMs,
+              ),
+            );
+            const holdStartMs = Number.isFinite(oldestEntryMs)
+              ? oldestEntryMs
+              : nowMs - 24 * 60 * 60 * 1000;
+            const normSymbol = poloniexFuturesService.normalizeSymbol(symbol);
+            const billRows: PoloBillRow[] = [];
+            const seenBillIds = new Set<string>();
+            let cursor: string | null = null;
+            for (let page = 0; page < 8; page += 1) {
+              const billsResp = await poloniexFuturesService.getAccountBills(
+                credentials,
+                { limit: 100, ...(cursor ? { from: cursor } : {}) },
+              );
+              const rows: any[] = Array.isArray(billsResp)
+                ? billsResp
+                : (billsResp?.data ?? []);
+              if (rows.length === 0) break;
+              for (const r of rows) {
+                // Dedup by bill id so a non-advancing cursor (or a repeated
+                // page) can never double-count a PNL row into the reward
+                // magnitude. Bills without an id fall back to a composite key.
+                const billId = String(
+                  r?.id ?? `${r?.type ?? ''}|${r?.cTime ?? ''}|${r?.sz ?? ''}`,
+                );
+                if (seenBillIds.has(billId)) continue;
+                seenBillIds.add(billId);
+                billRows.push({
+                  type: String(r?.type ?? ''),
+                  sz: parseFloat(String(r?.sz ?? 'NaN')),
+                  symbol: String(r?.symbol ?? ''),
+                  cTimeMs: Number(r?.cTime),
+                });
+              }
+              const nextCursor = String(rows[rows.length - 1]?.id ?? '') || null;
+              if (rows.every((r) => Number(r?.cTime) < holdStartMs)) break;
+              // Stop if the cursor did not advance (defensive against an API
+              // that echoes the same page — otherwise we'd spin the 8 pages).
+              if (!nextCursor || nextCursor === cursor) break;
+              cursor = nextCursor;
+            }
+            // Close window: the reconciler discovers the close AFTER the fact,
+            // so the exchange-side close cTime is somewhere between the oldest
+            // entry and now. Use a generous [holdStart, now+5s] window for PNL
+            // matching — these are external closes the kernel never timed, so
+            // a tight cTime window (used on kernel-own closes) is unavailable.
+            //
+            // KNOWN LIMITATION (#1033 refine): bills carry no ordId/side, so
+            // the PNL sum is matched by symbol + this time window only. If two
+            // DISTINCT close events of the SAME symbol+side land inside one
+            // reconciler interval, their PNL bills aggregate. For the
+            // external-close group this is actually CORRECT — every K-owned row
+            // in the group is attributed the aggregate, pro-rated by qty. The
+            // residual unhandled case is a same-symbol+side PNL bill from a
+            // DIFFERENT lifecycle (e.g. a kernel-own close that landed in the
+            // same window) being folded into the external reward magnitude.
+            // Tightening this reliably needs an ordId-tagged or per-fill bills
+            // surface (tracked as the polo per-row-vs-per-position follow-up);
+            // a time-only heuristic would mis-split legitimately-aggregated
+            // closes, so we keep the symbol+window match and accept the rare
+            // cross-lifecycle overlap rather than ship a fragile narrower
+            // window. The flag default-OFF keeps this inert until the surface
+            // improves.
+            const billsComp = composePoloBillsReward(billRows, {
+              symbol: normSymbol,
+              closeStartMs: holdStartMs,
+              closeEndMs: nowMs + 5_000,
+              holdStartMs,
+              holdEndMs: nowMs + 5_000,
+            });
+            externalBillsRealizedPnl = billsComp.realizedPnl;
+            externalBillsPnlRowCount = billsComp.pnlRowCount;
+            logger.info('[RECONCILE] External-close bills realized recovered', {
+              symbol: normSymbol,
+              realizedPnl: billsComp.realizedPnl.toFixed(4),
+              pnlRows: billsComp.pnlRowCount,
+              fundingRows: billsComp.fundingRowCount,
+            });
+          } catch (billsErr) {
+            logger.warn('[RECONCILE] External-close bills fetch failed (non-fatal)', {
+              symbol,
+              err: billsErr instanceof Error ? billsErr.message : String(billsErr),
+            });
+          }
+        }
+
+        // ── Real position margin for the external-close reward (#1033 refine) ──
+        //
+        // The reward chemistry scales by `pnl_fraction = pnl / marginUsdt`, so
+        // marginUsdt IS the lesson's scale. The original PR passed a hardcoded
+        // `marginUsdt = 5` into the loop.ts reward subscriber — a synthetic
+        // scale knob (P1 violation). Replace it with the position's REAL margin
+        // derived from the autonomous_trades row(s):
+        //   margin = entry_price × quantity / leverage
+        // (quantity is base-asset post migration 060, so entry_price × quantity
+        // is the USDT notional directly — no contract-size multiplier; this is
+        // the SAME formula the kernel's own close path uses, #992 loop.ts).
+        //
+        // Computed per-row (leverage can differ across DCA-stacked rows) so each
+        // pro-rata reward carries its OWN real scale, and summed for the
+        // group-level eligibility decision. A row whose entry/qty/leverage is
+        // missing or non-positive contributes null → decline over guess.
+        const rowMarginUsdt = (t: typeof groupGhosts[number]['dbTrade']): number | null => {
+          const entry = parseFloat(t.entry_price);
+          const qty = Math.abs(parseFloat(t.quantity));
+          const levRaw = t.leverage === null || t.leverage === undefined
+            ? NaN
+            : Number(t.leverage);
+          const lev = Number.isFinite(levRaw) ? levRaw : NaN;
+          if (!Number.isFinite(entry) || entry <= 0) return null;
+          if (!Number.isFinite(qty) || qty <= 0) return null;
+          if (!Number.isFinite(lev) || lev <= 0) return null;
+          const margin = (entry * qty) / lev;
+          return Number.isFinite(margin) && margin > 0 ? margin : null;
+        };
+        // Group margin: present only if EVERY external ghost row has a real
+        // margin. Any null → the group's real scale is incomplete → decline
+        // (rather than reward part of the group at a guessed scale).
+        let groupExternalMargin: number | null = 0;
+        for (const g of groupGhosts) {
+          if (g.ghostReason !== 'manual_close_user' || g.agent === null) continue;
+          const m = rowMarginUsdt(g.dbTrade);
+          if (m === null) { groupExternalMargin = null; break; }
+          groupExternalMargin = (groupExternalMargin ?? 0) + m;
+        }
+
         // Write each ghost row with pro-rata PnL share.
         for (const g of groupGhosts) {
           const rowQty = Math.abs(parseFloat(g.dbTrade.quantity)) || 0;
@@ -573,41 +748,99 @@ class StateReconciliationService {
               pnlForLedger = null;
             }
 
-            await pool.query(
+            // Dedup: gate the close transition on status='open' so the reward
+            // publish below fires AT MOST ONCE per row (the row is only
+            // transitioned to 'closed' by exactly one reconciler tick). This
+            // prevents a re-reward if a later tick re-examines an
+            // already-closed row.
+            const closeRes = await pool.query(
               `UPDATE autonomous_trades
                SET status = 'closed',
                    exit_reason = $1,
                    exit_time = NOW(),
                    pnl = COALESCE($3, pnl)
-               WHERE id = $2`,
+               WHERE id = $2 AND status = 'open'`,
               [g.ghostReason, g.dbTrade.id, pnlForLedger],
             );
+            const transitioned = (closeRes.rowCount ?? 0) === 1;
             logger.info(
               `[RECONCILE] Closed ghost DB record ${g.dbTrade.id} for user ${userId}: ${g.dbTrade.symbol} ${g.dbTrade.side} (reason=${g.ghostReason}${
                 pnlForLedger !== null ? `, share=${(rowShare * 100).toFixed(1)}%, recovered_pnl=${pnlForLedger.toFixed(4)}` : ''
               })`,
             );
-            if (pnlForLedger !== null && g.agent !== null) {
-              try {
-                const bus = getKernelBus();
-                bus.publish({
-                  type: BusEventType.OUTCOME,
-                  source: 'reconciler',
-                  symbol: g.dbTrade.symbol,
-                  payload: {
-                    agent: g.agent,
-                    instanceId: g.instanceId,
-                    side: normalizeDbSide(g.dbTrade.side),
-                    pnl: pnlForLedger,
-                    source: `reconciler_recovered:${g.ghostReason}`,
-                    ghostReason: g.ghostReason,
+
+            // ── External-close reward publish (#1033, flag-gated) ─────────────
+            //
+            // The pure helper encodes every guard: flag ON, ghostReason ===
+            // 'manual_close_user' (excludes the kernel's own late-landing
+            // 'reconciled_post_close_race' close so it can NEVER be
+            // double-rewarded), agent attributed, and a bills-authoritative
+            // magnitude (declines on no PNL rows rather than guess). When the
+            // flag is OFF the decision is `flag_off` → no publish → behaviour
+            // is byte-identical to the bookkeeping-only path above.
+            //
+            // We only publish when THIS tick transitioned the row (dedup) so
+            // the chemistry sees each external close exactly once.
+            // Per-row REAL margin (entry_price × quantity / leverage). This is
+            // THIS row's own scale — passed in the OUTCOME payload so the
+            // loop.ts subscriber feeds `pnl_fraction = pnl / marginUsdt` with
+            // the real position margin, NOT the retired synthetic `5`.
+            const rowMargin = rowMarginUsdt(g.dbTrade);
+            const rewardDecision = decideExternalCloseReward({
+              enabled: externalRewardEnabled,
+              ghostReason: g.ghostReason,
+              agent: g.agent,
+              billsRealizedPnl: externalBillsRealizedPnl,
+              pnlBillRowCount: externalBillsPnlRowCount,
+              // Group-level real margin gates eligibility (decline if any row
+              // in the group lacks a real margin); the per-row margin below
+              // sets the published scale.
+              marginUsdt: groupExternalMargin,
+            });
+            if (rewardDecision.eligible && transitioned && rowMargin !== null) {
+              // Pro-rata the group's authoritative realized PnL by this row's
+              // qty share so a DCA-stacked external close attributes each row
+              // its proportional slice (mirrors the bookkeeping rowShare).
+              const rowRewardPnl = rewardDecision.realizedPnl * rowShare;
+              if (Number.isFinite(rowRewardPnl)) {
+                try {
+                  const bus = getKernelBus();
+                  bus.publish({
+                    type: BusEventType.OUTCOME,
+                    source: 'reconciler',
+                    symbol: g.dbTrade.symbol,
+                    payload: {
+                      agent: g.agent,
+                      instanceId: g.instanceId,
+                      side: normalizeDbSide(g.dbTrade.side),
+                      pnl: rowRewardPnl,
+                      // REAL per-row margin → the loop.ts subscriber uses this
+                      // for pnl_fraction instead of the synthetic marginUsdt=5.
+                      marginUsdt: rowMargin,
+                      // The loop.ts subscriber keys on
+                      // `source.startsWith('reconciler_recovered')` →
+                      // applyOutcomeToAgent + pushReward + callAutonomicReward.
+                      source: `reconciler_recovered:${g.ghostReason}`,
+                      ghostReason: g.ghostReason,
+                      tradeId: g.dbTrade.id,
+                      pnlSource: rewardDecision.pnlSource,
+                    },
+                  });
+                  logger.info('[RECONCILE] External-close reward published to chemistry', {
                     tradeId: g.dbTrade.id,
-                  },
-                });
-              } catch (busErr) {
-                logger.debug('[RECONCILE] OUTCOME publish failed', {
-                  err: busErr instanceof Error ? busErr.message : String(busErr),
-                });
+                    symbol: g.dbTrade.symbol,
+                    agent: g.agent,
+                    rowRewardPnl: rowRewardPnl.toFixed(4),
+                    rowMarginUsdt: rowMargin.toFixed(4),
+                    pnlSource: rewardDecision.pnlSource,
+                  });
+                } catch (busErr) {
+                  // Best-effort: a reward-firing failure NEVER blocks
+                  // reconciliation or trading.
+                  logger.debug('[RECONCILE] External-close OUTCOME publish failed (non-fatal)', {
+                    err: busErr instanceof Error ? busErr.message : String(busErr),
+                  });
+                }
               }
             }
           } catch (updateErr) {
