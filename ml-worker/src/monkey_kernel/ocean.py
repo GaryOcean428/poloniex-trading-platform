@@ -412,9 +412,13 @@ class Ocean:
         # at construction — deque maxlen is immutable, so propose_change()
         # on this row requires a kernel restart to take effect.
         # Fixed residual NameError chain (undefined _PHI_* constants) from wave actors.
-        # Uses numeric default 200 consistent with working_memory and other ocean.* helpers.
+        # Default 60 matches migration 047's seed (ocean.phi_history_max = 60 →
+        # "60 ticks = 30min Φ-variance window"). Using the seeded value keeps
+        # defaults-only mode (no DSN) in parity with DB-backed mode, so phi_var
+        # — a direct input to DAMPING/MUSHROOM/escape/dream gating — smooths over
+        # the same window in every environment.
         history_max = int(
-            get_registry().get("ocean.phi_history_max", default=200.0)
+            get_registry().get("ocean.phi_history_max", default=60.0)
         )
         self._phi_history: Deque[float] = deque(maxlen=history_max)
         self._basin_history: Deque[np.ndarray] = deque(maxlen=self.BASIN_HISTORY_MAX)
@@ -641,8 +645,14 @@ class Ocean:
         # front so the counter and the trigger see the same value.
         registry_for_damping_lower = get_registry()
         # Fixed residual NameError (_PHI_DAMPING_LOWER) from wave.
+        # Default 0.85 matches migration 054's seed AND get_phi_damping_lower's
+        # base default (the trigger at the DAMPING branch below). Counter and
+        # trigger MUST share the same bound (per comment above) — a lower default
+        # here (e.g. 0.70) saturates the counter against a looser bound than the
+        # trigger uses, causing premature/spurious DAMPING firings in
+        # defaults-only mode.
         damping_lower_for_counter = float(registry_for_damping_lower.get(
-            "ocean.phi_damping_lower", default=0.70,
+            "ocean.phi_damping_lower", default=0.85,
         ))
         if float(phi) > damping_lower_for_counter:
             self._time_above_damping_lower += 1
