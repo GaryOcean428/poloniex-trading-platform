@@ -543,11 +543,17 @@ export function shouldAutoPromote(
     // is trending toward it: at/under the 1:8 ratio OUTRIGHT, or at/under
     // the best
     // live peer's ratio (a cohort-relative bar — you're no worse than
-    // the benchmark on size asymmetry). NaN ratio (no losses observed in
-    // window) is the best possible case and passes.
+    // the benchmark on size asymmetry). lossWinRatio is NaN only for an
+    // empty/degenerate window (no closes) — that is the sole case that
+    // bypasses the gate. CRITICAL: Infinity means "losses but no wins"
+    // (pure bleed, the WORST case) — it must NOT bypass (a prior
+    // `!Number.isFinite(...)` check wrongly let Infinity pass, which could
+    // re-promote a pure-bleed kernel into a weak cohort). Using isNaN
+    // keeps Infinity subject to the ratio comparison, where it fails both
+    // (Infinity ≤ 1/8 → false; Infinity ≤ bestRatio → false).
     const bestRatio = bestLivePeerLossWinRatio(peers);
     const ratioOk =
-      !Number.isFinite(mine.lossWinRatio) || // no losses → trivially fine
+      Number.isNaN(mine.lossWinRatio) || // empty window only → trivially fine
       mine.lossWinRatio <= ROTATION_TARGET_LOSS_WIN_RATIO ||
       (Number.isFinite(bestRatio) && mine.lossWinRatio <= bestRatio);
     if (!ratioOk) return null;

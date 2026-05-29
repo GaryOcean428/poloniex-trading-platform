@@ -284,6 +284,24 @@ describe('expectancy promotion gate — issue #1032 gap 2 (WR not enough)', () =
     const reason = shouldAutoPromote(s, peers, true);
     expect(reason).toBeNull();
   });
+
+  it('FLAG ON: a PURE-BLEED candidate (losses, no wins → Infinity ratio) is NOT promoted, even in a weak/bleeding cohort (Copilot #1035)', () => {
+    // Regression for the Infinity-vs-NaN ratio-gate bug: lossWinRatio is
+    // Infinity for losses-but-no-wins (worst case). A prior
+    // `!Number.isFinite(...)` check treated Infinity like the benign NaN
+    // (no-data) case and let it bypass the ratio gate — so a pure-bleed
+    // paper kernel could re-promote into a weak cohort. Construct exactly
+    // that: candidate clears the WR + expectancy-band gates against a
+    // bleeding cohort, and MUST still be blocked by the ratio gate.
+    const s = paperCandidate([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1]); // WR 0, edge -1
+    const cand = rollingExpectancy(s);
+    expect(cand.lossWinRatio).toBe(Number.POSITIVE_INFINITY); // pure bleed
+    // Bleeding cohort: best-live WR 0.05 (so WR 0 ≥ 0.05−0.10 passes) and
+    // expectancy −1 (so candidate −1 is within the 10% band).
+    const peers = [livePeer(-1.0, 5.0, { winRate: 0.05 })];
+    const reason = shouldAutoPromote(s, peers, /*expectancyLive*/ true);
+    expect(reason).toBeNull(); // blocked by the ratio gate (Infinity fails it)
+  });
 });
 
 /**
