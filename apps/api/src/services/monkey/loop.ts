@@ -8049,9 +8049,12 @@ export class MonkeyKernel extends EventEmitter {
       pnl: pnlAtDecision.toFixed(4), exitReason,
     });
     // REGIME-3 — post-close tilt cooldown. Records timestamp on EVERY
-    // close (any PnL). The entry path's cooldown check rejects same-side
-    // re-entry within POSTCLOSE_COOLDOWN_MS unless the operator has
-    // REGIME_POSTWIN_COOLDOWN_LIVE=false (env var name kept for back-compat).
+    // close (any PnL). The entry path's cooldown check at the
+    // postclose_cooldown gate rejects same-side re-entry within
+    // `composeCooldown(...).finalMs`, which is observer-derived from
+    // `safety_floor.ts` (settlement / 21002 / rate-limit) and
+    // `heart_arbitrator.ts` (consecutive-loss chain gap). No env gate;
+    // the threshold is 0 when no observer asks for a veto.
     //
     // Diagnosed in 2026-05-19 CSV post-mortems:
     //   #806: +$0.20 BTC win at 08:21 → -$0.52 BTC loss at 08:29 (win-then-loss)
@@ -8257,12 +8260,23 @@ export class MonkeyKernel extends EventEmitter {
     // tilt stays grounded in observed close-PnL chains. Neither is an
     // operator-tunable threshold.
     //
-    // Activation gate: REGIME_POSTWIN_COOLDOWN_LIVE=true. DCA-adds bypass
-    // (defending an existing position is the explicit override).
-    if (
-      !req.isDCAAdd
-      && process.env.REGIME_POSTWIN_COOLDOWN_LIVE === 'true'
-    ) {
+    // No activation gate. The legacy `REGIME_POSTWIN_COOLDOWN_LIVE` env
+    // flag was a knob-in-costume of the same shape as `CANONICAL_POLO_PNL_LIVE`
+    // — a binary that bifurcates code paths and lets a feature exist in
+    // the source while sitting dark in production. Operator 2026-05-29:
+    // doctrine forbids env-gated bifurcations.
+    //
+    // The threshold inside this block is fully observer-derived
+    // (`composeCooldown` returns 0 when no observer asks for a veto:
+    // safety = cold-start sentinel or empirical settlement, HEART = 0
+    // until a chain is observed). An always-on gate that defers to
+    // observers is the canonical shape — no veto fires when no
+    // observation justifies one.
+    //
+    // DCA-adds bypass — defending an existing position is the explicit
+    // override (covers re-add scenarios where the cooldown would block
+    // the kernel from defending its own position).
+    if (!req.isDCAAdd) {
       const lastCloseAt = this.lastCloseAtMs.get(`${symbol}|${side}`);
       if (lastCloseAt !== undefined) {
         const cooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
