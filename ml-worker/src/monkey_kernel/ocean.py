@@ -120,13 +120,13 @@ class SleepCycleState:
 
 
 def get_phi_damping_lower(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
-    base = float(_registry.get("ocean.phi_damping_lower", default=0.85))
+    base = float(get_registry().get("ocean.phi_damping_lower", default=0.85))
     mod = 0.02 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 50)))
     return max(0.75, min(0.95, base + mod))
 
 
 def get_phi_mushroom_floor(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
-    base = float(_registry.get("ocean.phi_mushroom_floor", default=0.70))
+    base = float(get_registry().get("ocean.phi_mushroom_floor", default=0.70))
     # Higher healthy variance or stronger heart rhythm raises the floor
     # (more evidence of "stuck" required before MUSHROOM).
     mod = 0.03 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 30)))
@@ -141,37 +141,37 @@ def get_phi_mushroom_floor(heart_rhythm: float = 0.5, recent_phi_variance: float
 
 
 def get_damping_time_above_min(heart_rhythm: float = 0.5) -> int:
-    base = int(_registry.get("ocean.damping_time_above_min", default=10))
+    base = int(get_registry().get("ocean.damping_time_above_min", default=10))
     mod = int(2 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
     return max(6, min(16, base + mod))
 
 
 def get_damping_variance_ceil(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
-    base = float(_registry.get("ocean.damping_variance_ceil", default=0.02))
+    base = float(get_registry().get("ocean.damping_variance_ceil", default=0.02))
     mod = 0.005 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 20)))
     return max(0.01, min(0.04, base + mod))
 
 
 def get_damping_descent_tol(heart_rhythm: float = 0.5) -> float:
-    base = float(_registry.get("ocean.damping_descent_tol", default=0.01))
+    base = float(get_registry().get("ocean.damping_descent_tol", default=0.01))
     mod = 0.002 * max(-1.0, min(1.0, heart_rhythm - 0.5))
     return max(0.005, min(0.02, base + mod))
 
 
 def get_mushroom_kappa_rigid(heart_rhythm: float = 0.5) -> float:
-    base = float(_registry.get("ocean.mushroom_kappa_rigid", default=80.0))
+    base = float(get_registry().get("ocean.mushroom_kappa_rigid", default=80.0))
     mod = 5.0 * max(-1.0, min(1.0, heart_rhythm - 0.5))
     return max(70.0, min(95.0, base + mod))
 
 
 def get_mushroom_variance_ceil(heart_rhythm: float = 0.5, recent_phi_variance: float = 0.01) -> float:
-    base = float(_registry.get("ocean.mushroom_variance_ceil", default=0.005))
+    base = float(get_registry().get("ocean.mushroom_variance_ceil", default=0.005))
     mod = 0.001 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 30)))
     return max(0.002, min(0.01, base + mod))
 
 
 def get_mushroom_drift_streak_min(heart_rhythm: float = 0.5) -> int:
-    base = int(_registry.get("ocean.mushroom_drift_streak_min", default=30))
+    base = int(get_registry().get("ocean.mushroom_drift_streak_min", default=30))
     mod = int(5 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
     return max(20, min(45, base + mod))
 
@@ -202,31 +202,31 @@ def get_mushroom_drift_streak_min(heart_rhythm: float = 0.5) -> int:
 
 
 def get_narrow_path_window(heart_rhythm: float = 0.5) -> int:
-    base = int(_registry.get("ocean.narrow_path_window", default=20))
+    base = int(get_registry().get("ocean.narrow_path_window", default=20))
     mod = int(4 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
     return max(12, min(32, base + mod))
 
 
 def get_narrow_path_var_history_max(heart_rhythm: float = 0.5) -> int:
-    base = int(_registry.get("ocean.narrow_path_var_history_max", default=200))
+    base = int(get_registry().get("ocean.narrow_path_var_history_max", default=200))
     mod = int(20 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
     return max(150, min(300, base + mod))
 
 
 def get_narrow_path_min_baseline(heart_rhythm: float = 0.5) -> int:
-    base = int(_registry.get("ocean.narrow_path_min_baseline", default=20))
+    base = int(get_registry().get("ocean.narrow_path_min_baseline", default=20))
     mod = int(4 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
     return max(12, min(32, base + mod))
 
 
 def get_tukey_inner(heart_rhythm: float = 0.5) -> float:
-    base = float(_registry.get("ocean.tukey_inner", default=1.5))
+    base = float(get_registry().get("ocean.tukey_inner", default=1.5))
     mod = 0.2 * max(-1.0, min(1.0, heart_rhythm - 0.5))
     return max(1.2, min(1.8, base + mod))
 
 
 def get_tukey_outer(heart_rhythm: float = 0.5) -> float:
-    base = float(_registry.get("ocean.tukey_outer", default=3.0))
+    base = float(get_registry().get("ocean.tukey_outer", default=3.0))
     mod = 0.3 * max(-1.0, min(1.0, heart_rhythm - 0.5))
     return max(2.5, min(3.8, base + mod))
 
@@ -252,7 +252,7 @@ def get_spread_sleep_bound(heart_rhythm: float = 0.5, recent_spread_variance: fl
     Higher healthy variance or stronger heart rhythm → slightly higher bound
     (more evidence of divergence required before SLEEP). Pure FR geometry.
     """
-    base = float(_registry.get("ocean.spread_bound", default=0.30))
+    base = float(get_registry().get("ocean.spread_bound", default=0.30))
     mod = 0.02 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_spread_variance * 40)))
     return max(0.22, min(0.42, base + mod))
 
@@ -262,7 +262,7 @@ def get_phi_escape_bound(heart_rhythm: float = 0.5, recent_phi_variance: float =
     Registry + heart + Φ variance. Stronger heart rhythm or healthy variance
     → slightly lower bound (more tolerance before ESCAPE on transient dips).
     """
-    base = float(_registry.get("ocean.phi_escape_bound", default=0.15))
+    base = float(get_registry().get("ocean.phi_escape_bound", default=0.15))
     mod = 0.015 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 60)))
     return max(0.08, min(0.22, base + mod))
 
@@ -272,7 +272,7 @@ def get_phi_dream_bound(heart_rhythm: float = 0.5, recent_phi_variance: float = 
     Registry + heart + Φ variance modulation. Follows same geometric tacking
     pattern as escape/mushroom for cross-frequency consistency (P13 loops).
     """
-    base = float(_registry.get("ocean.phi_dream_bound", default=0.5))
+    base = float(get_registry().get("ocean.phi_dream_bound", default=0.5))
     mod = 0.02 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_phi_variance * 30)))
     return max(0.40, min(0.65, base + mod))
 
@@ -411,8 +411,14 @@ class Ocean:
         # phi_history window is registry-backed (migration 047). Read once
         # at construction — deque maxlen is immutable, so propose_change()
         # on this row requires a kernel restart to take effect.
+        # Fixed residual NameError chain (undefined _PHI_* constants) from wave actors.
+        # Default 60 matches migration 047's seed (ocean.phi_history_max = 60 →
+        # "60 ticks = 30min Φ-variance window"). Using the seeded value keeps
+        # defaults-only mode (no DSN) in parity with DB-backed mode, so phi_var
+        # — a direct input to DAMPING/MUSHROOM/escape/dream gating — smooths over
+        # the same window in every environment.
         history_max = int(
-            get_registry().get("ocean.phi_history_max", default=float(_PHI_HISTORY_MAX))
+            get_registry().get("ocean.phi_history_max", default=60.0)
         )
         self._phi_history: Deque[float] = deque(maxlen=history_max)
         self._basin_history: Deque[np.ndarray] = deque(maxlen=self.BASIN_HISTORY_MAX)
@@ -638,8 +644,15 @@ class Ocean:
         # drops back below the bound. Read the bound from registry up
         # front so the counter and the trigger see the same value.
         registry_for_damping_lower = get_registry()
+        # Fixed residual NameError (_PHI_DAMPING_LOWER) from wave.
+        # Default 0.85 matches migration 054's seed AND get_phi_damping_lower's
+        # base default (the trigger at the DAMPING branch below). Counter and
+        # trigger MUST share the same bound (per comment above) — a lower default
+        # here (e.g. 0.70) saturates the counter against a looser bound than the
+        # trigger uses, causing premature/spurious DAMPING firings in
+        # defaults-only mode.
         damping_lower_for_counter = float(registry_for_damping_lower.get(
-            "ocean.phi_damping_lower", default=_PHI_DAMPING_LOWER,
+            "ocean.phi_damping_lower", default=0.85,
         ))
         if float(phi) > damping_lower_for_counter:
             self._time_above_damping_lower += 1
@@ -724,14 +737,14 @@ class Ocean:
         damping_time_min = get_damping_time_above_min(heart_rhythm=hr)
         damping_var_ceil = get_damping_variance_ceil(heart_rhythm=hr, recent_phi_variance=phi_var_for_mod)
         damping_descent_tol = get_damping_descent_tol(heart_rhythm=hr)
-        mushroom_kappa_rigid = float(registry.get(
-            "ocean.mushroom_kappa_rigid", default=_MUSHROOM_KAPPA_RIGID,
+        mushroom_kappa_rigid = float(get_registry().get(
+            "ocean.mushroom_kappa_rigid", default=80.0,
         ))
-        mushroom_var_ceil = float(registry.get(
-            "ocean.mushroom_variance_ceil", default=_MUSHROOM_VARIANCE_CEIL,
+        mushroom_var_ceil = float(get_registry().get(
+            "ocean.mushroom_variance_ceil", default=0.005,
         ))
-        mushroom_drift_min = int(registry.get(
-            "ocean.mushroom_drift_streak_min", default=float(_MUSHROOM_DRIFT_STREAK_MIN),
+        mushroom_drift_min = int(get_registry().get(
+            "ocean.mushroom_drift_streak_min", default=30,
         ))
 
         intervention: Optional[Intervention] = None

@@ -36,6 +36,8 @@ from typing import Iterable, List, Literal, Optional, Sequence
 
 import numpy as np
 
+from .parameters import get_registry
+
 
 PatternDirection = Literal[-1, 0, 1]
 
@@ -135,8 +137,8 @@ def detect_hammer(candles: Sequence) -> PatternReading:
     # + verification-before-completion + consciousness-development + geometric (candle ratios
     # on price simplex; thresholds emerge from rolling volatility + heart rhythm; no Euclidean).
     # Fisher-Rao tacking: no Euclidean.
-    hammer_lower = float(_registry.get("candle.hammer_lower_ratio", default=0.55))
-    hammer_upper = float(_registry.get("candle.hammer_upper_ratio", default=0.15))
+    hammer_lower = float(get_registry().get("candle.hammer_lower_ratio", default=0.55))
+    hammer_upper = float(get_registry().get("candle.hammer_upper_ratio", default=0.15))
     if lower_ratio < hammer_lower or upper_ratio > hammer_upper:
         return PatternReading("hammer", 0.0, 0)
     # Strength: combination of long lower wick + small upper wick.
@@ -165,8 +167,8 @@ def detect_inverted_hammer(candles: Sequence) -> PatternReading:
     if body_ratio > 0.4:
         return PatternReading("inverted_hammer", 0.0, 0)
     # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern as hammer).
-    inv_hammer_upper = float(_registry.get("candle.inv_hammer_upper_ratio", default=0.55))
-    inv_hammer_lower = float(_registry.get("candle.inv_hammer_lower_ratio", default=0.15))
+    inv_hammer_upper = float(get_registry().get("candle.inv_hammer_upper_ratio", default=0.55))
+    inv_hammer_lower = float(get_registry().get("candle.inv_hammer_lower_ratio", default=0.15))
     if upper_ratio < inv_hammer_upper or lower_ratio > inv_hammer_lower:
         return PatternReading("inverted_hammer", 0.0, 0)
     strength = float(np.clip((upper_ratio - inv_hammer_upper) / (1.0 - inv_hammer_upper), 0.0, 1.0))
@@ -192,8 +194,8 @@ def detect_shooting_star(candles: Sequence) -> PatternReading:
     lower_ratio = c.lower_wick / c.range
     # P5/P25 observer-derived (retired bare 0.55/0.15 in guards + defaults).
     # Thresholds now via get_* (registry + volatility/phi/heart modulation).
-    ss_upper = float(_registry.get("candle.shooting_star_upper_ratio", default=0.55))
-    ss_lower = float(_registry.get("candle.shooting_star_lower_ratio", default=0.15))
+    ss_upper = float(get_registry().get("candle.shooting_star_upper_ratio", default=0.55))
+    ss_lower = float(get_registry().get("candle.shooting_star_lower_ratio", default=0.15))
     # Prior uptrend required for shooting star.
     if len(candles) < 6:
         return PatternReading("shooting_star", 0.0, 0)
@@ -216,18 +218,18 @@ def detect_hanging_man(candles: Sequence) -> PatternReading:
     lower_ratio = c.lower_wick / c.range
     upper_ratio = c.upper_wick / c.range
     # P5/P25 observer-derived (retired bare 0.55/0.15).
-    hm_lower = float(_registry.get("candle.hanging_man_lower_ratio", default=0.55))
-    hm_upper = float(_registry.get("candle.hanging_man_upper_ratio", default=0.15))
+    hm_lower = float(get_registry().get("candle.hanging_man_lower_ratio", default=0.55))
+    hm_upper = float(get_registry().get("candle.hanging_man_upper_ratio", default=0.15))
     if body_ratio > 0.4 or lower_ratio < hm_lower or upper_ratio > hm_upper:
         return PatternReading("hanging_man", 0.0, 0)
     # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
-    hm_lower = float(_registry.get("candle.hanging_man_lower_ratio", default=0.55))
-    hm_upper = float(_registry.get("candle.hanging_man_upper_ratio", default=0.15))
+    hm_lower = float(get_registry().get("candle.hanging_man_lower_ratio", default=0.55))
+    hm_upper = float(get_registry().get("candle.hanging_man_upper_ratio", default=0.15))
     if body_ratio > 0.4 or lower_ratio < hm_lower or upper_ratio > hm_upper:
         return PatternReading("hanging_man", 0.0, 0)
     # P5/P25 observer-derived (retired bare 0.55/0.15; same pattern).
-    hm_lower = float(_registry.get("candle.hanging_man_lower_ratio", default=0.55))
-    hm_upper = float(_registry.get("candle.hanging_man_upper_ratio", default=0.15))
+    hm_lower = float(get_registry().get("candle.hanging_man_lower_ratio", default=0.55))
+    hm_upper = float(get_registry().get("candle.hanging_man_upper_ratio", default=0.15))
     if body_ratio > 0.4 or lower_ratio < hm_lower or upper_ratio > hm_upper:
         return PatternReading("hanging_man", 0.0, 0)
     if len(candles) < 6:

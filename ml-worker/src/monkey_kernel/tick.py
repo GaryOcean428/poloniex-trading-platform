@@ -205,10 +205,14 @@ def get_conviction_streak_required(hesitation_history: list[float], phi: float =
     return max(base_floor, min(base_cap, scaled))
 
 
-def _chop_suppress_entry(reading: RegimeReading) -> bool:
+def _chop_suppress_entry(reading: RegimeReading, phi: float) -> bool:
     """True when the regime classifier reads sustained chop above the
     suppression confidence threshold. Held positions are unaffected;
-    only NEW entries are blocked."""
+    only NEW entries are blocked.
+
+    ``phi`` modulates the (P5/P25 observer-derived) confidence threshold
+    via ``get_chop_suppression_confidence`` — it must be passed in by the
+    caller (run_tick), since this module-level helper has no tick state."""
     return (
         reading.regime == "CHOP"
         and reading.confidence > get_chop_suppression_confidence(phi)  # P5/P25 observer-derived
@@ -780,6 +784,9 @@ def run_tick(
     # This makes heart the central clock controlling regime/reward/conviction/loops. (P6 + v6.7B §§9.5-9.9)
     # Active governance: tacking balance directly modulates conviction (breathing-as-tacking drives the system).
     tacking_balance = getattr(heart, "derived_tacking_balance", lambda: 0.5)() if heart else 0.5
+    # Fixed UnboundLocalError for self_obs_bias (residual from wave edits).
+    # Default 0.0; in full P24 wiring this would come from Pillar3 self-observation / sovereignty_dynamics.
+    self_obs_bias = 0.0
     effective_self_obs = self_obs_bias * (1.0 + 0.2 * (conviction_mod - 1.0)) * (0.8 + 0.4 * tacking_balance)  # heart governor active
 
     # P24 wiring (full embodiment, not presence): always compute 21-field metrics surface.
@@ -1408,7 +1415,7 @@ def run_tick(
     # this tick. Held positions continue normal flow regardless; only
     # new entries are blocked when ``active`` is True.
     derivation["chop_suppression"] = {
-        "active": _chop_suppress_entry(regime_reading),
+        "active": _chop_suppress_entry(regime_reading, phi),
         "regime": regime_reading.regime,
         "confidence": float(regime_reading.confidence),
         # P5/P25 observer-derived (registry default + phi modulation via get_chop_suppression_confidence)
@@ -1491,7 +1498,7 @@ def run_tick(
         and direction != "flat"
         and kernel_should_enter(emotions=emo)
         and size_d["value"] > 0
-        and not _chop_suppress_entry(regime_reading)
+        and not _chop_suppress_entry(regime_reading, phi)
     ):
         # Regime suppression check (issue #623): before opening a new
         # entry, consult the regime classifier reading. Held positions
@@ -1594,7 +1601,7 @@ def run_tick(
         and direction != "flat"
         and kernel_should_enter(emotions=emo)
         and size_d["value"] > 0
-        and not _chop_suppress_entry(regime_reading)
+        and not _chop_suppress_entry(regime_reading, phi)
     ):
         # Regime suppression check (issue #623): before opening a new
         # entry, consult the regime classifier reading. Held positions
@@ -1652,7 +1659,7 @@ def run_tick(
                 f"tape {tape_trend:+.2f}, conf {emo.confidence:.2f}, "
                 f"anx {emo.anxiety:.2f})"
             )
-        elif _chop_suppress_entry(regime_reading):
+        elif _chop_suppress_entry(regime_reading, phi):
             reason = (
                 f"[{mode}] chop regime confidence="
                 f"{regime_reading.confidence:.2f} > "
@@ -2304,7 +2311,7 @@ def _decide_with_position(
         # Maintain per-lane hesitation history (bounded ring).
         history = state.hesitation_history_by_lane.setdefault(position_lane, [])
         history.append(hesitation)
-        if len(history) > _CONVICTION_HESITATION_WINDOW:
+        if len(history) > int(_registry.get("executive.conviction_hesitation_window", default=20)):
             history.pop(0)
 
         conviction_condition = hesitation > 0  # confidence < anxiety + confusion

@@ -44,6 +44,7 @@ from typing import Literal, Optional, Sequence
 
 import numpy as np
 
+from .parameters import get_registry
 from .perception_scalars import basin_direction
 
 
@@ -91,7 +92,7 @@ DEFAULT_LOOKBACK = 16  # ticks of basin history to consider
 
 
 def get_trend_threshold(phi: float = 0.5, recent_chop: float = 0.5) -> float:
-    base = float(_registry.get("regime.trend_threshold", default=0.025))
+    base = float(get_registry().get("regime.trend_threshold", default=0.025))
     # Observer modulation: higher phi (integration) + lower recent chop
     # (persistent direction) allows slightly lower bar for trend declaration.
     mod = 0.005 * max(-1.0, min(1.0, (phi - 0.5) - (recent_chop - 0.5)))
@@ -99,7 +100,7 @@ def get_trend_threshold(phi: float = 0.5, recent_chop: float = 0.5) -> float:
 
 
 def get_chop_threshold(phi: float = 0.5, recent_persistence: float = 0.5) -> float:
-    base = float(_registry.get("regime.chop_threshold", default=0.55))
+    base = float(get_registry().get("regime.chop_threshold", default=0.55))
     # Observer modulation: higher chop_score persistence or lower phi
     # raises the chop gate (more tolerant of oscillation before calling TREND).
     mod = 0.03 * max(-1.0, min(1.0, (0.5 - phi) + (recent_persistence - 0.5)))
