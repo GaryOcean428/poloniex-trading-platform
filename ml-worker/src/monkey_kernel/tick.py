@@ -946,7 +946,7 @@ def run_tick(
             _curr = float(ohlcv[-_i].close)
             if _prev > 0 and _curr > 0:
                 _expectation_returns.append(math.log(_curr / _prev))
-        _proposed = side_candidate if isinstance(side_candidate, str) and side_candidate in ("long", "short") else None
+        _proposed = None  # side_candidate is computed later; proposed_side is optional
         expectation_decision = evaluate_expectation(
             tape_trend=tape_trend,
             basin_direction=basin_dir,
