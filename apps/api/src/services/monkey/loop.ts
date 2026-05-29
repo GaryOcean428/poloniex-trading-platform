@@ -617,6 +617,13 @@ export interface HoldExitExpectationApplication {
   holdConfidenceMultiplier: number;
 }
 
+type ExpectationDeltaDerivation = {
+  side_before?: 'long' | 'short' | null;
+  side_after?: 'long' | 'short' | null;
+  size_before_usdt?: number | null;
+  size_after_usdt?: number | null;
+};
+
 export function applyHoldExitExpectationDecision(
   heldSide: 'long' | 'short',
   basinDir: number,
@@ -4213,8 +4220,7 @@ export class MonkeyKernel extends EventEmitter {
           }
           if (holdExitExpectation.exitSuppressedByExpectation) {
             action = 'hold';
-            reason = `exit suppressed by qig-warp expectation: ${exitExpectationDecision?.expectation_reason ?? 'hold_with_reduced_confidence'} `
-              + `(held=${heldSide}, basinDir=${basinDir.toFixed(3)}, confidence×${holdExitExpectation.holdConfidenceMultiplier.toFixed(3)})`;
+            reason = `exit suppressed by qig-warp expectation: ${exitExpectationDecision?.expectation_reason ?? 'hold_with_reduced_confidence'} (held=${heldSide}, basinDir=${basinDir.toFixed(3)}, confidence×${holdExitExpectation.holdConfidenceMultiplier.toFixed(3)})`;
           }
           if (exitExpectationDecision !== null) {
             const expectationTradeId = ownOpenRow?.id ? String(ownOpenRow.id) : null;
@@ -4430,15 +4436,14 @@ export class MonkeyKernel extends EventEmitter {
         derivation.expectation = expectationDecision;
       } else {
         action = sideAfterExpectation === 'long' ? 'enter_long' : 'enter_short';
-        const sizeApplied = sizeBeforeExpectation * sizeMultiplier;
-        size.value = sizeApplied;
+        size.value = sizeBeforeExpectation * sizeMultiplier;
         const reasonSuffix = expectationDecision !== null
           ? ` [qig-warp: ${expectationDecision.expectation_action} regime=${expectationDecision.expectation_regime} alpha=${expectationDecision.expectation_confidence.toFixed(3)} src=${expectationDecision.qig_warp_source}]`
           : '';
-        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideAfterExpectation}; margin=${sizeApplied.toFixed(2)}`
+        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideAfterExpectation}; margin=${size.value.toFixed(2)}`
           + (suppressionResult.suppressed ? `×${chopSizeFactor.toFixed(2)} (chop filter)` : '')
           + (sizeMultiplier !== 1 ? `×${sizeMultiplier.toFixed(2)} (expectation reduce_size)` : '')
-          + ` lev=${leverage.value}x notional=${(sizeApplied * chopSizeFactor * leverage.value).toFixed(2)}`
+          + ` lev=${leverage.value}x notional=${(size.value * chopSizeFactor * leverage.value).toFixed(2)}`
           + reasonSuffix;
         derivation.entryThreshold = entryThr.derivation;
         derivation.size = size.derivation;
@@ -5031,14 +5036,17 @@ export class MonkeyKernel extends EventEmitter {
             leverage: leverage.value,
             entryThreshold: entryThr.value,
             expectationDecision: (derivation.expectation as ExpectationDecision | null | undefined) ?? null,
-            expectationDelta: derivation.expectation_delta
+            expectationDelta: (() => {
+              const delta = derivation.expectation_delta as ExpectationDeltaDerivation | undefined;
+              return delta
               ? {
-                sideBefore: (derivation.expectation_delta as { side_before?: 'long' | 'short' | null }).side_before ?? null,
-                sideAfter: (derivation.expectation_delta as { side_after?: 'long' | 'short' | null }).side_after ?? null,
-                sizeBeforeUsdt: Number((derivation.expectation_delta as { size_before_usdt?: number | null }).size_before_usdt ?? NaN),
-                sizeAfterUsdt: Number((derivation.expectation_delta as { size_after_usdt?: number | null }).size_after_usdt ?? NaN),
+                sideBefore: delta.side_before ?? null,
+                sideAfter: delta.side_after ?? null,
+                sizeBeforeUsdt: Number(delta.size_before_usdt ?? NaN),
+                sizeAfterUsdt: Number(delta.size_after_usdt ?? NaN),
               }
-              : null,
+              : null;
+            })(),
           });
         }
         }  // close v0.8.7 trading-paused else branch
