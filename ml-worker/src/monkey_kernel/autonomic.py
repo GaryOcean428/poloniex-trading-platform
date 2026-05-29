@@ -227,7 +227,8 @@ class AutonomicTickInputs:
     kappa_history: Optional[list[float]] = None
     external_coupling_history: Optional[list[float]] = None
     mode_transition_times_ms: Optional[list[float]] = None
-    # Natural-effect inputs are retained for payload compatibility only.
+    # Natural-effect inputs (d_fr, sovereignty, replicant/tacking/loop/coupled
+    # signals) are retained for payload compatibility only.
     # They do not multiply or otherwise modulate dop/ser/endo without a
     # validated observer-derived population path.
     d_fr: float = 0.0
