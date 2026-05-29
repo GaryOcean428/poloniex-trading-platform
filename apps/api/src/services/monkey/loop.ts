@@ -44,6 +44,10 @@ import {
 import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
 import { noteClose as noteHeartClose } from './heart_arbitrator.js';
 import { evaluatePostCloseCooldownGate } from './postclose_cooldown_gate.js';
+import {
+  computePoloAuthoritativeReward,
+  detectFundingSignDiscrepancies,
+} from './polo_reward_ledger.js';
 
 /**
  * #1009 PR2 helper — extract the present-symbol set from a Polo
@@ -9380,7 +9384,7 @@ export class MonkeyKernel extends EventEmitter {
           WHERE id = ANY($1)`,
         [tradeIds],
       );
-      const openOrderIds = Array.from(new Set(
+      const openOrderIds: string[] = Array.from(new Set<string>(
         tradeRowsRes.rows
           .map((row) => row.order_id)
           .filter((orderId): orderId is string => typeof orderId === 'string' && orderId.length > 0),
@@ -9420,14 +9424,38 @@ export class MonkeyKernel extends EventEmitter {
             limit: 100,
           });
           const rows = rowsFromResponse(resp);
+          // #1024 follow-up: also collect the per-row funding rate so we
+          // can sanity-check the sign of `fundingFee` against the
+          // expected direction implied by (position side, rate sign).
+          // The kernel's own pre-entry funding gate documents the
+          // convention; if Polo's history field deviates we want to
+          // know in production logs, not silently mis-attribute.
+          const fundingRowsForCheck: Array<{ fundingFee: number; rate: number }> = [];
           for (const row of rows) {
             const raw = row.fundingFee ?? row.fundingAmt ?? row.feeAmt ?? row.amount ?? row.amt ?? '0';
             const amount = parseFloat(String(raw));
             if (!Number.isFinite(amount)) continue;
             totalFundingFlows += amount;
             fundingRows += 1;
+            const rateRaw = row.fundingRate ?? row.fR ?? row.rate;
+            const rate = rateRaw === undefined ? NaN : parseFloat(String(rateRaw));
+            if (Number.isFinite(rate)) {
+              fundingRowsForCheck.push({ fundingFee: amount, rate });
+            }
           }
           fundingComplete = true;
+          // Surface API convention drift without breaking the reward
+          // channel. If discrepancies show up in production, the
+          // ADD-signed semantics in computePoloAuthoritativeReward
+          // needs revisiting.
+          const discrepancies = detectFundingSignDiscrepancies(side, fundingRowsForCheck);
+          if (discrepancies.length > 0) {
+            logger.warn('[Monkey] Polo funding sign discrepancy detected', {
+              symbol, side,
+              count: discrepancies.length,
+              sample: discrepancies.slice(0, 3),
+            });
+          }
         } catch (fundingErr) {
           logger.warn('[Monkey] /trade/funding fetch failed for full-net pnl', {
             symbol, side,
@@ -9446,11 +9474,21 @@ export class MonkeyKernel extends EventEmitter {
         });
       }
 
-      const pnlNetCloseFeesOnly = grossSum - totalCloseFees;
-      const pnlNetFull = pnlNetCloseFeesOnly - totalOpenFees - totalFundingFlows;
-      const hasFullNet = openFeesComplete && fundingComplete;
-      const pnlSource = hasFullNet ? 'polo_net_full' : 'polo_gross_minus_close_fees';
-      const poloRealized = hasFullNet ? pnlNetFull : pnlNetCloseFeesOnly;
+      // #1024 follow-up: pure-helper composition (testable in isolation).
+      // `totalFundingFlows` is the SIGNED sum of fundingFee per the
+      // canonical Polo convention (positive = received, negative = paid).
+      // The helper ADDS this signed value to compute pnl_net_full —
+      // correcting the prior `- totalFundingFlows` which inverted the
+      // direction (paid funding would have INCREASED net pnl).
+      const reward = computePoloAuthoritativeReward({
+        grossSum,
+        totalCloseFees,
+        totalOpenFees,
+        openFeesComplete,
+        fundingFlowsSigned: totalFundingFlows,
+        fundingComplete,
+      });
+      const { pnlNetCloseFeesOnly, pnlNetFull, hasFullNet, poloRealized, pnlSource } = reward;
       if (!Number.isFinite(poloRealized)) return;
 
       logger.info('[Monkey] Polo-authoritative: reward-ledger pnl computed', {

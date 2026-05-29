@@ -1,4 +1,6 @@
--- 063_polo_reward_ledger_full_net.sql
+-- 064_polo_reward_ledger_full_net.sql
+-- Renumbered from 063 (Copilot's original) because #1022 took 063 first
+-- for `063_qig_warp_expectation_provenance.sql`.
 -- Distinguish Polo position-history provenance from the per-fill
 -- gross-minus-fees reward-ledger path, and add explicit telemetry for
 -- close-fees-only versus full-net PnL.
