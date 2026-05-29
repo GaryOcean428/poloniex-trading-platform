@@ -43,8 +43,9 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
+from math import ceil
 from statistics import stdev
-from typing import TYPE_CHECKING, Deque, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Deque, Literal, Mapping, Optional, Sequence, Tuple
 
 from .bus_events import HeartTickPayload, KernelEvent
 from .persistence import PersistentMemory
@@ -76,6 +77,130 @@ class HeartState:
     mode: KappaMode
     hrv: float
     sample_count: int
+
+
+@dataclass(frozen=True)
+class PostCloseCooldownBreakdown:
+    """HEART-owned post-close cooldown arbitration.
+
+    `heart_arbitrated_ms` is intentionally unbounded non-negative: no
+    `MAX_COOLDOWN_MS` literal. Safety/PERCEPTION floors are composed by max,
+    and OCEAN severity modulates HEART's term from lived state.
+    """
+
+    safety_floor_ms: int
+    decoherence_floor_ms: int
+    heart_arbitrated_ms: int
+    final_cooldown_ms: int
+    by: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "safety_floor_ms": self.safety_floor_ms,
+            "decoherence_floor_ms": self.decoherence_floor_ms,
+            "heart_arbitrated_ms": self.heart_arbitrated_ms,
+            "final_cooldown_ms": self.final_cooldown_ms,
+            "by": self.by,
+        }
+
+
+def _finite_non_negative(value: Any) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if v != v or v < 0.0 or v == float("inf"):
+        return 0.0
+    return v
+
+
+def _clean_phase(phase: str | None) -> str:
+    p = str(phase or "ANCHOR").upper()
+    return p if p in {"FEELING", "LOGIC", "ANCHOR"} else "ANCHOR"
+
+
+def _ocean_value(ocean_state: Mapping[str, Any] | Any | None, key: str, default: Any = None) -> Any:
+    if ocean_state is None:
+        return default
+    if isinstance(ocean_state, Mapping):
+        return ocean_state.get(key, default)
+    return getattr(ocean_state, key, default)
+
+
+def compute_post_close_cooldown_ms(
+    *,
+    heart_rhythm: float,
+    tacking_phase: str,
+    recent_close_pnls: Sequence[float],
+    recent_close_gaps_ms: Sequence[float],
+    decoherence_floor_ms: float,
+    safety_floor_ms: float = 0.0,
+    ocean_state: Mapping[str, Any] | Any | None = None,
+) -> PostCloseCooldownBreakdown:
+    """Compute the post-close cooldown as HEART's lived-state arbitration.
+
+    Inputs are all observed surfaces:
+      - heart rhythm + tacking phase from HeartMonitor/κ history
+      - recent close PnL distribution + inter-close gaps from close events
+      - decoherence floor from PERCEPTION
+      - OCEAN coherence/sleep state from OceanState
+
+    Calm ready rhythm with no loss chain returns `heart_arbitrated_ms=0`, so
+    immediate re-entry remains possible when safety/decoherence are also zero.
+    Consecutive-loss chains use the observed inter-close gap; rhythm/tacking
+    and OCEAN then modulate that lived interval without any literal cap.
+    """
+
+    safety = _finite_non_negative(safety_floor_ms)
+    decoherence = _finite_non_negative(decoherence_floor_ms)
+    rhythm = _finite_non_negative(heart_rhythm)
+    phase = _clean_phase(tacking_phase)
+    pnls = [_finite_non_negative(abs(p)) * (-1.0 if float(p) < 0.0 else 1.0) for p in recent_close_pnls if isinstance(p, (int, float))]
+    gaps = [_finite_non_negative(g) for g in recent_close_gaps_ms]
+
+    chain_gaps: list[float] = []
+    for i in range(1, len(pnls)):
+        if pnls[i - 1] < 0.0 and pnls[i] < 0.0 and i - 1 < len(gaps):
+            chain_gaps.append(gaps[i - 1])
+
+    heart = max(chain_gaps) if chain_gaps else 0.0
+    if heart > 0.0:
+        if phase == "LOGIC":
+            heart = heart * (1.0 + rhythm)
+        elif phase == "FEELING":
+            heart = heart / (1.0 + rhythm)
+
+    coherence = _finite_non_negative(_ocean_value(ocean_state, "coherence", 0.0))
+    coherence = max(0.0, min(1.0, coherence))
+    sleep_phase = str(_ocean_value(ocean_state, "sleep_phase", "") or "").upper()
+    sleep_remaining = _finite_non_negative(_ocean_value(ocean_state, "sleep_remaining_ms", 0.0))
+    if sleep_remaining > 0.0:
+        heart = max(heart, sleep_remaining)
+    if sleep_phase in {"SLEEP", "WAKE"} or sleep_remaining > 0.0:
+        heart = heart * (1.0 + (1.0 - coherence))
+    elif coherence > 0.0:
+        heart = heart * (1.0 - (coherence / 2.0))
+
+    heart_i = int(ceil(max(0.0, heart)))
+    safety_i = int(ceil(safety))
+    decoherence_i = int(ceil(decoherence))
+    final = max(safety_i, decoherence_i, heart_i)
+    if final == 0:
+        by = "zero"
+    elif final == safety_i:
+        by = "safety"
+    elif final == decoherence_i:
+        by = "decoherence"
+    else:
+        by = "heart"
+
+    return PostCloseCooldownBreakdown(
+        safety_floor_ms=safety_i,
+        decoherence_floor_ms=decoherence_i,
+        heart_arbitrated_ms=heart_i,
+        final_cooldown_ms=final,
+        by=by,
+    )
 
 
 class HeartMonitor:

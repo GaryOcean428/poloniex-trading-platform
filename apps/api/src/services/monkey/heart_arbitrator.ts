@@ -147,6 +147,32 @@ export function getHeartBreakdown(symbol: string): HeartBreakdown {
   };
 }
 
+export interface HeartCooldownInputs {
+  recentClosePnls: number[];
+  recentCloseGapsMs: number[];
+}
+
+/**
+ * Observer surface for Python HEART. TypeScript still owns the close-event
+ * ingestion site, but the cooldown arbitration math lives in heart.py; this
+ * exports only the lived recent-close distribution and inter-close rhythm.
+ */
+export function getHeartCooldownInputs(symbol: string): HeartCooldownInputs {
+  const s = _state.get(symbol);
+  if (!s) return { recentClosePnls: [], recentCloseGapsMs: [] };
+  const gaps: number[] = [];
+  for (let i = 1; i < s.closes.length; i++) {
+    const prev = s.closes[i - 1]!;
+    const cur = s.closes[i]!;
+    const gap = cur.tMs - prev.tMs;
+    if (Number.isFinite(gap) && gap > 0) gaps.push(gap);
+  }
+  return {
+    recentClosePnls: s.closes.map((c) => c.pnl),
+    recentCloseGapsMs: gaps,
+  };
+}
+
 /** Test-only: reset all per-symbol state. */
 export function _resetHeartState(): void {
   _state.clear();

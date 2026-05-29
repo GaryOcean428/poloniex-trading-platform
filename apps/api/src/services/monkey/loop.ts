@@ -42,6 +42,11 @@ import {
 } from './safety_floor.js';
 import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
 import { noteClose as noteHeartClose } from './heart_arbitrator.js';
+import {
+  cachedDecoherenceFloorMs,
+  cachedHeartCooldownMs,
+  refreshHeartCooldown,
+} from './heart_cooldown_client.js';
 
 /**
  * #1009 PR2 helper — extract the present-symbol set from a Polo
@@ -1219,6 +1224,48 @@ export class MonkeyKernel extends EventEmitter {
   // is operator-tunable. The legacy `POSTCLOSE_COOLDOWN_MS` /
   // `POSTWIN_COOLDOWN_MS` env vars are no longer read — the kernel sets
   // its own cooldown from its own observations.
+
+  private currentHeartRhythm(symbol: string): number {
+    const hist = this.symbolStates.get(symbol)?.kappaHistory ?? [];
+    if (hist.length < 2) return 0;
+    let total = 0;
+    let n = 0;
+    for (let i = 1; i < hist.length; i++) {
+      const prev = hist[i - 1]!;
+      const cur = hist[i]!;
+      const d = Math.abs(cur - prev);
+      if (Number.isFinite(d)) {
+        total += d;
+        n += 1;
+      }
+    }
+    return n > 0 ? total / n : 0;
+  }
+
+  private currentTackingPhase(symbol: string): string {
+    const kappa = this.symbolStates.get(symbol)?.kappa;
+    if (!Number.isFinite(kappa)) return 'ANCHOR';
+    if (kappa === KAPPA_STAR) return 'ANCHOR';
+    return kappa < KAPPA_STAR ? 'FEELING' : 'LOGIC';
+  }
+
+  private async composeHeartOwnedCooldown(symbol: string, tickCadenceMs: number) {
+    const initial = composeCooldown({ symbol, tickCadenceMs });
+    await refreshHeartCooldown({
+      symbol,
+      safetyFloorMs: initial.safetyMs,
+      decoherenceFloorMs: initial.decoherenceMs,
+      heartRhythm: this.currentHeartRhythm(symbol),
+      tackingPhase: this.currentTackingPhase(symbol),
+    });
+    return composeCooldown({
+      symbol,
+      tickCadenceMs,
+      heartProvider: cachedHeartCooldownMs,
+      decoherenceProvider: cachedDecoherenceFloorMs,
+    });
+  }
+
   /**
    * ML-outage observability counter (v0.8.3.5d). Increments every time
    * mlPredictionService.getTradingSignal returns {error: true}. Used to
@@ -5066,7 +5113,7 @@ export class MonkeyKernel extends EventEmitter {
             // composer falls through to its sentinel (`COLD_START_FALLBACK_MS`
             // = the previous 500ms) so behaviour is unchanged until enough
             // samples accumulate.
-            const reverseReopenCooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
+            const reverseReopenCooldown = await this.composeHeartOwnedCooldown(symbol, 0);
             logger.debug(`[Monkey] ${symbol} reverse-reopen ${formatCooldownTelemetry(reverseReopenCooldown)}`);
             if (reverseReopenCooldown.finalMs > 0) {
               await new Promise((resolve) => setTimeout(resolve, reverseReopenCooldown.finalMs));
@@ -5912,7 +5959,8 @@ export class MonkeyKernel extends EventEmitter {
     // #1009 PR2: observer-derived cooldown for telemetry. Same composition
     // as the entry-veto gate uses; tickCadence=0 because this is just
     // surfacing remaining-seconds, not enforcing tick floor here.
-    const cooldownMs = composeCooldown({ symbol, tickCadenceMs: 0 }).finalMs;
+    const cooldownBreakdown = await this.composeHeartOwnedCooldown(symbol, 0);
+    const cooldownMs = cooldownBreakdown.finalMs;
     const cooldownLongRemS = cooldownLongAt
       ? Math.max(0, (cooldownMs - (Date.now() - cooldownLongAt)) / 1000)
       : 0;
@@ -5920,7 +5968,7 @@ export class MonkeyKernel extends EventEmitter {
       ? Math.max(0, (cooldownMs - (Date.now() - cooldownShortAt)) / 1000)
       : 0;
     const cooldown = cooldownLongRemS > 0 || cooldownShortRemS > 0
-      ? `L${cooldownLongRemS.toFixed(0)}s|S${cooldownShortRemS.toFixed(0)}s`
+      ? `L${cooldownLongRemS.toFixed(0)}s|S${cooldownShortRemS.toFixed(0)}s|${formatCooldownTelemetry(cooldownBreakdown)}`
       : undefined;
 
     logger.info(`[Monkey] ${symbol} [${mode}] ${action}${executed ? ' EXECUTED' : ''}`, {
@@ -8265,7 +8313,7 @@ export class MonkeyKernel extends EventEmitter {
     ) {
       const lastCloseAt = this.lastCloseAtMs.get(`${symbol}|${side}`);
       if (lastCloseAt !== undefined) {
-        const cooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
+        const cooldown = await this.composeHeartOwnedCooldown(symbol, 0);
         const cooldownMs = cooldown.finalMs;
         const elapsedMs = Date.now() - lastCloseAt;
         if (cooldownMs > 0 && elapsedMs < cooldownMs) {

@@ -617,6 +617,7 @@ async def root():
             "ingest": "/run/ingest (POST)",
             "governance_status": "/governance/status (GET)",
             "monkey_tick": "/monkey/tick/run (POST)",
+            "monkey_heart_cooldown": "/monkey/heart/post_close_cooldown (POST)",
             "monkey_autonomic_tick": "/monkey/autonomic/tick (POST)",
             "monkey_executive_decide": "/monkey/executive/decide (POST)",
             "monkey_perception_perceive": "/monkey/perception/perceive (POST)",
@@ -1521,6 +1522,32 @@ async def monkey_expectation_evaluate(request: Request):
         proposed_side=proposed_side,
     )
     return decision_to_dict(decision)
+
+
+@app.post("/monkey/heart/post_close_cooldown")
+async def monkey_heart_post_close_cooldown(request: Request):
+    """HEART-owned post-close cooldown arbitration (#1009).
+
+    TypeScript supplies lived observations (safety floor, PERCEPTION
+    decoherence floor, recent close PnLs/gaps, κ rhythm/tacking, and optional
+    OCEAN state). Python HEART composes the cooldown contribution and returns
+    all floors + the binding layer so live `cooldown:L...|S...|by=...`
+    telemetry can falsify which layer is actually gating re-entry.
+    """
+
+    payload = await request.json()
+    from monkey_kernel.heart import compute_post_close_cooldown_ms
+
+    result = compute_post_close_cooldown_ms(
+        heart_rhythm=float(payload.get("heart_rhythm", 0.0) or 0.0),
+        tacking_phase=str(payload.get("tacking_phase", "ANCHOR") or "ANCHOR"),
+        recent_close_pnls=payload.get("recent_close_pnls") or [],
+        recent_close_gaps_ms=payload.get("recent_close_gaps_ms") or [],
+        decoherence_floor_ms=float(payload.get("decoherence_floor_ms", 0.0) or 0.0),
+        safety_floor_ms=float(payload.get("safety_floor_ms", 0.0) or 0.0),
+        ocean_state=payload.get("ocean_state") or None,
+    )
+    return result.as_dict()
 
 
 @app.get("/monkey/autonomic/snapshot/{instance_id}")

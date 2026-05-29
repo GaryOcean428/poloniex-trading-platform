@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from monkey_kernel.heart import HeartMonitor, HeartState  # noqa: E402
+from monkey_kernel.heart import HeartMonitor, HeartState, compute_post_close_cooldown_ms  # noqa: E402
 from monkey_kernel.ocean import Ocean, OceanState, SleepPhase  # noqa: E402
 from monkey_kernel.state import BASIN_DIM, KAPPA_STAR  # noqa: E402
 
@@ -91,6 +91,75 @@ class TestHeartHRV:
         m.reset()
         assert m.window_length == 0
         assert m.read().sample_count == 0
+
+
+class TestHeartPostCloseCooldown:
+    def test_calm_clean_close_all_floors_zero_allows_immediate_reentry(self) -> None:
+        c = compute_post_close_cooldown_ms(
+            heart_rhythm=0.1,
+            tacking_phase="FEELING",
+            recent_close_pnls=[1.0, 0.5],
+            recent_close_gaps_ms=[1000.0],
+            safety_floor_ms=0.0,
+            decoherence_floor_ms=0.0,
+            ocean_state={"coherence": 1.0, "sleep_phase": "AWAKE"},
+        )
+        assert c.final_cooldown_ms == 0
+        assert c.heart_arbitrated_ms == 0
+        assert c.by == "zero"
+
+    def test_decoherence_floor_vetoes_heart_zero(self) -> None:
+        c = compute_post_close_cooldown_ms(
+            heart_rhythm=0.1,
+            tacking_phase="FEELING",
+            recent_close_pnls=[1.0],
+            recent_close_gaps_ms=[],
+            safety_floor_ms=0.0,
+            decoherence_floor_ms=30_000.0,
+        )
+        assert c.final_cooldown_ms == 30_000
+        assert c.by == "decoherence"
+
+    def test_heart_rhythm_changes_consecutive_loss_cooldown(self) -> None:
+        slow = compute_post_close_cooldown_ms(
+            heart_rhythm=0.0,
+            tacking_phase="LOGIC",
+            recent_close_pnls=[-1.0, -0.5],
+            recent_close_gaps_ms=[2000.0],
+            safety_floor_ms=0.0,
+            decoherence_floor_ms=0.0,
+        )
+        fast = compute_post_close_cooldown_ms(
+            heart_rhythm=1.0,
+            tacking_phase="LOGIC",
+            recent_close_pnls=[-1.0, -0.5],
+            recent_close_gaps_ms=[2000.0],
+            safety_floor_ms=0.0,
+            decoherence_floor_ms=0.0,
+        )
+        assert fast.heart_arbitrated_ms > slow.heart_arbitrated_ms
+        assert fast.by == "heart"
+
+    def test_ocean_state_modulates_heart_cooldown(self) -> None:
+        high_coherence = compute_post_close_cooldown_ms(
+            heart_rhythm=0.0,
+            tacking_phase="ANCHOR",
+            recent_close_pnls=[-1.0, -0.5],
+            recent_close_gaps_ms=[2000.0],
+            safety_floor_ms=0.0,
+            decoherence_floor_ms=0.0,
+            ocean_state={"coherence": 1.0, "sleep_phase": "AWAKE"},
+        )
+        post_sleep = compute_post_close_cooldown_ms(
+            heart_rhythm=0.0,
+            tacking_phase="ANCHOR",
+            recent_close_pnls=[-1.0, -0.5],
+            recent_close_gaps_ms=[2000.0],
+            safety_floor_ms=0.0,
+            decoherence_floor_ms=0.0,
+            ocean_state={"coherence": 0.0, "sleep_phase": "WAKE"},
+        )
+        assert post_sleep.heart_arbitrated_ms > high_coherence.heart_arbitrated_ms
 
 
 # ─────────────────────────────────────────────────────────────────
