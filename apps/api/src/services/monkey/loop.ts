@@ -45,8 +45,9 @@ import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js
 import { noteClose as noteHeartClose } from './heart_arbitrator.js';
 import { evaluatePostCloseCooldownGate } from './postclose_cooldown_gate.js';
 import {
+  composePoloBillsReward,
   computePoloAuthoritativeReward,
-  detectFundingSignDiscrepancies,
+  type PoloBillRow,
 } from './polo_reward_ledger.js';
 import {
   recordLaneDecision,
@@ -9312,12 +9313,14 @@ export class MonkeyKernel extends EventEmitter {
       const RETRY_DELAY_MS = 200;
       let totalCloseFees = 0;
       let fillCount = 0;
+      let closeFillCTimes: number[] = [];
       let nonUsdtFees: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
       type FeeSummary = {
         totalFees: number;
         fillsSeen: number;
         filledOrderIds: Set<string>;
         skippedNonUsdt: Array<{ ordId: string; feeCcy: string; feeAmt: number }>;
+        cTimesMs: number[];
       };
       const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
       const rowsFromResponse = (resp: unknown): Array<Record<string, unknown>> => {
@@ -9332,6 +9335,7 @@ export class MonkeyKernel extends EventEmitter {
         let fillsSeen = 0;
         const filledOrderIds = new Set<string>();
         const skippedNonUsdt: Array<{ ordId: string; feeCcy: string; feeAmt: number }> = [];
+        const cTimesMs: number[] = [];
         await Promise.all(orderIds.map(async (ordId) => {
           try {
             const resp = await poloniexFuturesService.getExecutionDetails(credentials, {
@@ -9352,6 +9356,11 @@ export class MonkeyKernel extends EventEmitter {
               totalFees += Math.abs(feeAmt);
               fillsSeen += 1;
               filledOrderIds.add(ordId);
+              // Capture fill cTime so the authoritative bills PNL rows
+              // (which share the close fill's cTime) can be matched by a
+              // tight window — bills carry no ordId (#1028).
+              const ct = Number(f.cTime);
+              if (Number.isFinite(ct)) cTimesMs.push(ct);
             }
           } catch (fetchErr) {
             logger.warn('[Monkey] /trade/order/trades fetch failed for fee subtraction', {
@@ -9360,13 +9369,14 @@ export class MonkeyKernel extends EventEmitter {
             });
           }
         }));
-        return { totalFees, fillsSeen, filledOrderIds, skippedNonUsdt };
+        return { totalFees, fillsSeen, filledOrderIds, skippedNonUsdt, cTimesMs };
       };
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
         const summary = await fetchFeeSummary(closeOrderIds, 'close');
         totalCloseFees = summary.totalFees;
         fillCount = summary.fillsSeen;
+        closeFillCTimes = summary.cTimesMs;
         nonUsdtFees = summary.skippedNonUsdt;
         if (summary.filledOrderIds.size >= closeOrderIds.length || attempt === MAX_ATTEMPTS) break;
         apiCache.invalidatePrefix('GET:/trade/order/trades');
@@ -9421,64 +9431,88 @@ export class MonkeyKernel extends EventEmitter {
         });
       }
 
-      let totalFundingFlows = 0;
-      let fundingRows = 0;
-      let fundingComplete = false;
+      // ── Authoritative realized PnL + funding from /v3/account/bills (#1028) ──
+      // Poloniex account bills are literal USDT cash movements: `type=PNL`
+      // rows are the per-fill realized PnL (verified 2026-05-29 to
+      // reconcile EXACTLY to the exchange-exported closed PnL — ETH
+      // −4.2499, BTC −2.243525), and `type=FUNDING_FEE` rows are signed
+      // funding cash. This replaces (a) the synthetic per-row gross, which
+      // under-counted the realized loss (ETH reported −3.5568), and (b)
+      // `/v3/trade/funding`, which does not exist (404 — confirmed live).
+      // Bills carry no ordId, so PNL rows are matched by symbol + a tight
+      // window around the close fills' cTime (PNL bill cTime == close fill
+      // cTime), and funding by the position hold window [entry, close].
       const entryTimes = tradeRowsRes.rows
         .map((row) => row.entry_time ? new Date(row.entry_time).getTime() : NaN)
         .filter((ms) => Number.isFinite(ms));
       const fundingStartMs = entryTimes.length > 0 ? Math.min(...entryTimes) : NaN;
-      if (Number.isFinite(fundingStartMs)) {
-        try {
-          const resp = await poloniexFuturesService.getFundingHistory(credentials, {
-            symbol,
-            posSide: side === 'long' ? 'LONG' : 'SHORT',
-            sTime: Math.max(0, fundingStartMs - 1_000),
-            eTime: closeTimeMs + 1_000,
-            limit: 100,
-          });
-          const rows = rowsFromResponse(resp);
-          // #1024 follow-up: also collect the per-row funding rate so we
-          // can sanity-check the sign of `fundingFee` against the
-          // expected direction implied by (position side, rate sign).
-          // The kernel's own pre-entry funding gate documents the
-          // convention; if Polo's history field deviates we want to
-          // know in production logs, not silently mis-attribute.
-          const fundingRowsForCheck: Array<{ fundingFee: number; rate: number }> = [];
-          for (const row of rows) {
-            const raw = row.fundingFee ?? row.fundingAmt ?? row.feeAmt ?? row.amount ?? row.amt ?? '0';
-            const amount = parseFloat(String(raw));
-            if (!Number.isFinite(amount)) continue;
-            totalFundingFlows += amount;
-            fundingRows += 1;
-            const rateRaw = row.fundingRate ?? row.fR ?? row.rate;
-            const rate = rateRaw === undefined ? NaN : parseFloat(String(rateRaw));
-            if (Number.isFinite(rate)) {
-              fundingRowsForCheck.push({ fundingFee: amount, rate });
-            }
-          }
-          fundingComplete = true;
-          // Surface API convention drift without breaking the reward
-          // channel. If discrepancies show up in production, the
-          // ADD-signed semantics in computePoloAuthoritativeReward
-          // needs revisiting.
-          const discrepancies = detectFundingSignDiscrepancies(side, fundingRowsForCheck);
-          if (discrepancies.length > 0) {
-            logger.warn('[Monkey] Polo funding sign discrepancy detected', {
-              symbol, side,
-              count: discrepancies.length,
-              sample: discrepancies.slice(0, 3),
+      const holdStartMs = Number.isFinite(fundingStartMs)
+        ? fundingStartMs
+        : closeTimeMs - 24 * 60 * 60 * 1000; // 24h lookback when entry_time missing
+      const closeCTimes = closeFillCTimes.length > 0 ? closeFillCTimes : [closeTimeMs];
+      const closeStartMs = Math.min(...closeCTimes) - 5_000;
+      const closeEndMs = Math.max(...closeCTimes) + 5_000;
+      const normSymbol = poloniexFuturesService.normalizeSymbol(symbol);
+
+      const billRows: PoloBillRow[] = [];
+      let billsComplete = false;
+      try {
+        let cursor: string | null = null;
+        for (let page = 0; page < 8; page += 1) {
+          const billsResp = await poloniexFuturesService.getAccountBills(
+            credentials,
+            { limit: 100, ...(cursor ? { from: cursor } : {}) },
+          );
+          const rows = rowsFromResponse(billsResp);
+          if (rows.length === 0) break;
+          for (const r of rows) {
+            billRows.push({
+              type: String((r as { type?: unknown }).type ?? ''),
+              sz: parseFloat(String((r as { sz?: unknown }).sz ?? 'NaN')),
+              symbol: String((r as { symbol?: unknown }).symbol ?? ''),
+              cTimeMs: Number((r as { cTime?: unknown }).cTime),
             });
           }
-        } catch (fundingErr) {
-          logger.warn('[Monkey] /trade/funding fetch failed for full-net pnl', {
-            symbol, side,
-            err: fundingErr instanceof Error ? fundingErr.message : String(fundingErr),
-          });
+          cursor = String((rows[rows.length - 1] as { id?: unknown }).id ?? '') || null;
+          // Stop once the whole page predates the hold window.
+          if (rows.every((r) => Number((r as { cTime?: unknown }).cTime) < holdStartMs)) break;
+          if (!cursor) break;
         }
-      } else {
-        logger.warn('[Monkey] Polo full-net unavailable — missing entry_time for funding window', {
-          symbol, side, tradeIdsCount: tradeIds.length,
+        billsComplete = true;
+      } catch (billsErr) {
+        logger.warn('[Monkey] /account/bills fetch failed for authoritative reward pnl', {
+          symbol, side,
+          err: billsErr instanceof Error ? billsErr.message : String(billsErr),
+        });
+      }
+
+      const billsComp = composePoloBillsReward(billRows, {
+        symbol: normSymbol,
+        closeStartMs,
+        closeEndMs,
+        holdStartMs,
+        holdEndMs: closeTimeMs + 5_000,
+      });
+      const totalFundingFlows = billsComp.fundingSigned;
+      const fundingRows = billsComp.fundingRowCount;
+      const fundingComplete = billsComplete;
+
+      // Authoritative realized PnL is the bills PNL sum when rows matched;
+      // otherwise fall back to the synthetic per-row gross (e.g. bills not
+      // indexed yet) so a window miss never writes a spurious 0.
+      const useBillsRealized = billsComplete && billsComp.pnlRowCount > 0;
+      const authoritativeGross = useBillsRealized ? billsComp.realizedPnl : grossSum;
+      if (useBillsRealized && Math.abs(billsComp.realizedPnl - grossSum) > 0.01) {
+        logger.info('[Monkey] Polo-authoritative realized-from-bills vs synthetic gross', {
+          symbol, side,
+          billsRealized: billsComp.realizedPnl.toFixed(6),
+          syntheticGross: grossSum.toFixed(6),
+          delta: (billsComp.realizedPnl - grossSum).toFixed(6),
+          pnlRows: billsComp.pnlRowCount,
+        });
+      } else if (billsComplete && billsComp.pnlRowCount === 0) {
+        logger.warn('[Monkey] Polo-authoritative: no bills PNL rows matched close window; using synthetic gross', {
+          symbol, side, closeStartMs, closeEndMs, billRowCount: billRows.length,
         });
       }
 
@@ -9488,14 +9522,12 @@ export class MonkeyKernel extends EventEmitter {
         });
       }
 
-      // #1024 follow-up: pure-helper composition (testable in isolation).
-      // `totalFundingFlows` is the SIGNED sum of fundingFee per the
-      // canonical Polo convention (positive = received, negative = paid).
-      // The helper ADDS this signed value to compute pnl_net_full —
-      // correcting the prior `- totalFundingFlows` which inverted the
-      // direction (paid funding would have INCREASED net pnl).
+      // Pure-helper composition (testable in isolation). `grossSum` now
+      // carries the authoritative bills realized PnL; `fundingFlowsSigned`
+      // is the signed FUNDING_FEE sum (positive = received, negative =
+      // paid) — the helper ADDS it to compute pnl_net_full.
       const reward = computePoloAuthoritativeReward({
-        grossSum,
+        grossSum: authoritativeGross,
         totalCloseFees,
         totalOpenFees,
         openFeesComplete,
@@ -9508,6 +9540,9 @@ export class MonkeyKernel extends EventEmitter {
       logger.info('[Monkey] Polo-authoritative: reward-ledger pnl computed', {
         symbol, side,
         grossSum: grossSum.toFixed(4),
+        authoritativeGross: authoritativeGross.toFixed(4),
+        realizedSource: useBillsRealized ? 'bills_pnl' : 'synthetic_gross',
+        billsPnlRows: billsComp.pnlRowCount,
         totalCloseFees: totalCloseFees.toFixed(4),
         totalOpenFees: totalOpenFees.toFixed(4),
         totalFundingFlows: totalFundingFlows.toFixed(4),

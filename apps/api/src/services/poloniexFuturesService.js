@@ -849,13 +849,11 @@ class PoloniexFuturesService {
     return this.getExecutionDetails(credentials, params);
   }
 
-  /**
-   * Get account funding history.
-   * Endpoint: GET /v3/trade/funding
-   */
-  async getFundingHistory(credentials, params = {}) {
-    return this.makeRequest(credentials, 'GET', '/trade/funding', null, params);
-  }
+  // NOTE: getFundingHistory was removed (#1028). It targeted
+  // `GET /v3/trade/funding`, which does not exist on Poloniex v3 (404 —
+  // confirmed live 2026-05-29). Funding cash flow is read from
+  // `GET /v3/account/bills` (type=FUNDING_FEE rows) via getAccountBills;
+  // realized PnL likewise comes from bills (type=PNL rows).
 
   /**
    * Close a position at market price.
