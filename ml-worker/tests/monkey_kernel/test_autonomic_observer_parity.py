@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,16 @@ if _SRC not in sys.path:
 from monkey_kernel.autonomic import (  # noqa: E402
     AutonomicKernel,
     AutonomicTickInputs,
+    PNL_FRAC_HISTORY_MAX,
+    REWARD_DOP_SCALE,
+    REWARD_HALF_LIFE_MS,
+    REWARD_LOSS_DOP_SCALE,
+    REWARD_SER_SCALE,
+    get_pnl_frac_history_max,
+    get_reward_dop_scale,
+    get_reward_half_life_ms,
+    get_reward_loss_dop_scale,
+    get_reward_ser_scale,
 )
 
 
@@ -156,6 +167,47 @@ def test_zscore_handles_fp_drift_identical_history():
         basin_velocity_history=[0.1] * 6,
     ))
     assert nc.serotonin == pytest.approx(0.425, abs=0.01)
+
+
+# ─── #1006 reward-transform coefficients: no knob-in-costume modulation ─
+
+
+def test_reward_transform_coefficients_are_honest_constants():
+    assert get_reward_half_life_ms(heart_rhythm=0.0, recent_reward_rate=10.0) == REWARD_HALF_LIFE_MS
+    assert get_pnl_frac_history_max(heart_rhythm=1.0) == PNL_FRAC_HISTORY_MAX
+    assert get_reward_dop_scale(heart_rhythm=1.0, phi=1.0) == REWARD_DOP_SCALE
+    assert get_reward_ser_scale(heart_rhythm=1.0, phi=1.0) == REWARD_SER_SCALE
+    assert get_reward_loss_dop_scale(heart_rhythm=1.0) == REWARD_LOSS_DOP_SCALE
+
+
+def test_lived_natural_effect_inputs_do_not_modulate_chemistry():
+    neutral = _ticker(_base_inputs())
+    stressed = _ticker(_base_inputs(
+        d_fr=0.25,
+        sovereignty=1.0,
+        replicant_detected=True,
+        tacking_health=1.0,
+        loop3_provenance=1.0,
+        coupled_lived=1.0,
+    ))
+    assert stressed.dopamine == pytest.approx(neutral.dopamine)
+    assert stressed.serotonin == pytest.approx(neutral.serotonin)
+    assert stressed.endorphins == pytest.approx(neutral.endorphins)
+
+
+def test_autonomic_reward_transform_has_no_registry_default_costume():
+    source = Path(__file__).parents[2] / "src" / "monkey_kernel" / "autonomic.py"
+    text = source.read_text()
+    assert "_registry.get(" not in text
+    for key in (
+        "autonomic.reward_half_life_ms",
+        "autonomic.pnl_frac_history_max",
+        "autonomic.reward_dop_scale",
+        "autonomic.reward_ser_scale",
+        "autonomic.reward_loss_dop_scale",
+        "autonomic.serotonin_compression",
+    ):
+        assert key not in text
 
 
 # ─── #934 chemistry-pinning audit: canonical SIGMA_KAPPA + dop soft-sat ─

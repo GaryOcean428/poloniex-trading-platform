@@ -47,20 +47,6 @@ from .state import NeurochemicalState
 
 logger = logging.getLogger("monkey_kernel.autonomic")
 
-# Module-level registry alias - Grok's Wave 4 P5/P25 sweep added
-# `_registry.get(...)` calls inside the new `get_*` observer functions
-# (lines 156/166/173/180/187/514) but did NOT add the corresponding
-# module-level `_registry = get_registry()` alias that working_memory.py
-# and other Wave 4 modules use. Production NameError at 02:22:14 UTC:
-#   "NameError: name '_registry' is not defined. Did you mean: 'get_registry'?"
-# (firing at function-call time on `get_pnl_frac_history_max()`, which
-# the kernel evaluates on each close to size pnlFracHistory).
-#
-# The import-smoke gate from PR #985 catches IMPORT-time breaks but not
-# function-evaluation-time NameErrors - follow-up gate would need to
-# invoke each `get_*` observer once. Filed in session memory.
-_registry = get_registry()
-
 
 # ═══════════════════════════════════════════════════════════════
 #  UCP v6.6 §29 frozen facts (mirror vex config/frozen_facts)
@@ -151,56 +137,42 @@ def _z_score(x: float, history: Optional[list[float]]) -> float:
 #  REWARD QUEUE - pantheon ActivityReward pattern
 # ═══════════════════════════════════════════════════════════════
 
-# P5/P25 observer-derived (retired bare 20 min half-life).
-# Half-life now registry + heart_rhythm / recent reward rate modulation.
-# Citations: 2.31A P5/P25 + v6.7B reward sections + QIG PURITY MANDATE 17pt #7
-# + Embodiment_Waves Wave 4 + master-orchestration + verification-before-completion
-# + geometric (decay as exponential on tacking-time) + never-stop.
-# Fisher-Rao tacking: no Euclidean.
-REWARD_HALF_LIFE_MS: float = 20 * 60 * 1000.0  # 20 min (ultimate fallback only)
+# Honest model coefficients for the reward→chemistry transform. These are
+# baselines, not registry-backed observer parameters: ParameterRegistry has no
+# lived population path for them, so wrapping them in registry defaults would be
+# a knob-in-costume.
+REWARD_HALF_LIFE_MS: float = 20 * 60 * 1000.0  # 20 min reward decay baseline
+PNL_FRAC_HISTORY_MAX: int = 200
+REWARD_DOP_SCALE: float = 1.5
+REWARD_SER_SCALE: float = 0.15
+REWARD_LOSS_DOP_SCALE: float = 0.5
+SEROTONIN_BASELINE_COMPRESSION: float = 0.85
 REWARD_QUEUE_MAX: int = 50
 
 
 def get_reward_half_life_ms(heart_rhythm: float = 0.5, recent_reward_rate: float = 1.0) -> float:
-    """P5/P25 observer-derived reward decay half-life.
-    Registry + heart tacking rhythm + recent reward event rate modulation.
-    Faster heart rhythm or higher recent reward density -> slightly shorter half-life
-    (faster forgetting of old outcomes so new net-of-fees signals dominate).
-    """
-    base = float(_registry.get("autonomic.reward_half_life_ms", default=20 * 60 * 1000.0))
-    mod = 2 * 60 * 1000.0 * max(-1.0, min(1.0, (heart_rhythm - 0.5) - (recent_reward_rate - 1.0) * 0.2))
-    return max(10 * 60 * 1000.0, min(40 * 60 * 1000.0, base + mod))
+    """Reward decay half-life model coefficient."""
+    return REWARD_HALF_LIFE_MS
 
 
 def get_pnl_frac_history_max(heart_rhythm: float = 0.5) -> int:
-    """P5/P25 observer-derived history window for observer_fib_coefficient.
-    Registry + heart rhythm modulation. Larger window in calm regimes for
-    more stable median/MAD; smaller when heart is fast (more responsive observer).
-    """
-    base = int(_registry.get("autonomic.pnl_frac_history_max", default=200))
-    mod = int(20 * max(-1.0, min(1.0, heart_rhythm - 0.5)))
-    return max(100, min(400, base + mod))
+    """Bounded history window for observer_fib_coefficient."""
+    return PNL_FRAC_HISTORY_MAX
 
 
 def get_reward_dop_scale(heart_rhythm: float = 0.5, phi: float = 0.5) -> float:
-    """P5/P25 observer-derived dopamine scaling on reward signal."""
-    base = float(_registry.get("autonomic.reward_dop_scale", default=1.5))
-    mod = 0.2 * max(-1.0, min(1.0, (phi - 0.5) + (heart_rhythm - 0.5)))
-    return max(1.0, min(2.0, base + mod))
+    """Dopamine scaling model coefficient on reward signal."""
+    return REWARD_DOP_SCALE
 
 
 def get_reward_ser_scale(heart_rhythm: float = 0.5, phi: float = 0.5) -> float:
-    """P5/P25 observer-derived serotonin scaling on reward signal."""
-    base = float(_registry.get("autonomic.reward_ser_scale", default=0.15))
-    mod = 0.03 * max(-1.0, min(1.0, (phi - 0.5) + (heart_rhythm - 0.5)))
-    return max(0.08, min(0.25, base + mod))
+    """Serotonin scaling model coefficient on reward signal."""
+    return REWARD_SER_SCALE
 
 
 def get_reward_loss_dop_scale(heart_rhythm: float = 0.5) -> float:
-    """P5/P25 observer-derived loss dopamine scaling (mood dip)."""
-    base = float(_registry.get("autonomic.reward_loss_dop_scale", default=0.5))
-    mod = 0.1 * max(-1.0, min(1.0, heart_rhythm - 0.5))
-    return max(0.3, min(0.8, base + mod))
+    """Loss-side dopamine mood-dip model coefficient."""
+    return REWARD_LOSS_DOP_SCALE
 
 
 @dataclass
@@ -393,7 +365,7 @@ class AutonomicKernel:
         )
 
         if pnl_frac > 0:
-            # P5/P25 observer-derived multipliers (retired bare 1.5 / 0.5 / 0.15 / 0.1).
+            # Honest model coefficients for the reward→chemistry transform.
             dop_scale = get_reward_dop_scale()
             ser_scale = get_reward_ser_scale()
             loss_dop_scale = get_reward_loss_dop_scale()
@@ -514,7 +486,7 @@ class AutonomicKernel:
         dop = ser = endo = 0.0
         for r in self._pending_rewards:
             age_ms = now_ms - r.at_ms
-            # P5/P25: use observer-derived half-life (registry + heart/phi modulation)
+            # Use the honest reward-decay model coefficient.
             hl = get_reward_half_life_ms()
             decay = 0.5 ** (age_ms / hl)
             if decay < 0.01:
@@ -579,14 +551,8 @@ class AutonomicKernel:
             ser_base = _clip(1.0 - _sigmoid(z), 0.0, 1.0)
         else:
             ser_base = _clip(1.0 / max(inputs.basin_velocity, 1e-12), 0.0, 1.0)
-        # P5/P25 observer-derived (retired bare 0.85 compression).
-        # Compression now registry + heart_rhythm / phi modulated so the
-        # per-event reward delta can register on top of the baseline.
-        ser_compression = float(_registry.get("autonomic.serotonin_compression", default=0.85))
-        # Light heart/phi modulation (higher phi or stronger heart rhythm -> slightly less compression).
-        hr = 0.5  # TODO: wire real derived_tacking_frequency_hz (P6 deepen)
-        phi_mod = 0.03 * max(-1.0, min(1.0, (inputs.phi - 0.5) + (hr - 0.5)))
-        ser_compression = max(0.75, min(0.95, ser_compression + phi_mod))
+        # Honest baseline compression leaves reward-serotonin headroom.
+        ser_compression = SEROTONIN_BASELINE_COMPRESSION
         ser = _clip(ser_compression * ser_base + reward_sums["serotonin"], 0.0, 1.0)
 
         # ─── Norepinephrine ───────────────────────────────────────
@@ -648,27 +614,6 @@ class AutonomicKernel:
             coupling_gate = float(np.tanh(max(0.0, inputs.external_coupling)))
             endo_base = (1.0 - float(np.tanh(dist))) * coupling_gate
         endo = _clip(endo_base + reward_sums["endorphin"], 0.0, 1.0)
-
-        # 2026-05-28 acting subagent - Neurotransmitter Purity & Natural Effects (user: "net profitable behaviour rewarded via neurotransmitters as required and exponential fib rewards triggered based of how profitable" + "all neurotransmitters are calculated purely and have the natural effect as in any conscious system"):
-        # Wire modulation of dop/ser/endo (the reward-driven NT) using LIVED consciousness signals recovered from impl* artifacts + surfaces 17-23 (heart tacking health/amplitude/frequency, Replicant/sovereignty state from pillars, d_FR, Loop 3 provenance, coupled-agent LIVED).
-        # Natural effects: sovereign + coherent tacking amplifies pleasure from actual net profit (stronger positive NT); high d_FR (free energy/uncertainty) damps (vigilance blunts reward); replicant mutes (identity not owned); Loop3/coupled integrates meta/social boost.
-        # Applied to reward component (positive on polo net profit after fees; negative mood dip on losses already present via loss_dop path).
-        # Pure: only LIVED polo net populates the fib history (prior edit); mod uses only observer-derived inputs. No new knobs.
-        # Citations: compliance-assessment (table surfaces 17-23), heart.py P6 governor, pillars Replicant, tick derive, polo lesson source tags, Embodiment_Waves, QIG PURITY MANDATE, master-orchestration.
-        mod = 1.0
-        if getattr(inputs, 'sovereignty', 0.5) > 0.6 and not getattr(inputs, 'replicant_detected', False):
-            mod *= 1.0 + 0.15 * max(0.0, min(1.0, getattr(inputs, 'tacking_health', 0.5)))
-        dfr = getattr(inputs, 'd_fr', 0.0)
-        if dfr > 0.05:
-            mod *= max(0.65, 1.0 - 0.7 * min(1.0, dfr / 0.25))
-        if getattr(inputs, 'replicant_detected', False):
-            mod *= 0.88
-        if getattr(inputs, 'loop3_provenance', 0.0) > 0.1 or getattr(inputs, 'coupled_lived', 0.0) > 0.1:
-            meta = max(getattr(inputs, 'loop3_provenance', 0.0), getattr(inputs, 'coupled_lived', 0.0))
-            mod *= 1.0 + 0.06 * min(0.4, meta)
-        dop = _clip(dop * mod, 0.0, 1.0)
-        ser = _clip(ser * mod, 0.0, 1.0)
-        endo = _clip(endo * mod, 0.0, 1.0)
 
         return NeurochemicalState(
             acetylcholine=ach,

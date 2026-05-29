@@ -9576,10 +9576,15 @@ export class MonkeyKernel extends EventEmitter {
       agent,
       pnl: input.realizedPnlUsdt.toFixed(4),
       pnlFrac: (pnlFrac * 100).toFixed(2) + '%',
+      pnlFracRaw: pnlFrac,
+      pnlFracPct: (pnlFrac * 100).toFixed(6) + '%',
       oceanCoeff,
       dop: dop.toFixed(3),
+      dopRaw: dop,
       ser: ser.toFixed(3),
+      serRaw: ser,
       endo: endo.toFixed(3),
+      endoRaw: endo,
     });
 
     // 2026-05-25 — kernel-rotation tracking. Update rolling PnL window
