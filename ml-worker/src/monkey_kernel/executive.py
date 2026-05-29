@@ -1136,13 +1136,16 @@ _DCA_LANE_PERIOD_MULTIPLIER = {
 
 
 def dca_lane_tick_cadence_ms(lane: str = "swing") -> int:
-    """Observer-derived lane decision period used as the DCA add floor."""
+    """Observer-derived lane decision period used as the DCA add floor.
+
+    Unknown lanes default to the swing multiplier.
+    """
     return _DCA_LANE_BASE_PERIOD_MS * _DCA_LANE_PERIOD_MULTIPLIER.get(
         lane, _DCA_LANE_PERIOD_MULTIPLIER["swing"],
     )
 
 
-def compose_dca_cooldown_ms(*, tick_cadence_ms: float = 0.0) -> int:
+def compose_dca_cooldown_ms(*, tick_cadence_ms: int | float = 0) -> int:
     """Python parity shim for the DCA cooldown composer floor.
 
     TS composes safety/decoherence/HEART observers with the caller-supplied
@@ -1167,7 +1170,7 @@ def should_dca_add(
     s: Optional[ExecBasinState] = None,
     lane: str = "swing",
     symbol: Optional[str] = None,
-    tick_cadence_ms: Optional[float] = None,
+    tick_cadence_ms: Optional[int | float] = None,
 ) -> dict[str, Any]:
     """Five-rail DCA-add gate, evaluated per (agent, symbol, lane).
 

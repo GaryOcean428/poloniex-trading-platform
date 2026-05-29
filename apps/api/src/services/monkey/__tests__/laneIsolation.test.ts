@@ -230,6 +230,20 @@ describe('shouldDCAAdd lane scope (proposal #10)', () => {
     expect(result.derivation.cooldownMs).toBe(180_000);
   });
 
+  it('DCA add composes the caller-supplied tick cadence floor', () => {
+    const result = shouldDCAAdd({
+      heldSide: 'long', sideCandidate: 'long',
+      currentPrice: 98, initialEntryPrice: 100,
+      addCount: 0, lastAddAtMs: 10_000, nowMs: 20_000,
+      sovereignty: 0.5, lane: 'swing',
+      symbol: 'BTC_USDT_PERP',
+      tickCadenceMs: 180_000,
+    });
+    expect(result.value).toBe(false);
+    expect(result.derivation.rule).toBe(3);
+    expect(result.derivation.cooldownMs).toBe(180_000);
+  });
+
   it('lane defaults to swing when omitted', () => {
     const result = shouldDCAAdd({
       heldSide: 'long', sideCandidate: 'short',

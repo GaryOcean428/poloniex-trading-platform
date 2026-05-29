@@ -348,7 +348,7 @@ class TestPillar1Guard:
 
 class TestDCADerivations:
     def test_cooldown_reads_lane_decision_period(self):
-        """DCA add-frequency is gated by the observed lane period."""
+        """DCA add-frequency cooldown equals the lane cadence (swing=180s)."""
         s = _nominal_state()
         r = should_dca_add(
             held_side="long", side_candidate="long",
