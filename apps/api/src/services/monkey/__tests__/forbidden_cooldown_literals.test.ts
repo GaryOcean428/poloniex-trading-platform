@@ -30,21 +30,24 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MONKEY_DIR = join(__dirname, '..');
 
-/** Files that get scanned. The set is deliberately small + named so
- * adding a new cooldown-class module forces an explicit allowlist
- * decision per #1009. */
-const SCANNED_FILES = [
-  'safety_floor.ts',
-  'cooldown_composer.ts',
-  'loop.ts',
-];
+/** Repo-wide scan over every `.ts` source file in `monkey/`, excluding the
+ * `__tests__/` sibling directory. Cascade/Copilot follow-up (2026-05-29):
+ * the prior 3-file scan was scope-too-narrow — a knob-in-costume could
+ * be reintroduced in a peer module (e.g. `executive.ts`, `close_coordinator.ts`)
+ * and slip past the guard. Now any new `.ts` file under `monkey/` is
+ * scanned automatically; non-cooldown-domain hits require an explicit
+ * allowlist entry below. */
+const SCANNED_FILES = readdirSync(MONKEY_DIR, { withFileTypes: true })
+  .filter((d) => d.isFile() && d.name.endsWith('.ts') && !d.name.endsWith('.d.ts'))
+  .map((d) => d.name)
+  .sort();
 
 // Patterns Cascade's #1009 advisory forbids reappearing.
 //
@@ -53,12 +56,25 @@ const SCANNED_FILES = [
 // does NOT match `MIN_COOLDOWN` (no boundary between `_` and `C`). To
 // catch identifier substrings we drop the boundary and allow leading
 // `[A-Z_]*` so `MIN_COOLDOWN_MS = 100` matches the COOLDOWN pattern.
+// Cascade/Copilot follow-up (2026-05-29): the prior `[^,)]+` body matcher
+// stopped at the first `)` or `,`, so `setTimeout(() => resolve(), 500)`
+// (the common single-statement arrow form) slipped through. The new body
+// matcher handles one level of nested parens — e.g. `()`, `(x)`, `(x, y)`
+// — so arrow IIFEs and function bodies that contain a paren pair are
+// still caught. Multi-level / multi-line function bodies remain uncovered
+// by intent (would require a real parser, not a regex).
+const _SET_TIMEOUT_BODY = /(?:[^()]|\([^()]*\))+/;
+const _SET_TIMEOUT_500 = new RegExp(
+  `setTimeout\\s*\\(\\s*${_SET_TIMEOUT_BODY.source},\\s*500\\s*\\)`,
+  'g',
+);
+
 const FORBIDDEN_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   { name: 'COOLDOWN with raw literal', regex: /[A-Z_]*COOLDOWN[A-Z_]*\s*[:=]\s*\d/g },
   { name: 'SAFETY_FLOOR with raw literal', regex: /[A-Z_]*SAFETY_FLOOR[A-Z_]*\s*[:=]\s*\d/g },
   { name: 'MIN_COOLDOWN with raw literal', regex: /[A-Z_]*MIN_COOLDOWN[A-Z_]*\s*[:=]\s*\d/g },
   { name: 'MAX_COOLDOWN with raw literal', regex: /[A-Z_]*MAX_COOLDOWN[A-Z_]*\s*[:=]\s*\d/g },
-  { name: 'setTimeout literal 500', regex: /setTimeout\([^,)]+,\s*500\s*\)/g },
+  { name: 'setTimeout literal 500', regex: _SET_TIMEOUT_500 },
   { name: '180_000 literal', regex: /(?<![A-Za-z0-9_])180_000(?![A-Za-z0-9_])/g },
   { name: '600_000 literal', regex: /(?<![A-Za-z0-9_])600_000(?![A-Za-z0-9_])/g },
 ];
@@ -106,6 +122,17 @@ const ALLOWLIST: AllowEntry[] = [
       'LANE_DECISION_PERIOD_MS entry for the trend lane — substrate tick '
       + 'cadence, not a cooldown floor. Same justification as the swing '
       + 'lane entry above.',
+  },
+  {
+    pattern: 'COOLDOWN with raw literal',
+    file: 'executive.ts',
+    match: 'DCA_COOLDOWN_MS = 15 * 60 * 1000',
+    reason:
+      'DCA add-frequency throttle — different domain from post-close '
+      + 'cooldown (DCA gates re-entering the SAME-side position; #1009 '
+      + 'governs re-entry AFTER a close). Tracked as a separate '
+      + 'observer-derivation follow-up: lane-conditional last-add age, '
+      + 'not a tilt-chain knob.',
   },
 ];
 
@@ -194,5 +221,32 @@ describe('forbidden cooldown literals (#1009 Cascade-advisory grep)', () => {
     // not as a numeric literal. The lookbehind/lookahead boundaries
     // (`(?<![A-Za-z0-9_])` / `(?![A-Za-z0-9_])`) prevent the spurious match.
     expect(fresh('180_000 literal').test('const LANE_PERIOD_180_000_HACK = "x";')).toBe(false);
+  });
+
+  // ── Copilot follow-up: setTimeout regex must catch arrow + function forms ─
+
+  it('setTimeout regex CATCHES the simple ident form `setTimeout(resolve, 500)`', () => {
+    expect(fresh('setTimeout literal 500').test('setTimeout(resolve, 500)')).toBe(true);
+  });
+
+  it('setTimeout regex CATCHES the empty-arrow form `setTimeout(() => resolve(), 500)`', () => {
+    // Cascade/Copilot-flagged failure mode for the prior regex.
+    expect(fresh('setTimeout literal 500').test('setTimeout(() => resolve(), 500)')).toBe(true);
+  });
+
+  it('setTimeout regex CATCHES the explicit-arg arrow form `setTimeout((cb) => cb(x), 500)`', () => {
+    expect(fresh('setTimeout literal 500').test('setTimeout((cb) => cb(x), 500)')).toBe(true);
+  });
+
+  it('setTimeout regex CATCHES the `function() { ... }` form (single-line)', () => {
+    // Single nested-paren level allowed (`foo()`); a multi-statement
+    // function body with nested calls (`a(); b();`) is single-level
+    // because each `()` is independent and the body never opens a
+    // deeper paren without closing it.
+    expect(fresh('setTimeout literal 500').test('setTimeout(function () { foo(); }, 500)')).toBe(true);
+  });
+
+  it('setTimeout regex does NOT match `setTimeout(resolve, 1000)` (different literal)', () => {
+    expect(fresh('setTimeout literal 500').test('setTimeout(resolve, 1000)')).toBe(false);
   });
 });

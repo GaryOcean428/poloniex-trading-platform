@@ -187,12 +187,18 @@ export function formatCooldownTelemetry(b: CooldownBreakdown): string {
   let detail = '';
   if (b.by === 'safety') {
     const d = b.safetyDetail;
-    if (d.coldStartActive) {
-      detail = ':cold_start';
-    } else if (d.incidentMaxMs === b.safetyMs && d.incidentMaxMs > 0) {
+    // Cascade/Copilot follow-up (2026-05-29): incident and rate-limit
+    // observers can be the binding sub-floor EVEN WHILE the settlement
+    // ring is still cold-started. Check them FIRST so a 21002 incident
+    // is reported truthfully as `:incident`, not falsely as
+    // `:cold_start`.  Cold-start is the LAST fallback — only used when
+    // none of the three observers is the binding sub-floor.
+    if (d.incidentMaxMs === b.safetyMs && d.incidentMaxMs > 0) {
       detail = ':incident';
     } else if (d.rateLimitHeadroomMs === b.safetyMs && d.rateLimitHeadroomMs > 0) {
       detail = ':rate_limit';
+    } else if (d.coldStartActive) {
+      detail = ':cold_start';
     } else {
       detail = ':settlement';
     }
