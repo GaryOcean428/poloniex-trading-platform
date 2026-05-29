@@ -583,9 +583,8 @@ export function shouldDCAAdd(req: {
   if (addCount >= DCA_MAX_ADDS_PER_POSITION) {
     return { value: false, reason: `add cap reached (${addCount}/${DCA_MAX_ADDS_PER_POSITION})`, derivation: { rule: 4, addCount } };
   }
-  // Production callers provide symbol + lane cadence. The zero defaults keep
-  // pure unit-callers at the composer t=0 falsification rather than reviving
-  // a hidden DCA-specific floor.
+  // Production callers provide symbol + lane cadence. When pure unit-callers
+  // omit them, zero cadence means no synthetic DCA-specific wait is invented.
   const cooldown = req.cooldownBreakdown ?? composeCooldown({
     symbol: req.symbol ?? '',
     tickCadenceMs: req.tickCadenceMs ?? 0,

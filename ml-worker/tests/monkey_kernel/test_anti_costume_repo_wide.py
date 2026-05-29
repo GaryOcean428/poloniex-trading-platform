@@ -112,10 +112,17 @@ def test_dca_cooldown_constant_absent_repo_wide():
         rel = str(src.relative_to(_MONKEY_KERNEL_DIR))
         if "DCA_COOLDOWN_MS" in text:
             offenders.append((rel, "DCA_COOLDOWN_MS"))
-        # Other modules may legitimately have 15-minute domains; this issue
-        # specifically bans reintroducing that raw DCA floor in executive.py.
-        if rel == "executive.py" and "15 * 60 * 1000" in text:
-            offenders.append((rel, "15 * 60 * 1000"))
+        if rel == "executive.py":
+            # Other modules may legitimately have 15-minute domains; this
+            # issue specifically bans reintroducing that raw DCA/cooldown
+            # floor in executive.py.
+            literal = "15 * 60 * 1000"
+            idx = text.find(literal)
+            while idx != -1:
+                window = text[max(0, idx - 80):idx + len(literal) + 80].lower()
+                if "dca" in window or "cooldown" in window:
+                    offenders.append((rel, literal))
+                idx = text.find(literal, idx + len(literal))
     assert not offenders, (
         "Banned DCA cooldown constant/literal reappeared (#1011): "
         f"{offenders}"

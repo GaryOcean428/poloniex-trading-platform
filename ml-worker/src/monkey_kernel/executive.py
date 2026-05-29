@@ -1138,7 +1138,12 @@ _DCA_LANE_PERIOD_MULTIPLIER = {
 def dca_lane_tick_cadence_ms(lane: str = "swing") -> int:
     """Observer-derived lane decision period used as the DCA add floor.
 
-    Unknown lanes default to the swing multiplier.
+    Args:
+        lane: One of "scalp", "swing", or "trend". Unknown lanes default
+            to the swing multiplier.
+
+    Returns:
+        The lane decision period in milliseconds.
     """
     return _DCA_LANE_BASE_PERIOD_MS * _DCA_LANE_PERIOD_MULTIPLIER.get(
         lane, _DCA_LANE_PERIOD_MULTIPLIER["swing"],
@@ -1151,6 +1156,13 @@ def compose_dca_cooldown_ms(*, tick_cadence_ms: int | float = 0) -> int:
     TS composes safety/decoherence/HEART observers with the caller-supplied
     tick cadence. Py does not own those observer rings yet, so the only
     non-zero local term is the same caller-supplied lane/substrate period.
+
+    Args:
+        tick_cadence_ms: Caller-supplied lane/substrate cadence in
+            milliseconds. NaN, infinity, and negative values collapse to 0.
+
+    Returns:
+        A finite non-negative cooldown floor in milliseconds.
     """
     if not math.isfinite(tick_cadence_ms) or tick_cadence_ms < 0:
         return 0
