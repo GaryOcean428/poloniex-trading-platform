@@ -23,6 +23,7 @@ import governanceRoutes from './routes/governance.js';
 import marketsRoutes from './routes/markets.js';
 import mlRoutes from './routes/ml.js';
 import monitoringRoutes from './routes/monitoring.js';
+import monkeyExemplarRoutes from './routes/monkey-exemplar.js';
 import paperTradingRoutes from './routes/paper-trading.js';
 import proxyRoutes from './routes/proxy.js';
 import publicAdminRoutes from './routes/public-admin.js';
@@ -179,6 +180,7 @@ app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // trade-history read (FAT control stripped 2026-05-21)
 app.use('/api/reconciliation', reconciliationRoutes); // State reconciliation service
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
+app.use('/api/monkey-exemplar', monkeyExemplarRoutes); // CC→kernel exemplar-observation ingress (#1033, dark/write-only)
 app.use('/api/governance', governanceRoutes); // Operator-facing kernel observability (sleep-state, parity logs)
 app.use('/api/admin', adminRoutes); // Admin routes for migrations
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
