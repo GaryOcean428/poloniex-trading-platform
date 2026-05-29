@@ -32,6 +32,12 @@ import poloniexFuturesService from '../poloniexFuturesService.js';
 import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
 import { callExpectationBubble, type ExpectationDecision } from './expectation_client.js';
 import {
+  recordCloseAck,
+  recordFlatObserved,
+  record21002Incident,
+} from './safety_floor.js';
+import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
+import {
   paperClosePosition,
   paperPlaceOrder,
 } from '../paperExchangeSimulator.js';
@@ -5023,8 +5029,19 @@ export class MonkeyKernel extends EventEmitter {
                 leg: 'reverse_reopen',
               });
             } else {
-            // Settle delay — give the exchange ~500ms to flatten net.
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            // Settle delay — observer-derived per #1009.
+            // Previously hardcoded `setTimeout(resolve, 500)`; now the
+            // cooldown_composer reads the three rolling rings in safety_floor.ts
+            // (settlement p99 + 21002 incident bound + rate-limit headroom) and
+            // returns the binding floor for the symbol. During warmup the
+            // composer falls through to its sentinel (`COLD_START_FALLBACK_MS`
+            // = the previous 500ms) so behaviour is unchanged until enough
+            // samples accumulate.
+            const reverseReopenCooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
+            logger.debug(`[Monkey] ${symbol} reverse-reopen ${formatCooldownTelemetry(reverseReopenCooldown)}`);
+            if (reverseReopenCooldown.finalMs > 0) {
+              await new Promise((resolve) => setTimeout(resolve, reverseReopenCooldown.finalMs));
+            }
             const execResult = await this.executeEntry({
               symbol,
               side: newSide,
@@ -7494,6 +7511,10 @@ export class MonkeyKernel extends EventEmitter {
     const isHedge = this.positionDirectionMode === 'HEDGE';
     const closePosSide: 'LONG' | 'SHORT' | undefined =
       isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
+    // #1009: timestamp at the start of the close attempt — declared above
+    // the try/catch so both the success observer (recordCloseAck) and the
+    // 21002 catch observer (record21002Incident) can read it.
+    const tCloseAttemptStart = Date.now();
     try {
 
       // MAKER-CLOSE for preservation-mandate exits (REGIME-2, trailing_harvest,
@@ -7619,6 +7640,11 @@ export class MonkeyKernel extends EventEmitter {
       // Audit: when chunks > 1, expose the full chain so the close row's
       // exit_order_id reflects every leg. Single-order legacy keeps a single id.
       orderId = orderIds.length === 1 ? orderIds[0]! : orderIds.join(',');
+      // #1009 safety_floor observer 1: record the close-ack timestamp so
+      // subsequent flat-observation calls can compute the settlement-
+      // latency delta. Best-effort; no behaviour change if the ring's
+      // pending state was already set by a previous in-flight close.
+      recordCloseAck(symbol, Date.now());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // 21002 "Position not enough" with a sibling close in the cooldown
@@ -7626,6 +7652,11 @@ export class MonkeyKernel extends EventEmitter {
       // row closed and surface a clear reason; don't spam ERROR.
       const is21002 = message.includes('21002') || message.toLowerCase().includes('position not enough');
       if (is21002) {
+        // #1009 safety_floor observer 2: 21002 incidents are empirical
+        // evidence the cooldown floor was too low at the time of retry.
+        // tCloseAttemptStart was captured at the top of the try block.
+        // Falls back to a 0-delta no-op if we don't have the start time.
+        record21002Incident(symbol, tCloseAttemptStart, Date.now());
         const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
         if (race.raced) {
           // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
