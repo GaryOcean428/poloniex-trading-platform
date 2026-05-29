@@ -18,13 +18,11 @@
  *   4. **No prior close = no veto.** If `lastCloseAtMs` is undefined, the
  *      gate has no reference point and must not fire.
  *   5. **Cold-start sentinel CAN veto.** Copilot pre-merge note: the
- *      500ms COLD_START_FALLBACK_MS sentinel binds before settlement
- *      observations have warmed up. The gate honestly fires this veto
- *      when the elapsed time is shorter than 500ms; the comment now
- *      reflects that.
- *   6. **HEART chain pushes the floor above 500ms.** Empirical tilt
- *      observation supersedes the cold-start sentinel and the gate
- *      fires with `by=heart` telemetry.
+ *      cold-start safety contributes 0 (sentinel DELETED 2026-05-29)
+ *      observations have warmed up. With the sentinel DELETED, the
+ *      gate does NOT veto on safety alone during cold-start.
+ *   6. **HEART chain raises the floor above 0.** Empirical tilt
+ *      observation makes the gate fire with `by=heart` telemetry.
  *   7. **21002 incident pushes the floor.** Same pattern, `by=safety:incident`.
  *   8. **Reason string contains telemetry payload.** Falsifiability
  *      check: the gate's veto reason must surface the binding sub-floor.
@@ -60,24 +58,26 @@ describe('evaluatePostCloseCooldownGate — gate decision logic', () => {
     _resetHeartState();
   });
 
-  it('vetoes when elapsed < cooldownMs (cold-start sentinel binds)', () => {
-    // Cold start → COLD_START_FALLBACK_MS = 500. lastClose was 200ms ago,
-    // so 200 < 500 → veto.
+  it('cold-start: no veto when only the sentinel would have fired (operator no-knob doctrine)', () => {
+    // The prior cold-start sentinel was eliminated 2026-05-29 —
+    // cold-start safety contributes 0 to the floor.
+    // Without observed 21002 incidents or rate-limit pressure, the
+    // gate honestly does NOT veto a same-side re-entry on a fresh
+    // kernel. The autonomy doctrine accepts this risk; the kernel
+    // learns from outcomes via neurochemistry.
     const nowMs = 1_000_000;
     const lastCloseAtMs = nowMs - 200;
     const d = evaluatePostCloseCooldownGate({
       symbol: SYM, side: SIDE, isDCAAdd: false, lastCloseAtMs, nowMs,
     });
-    expect(d.vetoed).toBe(true);
-    expect(d.cooldownMs).toBe(500);
-    expect(d.elapsedMs).toBe(200);
-    expect(d.reason).toMatch(/postclose_cooldown:/);
-    expect(d.reason).toMatch(/cooldown:500ms\|by=safety:cold_start/);
+    expect(d.vetoed).toBe(false);
+    expect(d.cooldownMs).toBe(0);
+    expect(d.reason).toBeNull();
   });
 
   it('does NOT veto when elapsed >= cooldownMs (gate has expired)', () => {
     const nowMs = 1_000_000;
-    const lastCloseAtMs = nowMs - 600; // 600 > 500 cold-start sentinel
+    const lastCloseAtMs = nowMs - 600;
     const d = evaluatePostCloseCooldownGate({
       symbol: SYM, side: SIDE, isDCAAdd: false, lastCloseAtMs, nowMs,
     });
@@ -135,11 +135,10 @@ describe('evaluatePostCloseCooldownGate — gate decision logic', () => {
     expect(d.reason).toMatch(/by=heart/);
   });
 
-  it('settlement-ring warmup replaces cold-start sentinel with empirical p99', () => {
+  it('settlement-ring warmup raises the floor from cold-start 0 to empirical p99', () => {
     // Push 60 settlement samples of 250ms → settlement p99 ≈ 250ms.
-    // That's BELOW the cold-start sentinel (500ms), so the floor drops
-    // to 250ms (the kernel now trusts its own measurement over the
-    // doctrine sentinel).
+    // Cold-start floor is 0 (no sentinel); after warmup the safety
+    // term is the empirical p99.
     for (let i = 0; i < 60; i++) {
       recordCloseAck(SYM, i * 1000);
       recordFlatObserved(SYM, i * 1000 + 250);

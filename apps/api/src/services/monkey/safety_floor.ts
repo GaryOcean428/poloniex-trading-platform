@@ -40,10 +40,11 @@
  * # Anti-knob discipline
  *
  * The composition `max(observer1, observer2, observer3)` introduces NO
- * numeric literals beyond `Math.max(0, ...)` clamp-to-zero. The ring sizes
- * are configurable per Ring instance; the cold-start fallback is the
- * previous hardcoded 500ms (loop.ts:5027) — preserved only until each
- * observer has enough samples to read above its sentinel.
+ * numeric literals beyond `Math.max(0, ...)` clamp-to-zero. The ring
+ * sizes are configurable per Ring instance. 2026-05-29 cascading-knob-strip:
+ * the cold-start fallback sentinel was DELETED (no constant, no export,
+ * no back-compat surface). During warmup the safety term contributes 0
+ * and the composer falls through to whatever other observers ask for.
  *
  * # Telemetry
  *
@@ -106,17 +107,11 @@ class RollingRing {
   }
 }
 
-/**
- * Cold-start fallback. Equals the existing hardcoded reverse-reopen wait
- * at `loop.ts:5027` — used ONLY when Observer 1 has not yet accumulated
- * the minimum sample count. Once warmed up the value plays no role.
- *
- * This is the one numeric literal in this module and it's a *sentinel*
- * value (the previous production behaviour), not a derived floor. The
- * literal-lint test in `__tests__/safety_floor.test.ts` allowlists this
- * specific identifier and fails on any other.
- */
-export const COLD_START_FALLBACK_MS = 500;
+// Operator 2026-05-29 cascading-knob-strip: cold-start safety
+// contributes 0 directly in `getSafetyFloorBreakdown`. No named
+// sentinel constant, no export, no "for any external readers"
+// placeholder. The kernel acts at substrate cadence until the
+// settlement ring has observed its own latency.
 
 /** Minimum sample count before each observer's reading is trusted over
  * the cold-start fallback. A *sample count*, not a physical quantity. */
@@ -279,7 +274,10 @@ export interface SafetyFloorBreakdown {
 export function getSafetyFloorBreakdown(symbol: string): SafetyFloorBreakdown {
   const s = _getState(symbol);
   const settlementWarmed = s.settlement.count() >= MIN_RING_SAMPLES;
-  const settlement = settlementWarmed ? s.settlement.p99() : COLD_START_FALLBACK_MS;
+  // Cold-start: 0, NOT a sentinel ms value. Operator no-knob doctrine
+  // 2026-05-29. The composer reads other floor terms; if all are 0
+  // the kernel re-enters as soon as substrate allows.
+  const settlement = settlementWarmed ? s.settlement.p99() : 0;
   const incident = s.incident.max();
   const headroom = rateLimitHeadroomMs();
   return {

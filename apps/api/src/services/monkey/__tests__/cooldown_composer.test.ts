@@ -234,10 +234,10 @@ describe('cooldown_composer — single safety snapshot (Cascade 2026-05-29)', ()
 describe('cooldown_composer — telemetry order: incident before cold_start (Copilot 2026-05-29)', () => {
   beforeEach(() => _resetSafetyFloorState());
 
-  it('21002 incident binds safetyMs while settlement ring is cold → telemetry says :incident, not :cold_start', () => {
-    // Zero settlement samples → cold-start sentinel (500ms) is still active.
-    // A 21002 incident bumps safetyMs above 500ms → telemetry must label the
-    // binding sub-floor as `:incident`, not the still-true `:cold_start`.
+  it('21002 incident binds safetyMs while settlement ring is cold → telemetry says :incident', () => {
+    // Zero settlement samples → safety contributes 0 (cold-start sentinel
+    // was DELETED 2026-05-29). A 21002 incident gives safetyMs = 2500;
+    // telemetry labels the binding sub-floor as `:incident`.
     record21002Incident(SYM, 100_000, 102_500); // 2500ms incident
     const b = composeCooldown({ symbol: SYM, tickCadenceMs: 0 });
     expect(b.safetyDetail.coldStartActive).toBe(true);   // ring is cold
@@ -247,17 +247,14 @@ describe('cooldown_composer — telemetry order: incident before cold_start (Cop
     expect(formatCooldownTelemetry(b)).toBe('cooldown:2500ms|by=safety:incident');
   });
 
-  it('rate-limit headroom binds safetyMs while cold → telemetry says :rate_limit', () => {
-    // Cold ring + no incidents + rate-limit headroom > cold_start.
-    // No real way to push rate-limit headroom > 500 without burning the
-    // bucket, so we synthesise by injecting a custom decoherence/heart
-    // and asserting the labelling logic for the cold-only case where
-    // cold_start IS the binding sub-floor.
+  it('cold-start with no other observers → safetyMs is 0, gate does not fire', () => {
+    // 2026-05-29 cascading-knob-strip: no COLD_START_FALLBACK_MS sentinel.
+    // Pure cold-start (no incidents, no rate-limit pressure) → safety=0.
     const b = composeCooldown({ symbol: SYM, tickCadenceMs: 0 });
     expect(b.safetyDetail.coldStartActive).toBe(true);
-    expect(b.safetyMs).toBe(500); // COLD_START_FALLBACK_MS
-    expect(b.by).toBe<BindingFloor>('safety');
-    expect(formatCooldownTelemetry(b)).toBe('cooldown:500ms|by=safety:cold_start');
+    expect(b.safetyMs).toBe(0);
+    expect(b.cooldownActive).toBe(false);
+    expect(b.by).toBe<BindingFloor>('zero');
   });
 });
 
@@ -289,7 +286,7 @@ describe('cooldown_composer — default HEART provider is heart_arbitrator (#100
   });
 
   it('HEART binds finalMs when its term exceeds safety + tick cadence', () => {
-    // No incidents, settlement ring is cold (500ms sentinel). A chain of
+    // No incidents, settlement ring is cold (0 floor). A chain of
     // 8000ms exceeds the 500ms safety floor → HEART is the binding term.
     noteHeartClose(SYM, 1000, -10);
     noteHeartClose(SYM, 9000, -5);

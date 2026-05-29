@@ -153,11 +153,15 @@ export interface RejustificationInput {
    * Hold-time floor 2026-05-28 (CC1, operator-selected fix):
    * Internal-coherence exits (regime_change, phi_collapse,
    * conviction_failed) are suppressed until the position has been held
-   * at least `holdTimeFloorS` seconds. Derived from the lane's
-   * `LANE_DECISION_PERIOD_MS` (scalp 60s, swing 180s, trend 600s) —
-   * NOT an operator knob. The lane *defines* its decision period;
-   * exiting before that period elapses means the kernel hasn't given
-   * its own thesis room to develop.
+   * at least `holdTimeFloorS` seconds. Now observer-derived
+   * (#1009 cascading-knob-strip 2026-05-29): the lane's empirical
+   * decision-change interval from `substrate_observer.ts` — the
+   * legacy `LANE_DECISION_PERIOD_MS` table (scalp 60s, swing 180s,
+   * trend 600s) was a designer's intuition embedded in code and has
+   * been removed. Cold-start: 0 (no floor until the kernel has
+   * observed its own decision cadence). Exiting before the observed
+   * period elapses means the kernel hasn't given its own thesis room
+   * to develop.
    *
    * The 2026-05-27 audit showed avg hold 8min on trend trades whose
    * lane decision-period is 600s (10 min). Wins capture 0.08% of
