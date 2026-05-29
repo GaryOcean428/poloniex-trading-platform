@@ -45,6 +45,46 @@ export const ROTATION_WR_MIN_SAMPLES = 10;
  *  to live. The operator's pre-cutover spec was "within 10%". */
 export const ROTATION_PROMOTION_WR_GAP = 0.10;
 
+/**
+ * Operator-MANDATED relative membership band (issue #1032). A kernel's
+ * realized expectancy must stay within 10% of the BEST live peer's
+ * expectancy to keep / regain its live seat. This is the SAME 10% the
+ * promotion-WR gate uses, made symmetric and ranked by profit rather
+ * than win-rate. NOT a soak-and-dial knob: it is relative-to-cohort,
+ * and 10% is the operator's standing band (see issue #1032 / the
+ * pre-cutover "within 10% of the best kernel" spec). Fractional, not
+ * percentage-points: |best - mine| / |best| ≤ band.
+ */
+export const ROTATION_EXPECTANCY_BAND = 0.10;
+
+/**
+ * Operator-MANDATED loss:win VALUE target (issue #1032): "avg win ≥ 8×
+ * avg loss" ⇒ a healthy loss:win ratio of 1:8 = 0.125. This is the
+ * reinclusion bar a paper kernel must be trending toward to earn its
+ * seat back. MANDATE, not a tunable knob — it is the operator's stated
+ * profitability goal for the cohort.
+ */
+export const ROTATION_TARGET_LOSS_WIN_RATIO = 1 / 8;
+
+/**
+ * Env-flag name for the chronic-expectancy membership criterion.
+ * DEFAULT OFF: when unset / not exactly 'true', rotation behaves
+ * EXACTLY as it did before issue #1032 (5-consecutive-loss demote +
+ * WR-only promotion). When 'true', the expectancy-based chronic demote
+ * and the expectancy+ratio promotion gate are layered on.
+ *
+ * Read at the loop boundary (not in this pure module) and passed in as
+ * a boolean so the math stays env-free and unit-testable.
+ */
+export const ROTATION_EXPECTANCY_FLAG = 'MONKEY_ROTATION_EXPECTANCY_LIVE';
+
+/** True iff the chronic-expectancy membership criterion is enabled. */
+export function expectancyLiveEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env[ROTATION_EXPECTANCY_FLAG] === 'true';
+}
+
 export type KernelOperationalMode = 'live' | 'paper';
 
 export interface RotationState {
@@ -150,6 +190,77 @@ export function rollingWinRate(state: RotationState): number {
 }
 
 /**
+ * Realized rolling expectancy over a kernel's PnL window (issue #1032).
+ *
+ *   winRate    — wins / closes (a close with pnl > 0 is a win)
+ *   avgWin     — mean PnL of winning closes (≥ 0; 0 when no wins)
+ *   avgLoss    — mean PnL of losing closes, kept SIGNED (≤ 0; 0 when
+ *                no losses). A "loss" here is pnl ≤ 0 — the same
+ *                streak semantic recordClose uses (zero = not-a-win).
+ *   lossWinRatio — |avgLoss| / avgWin, the loss:win VALUE ratio the
+ *                operator targets at 1:8. Number.POSITIVE_INFINITY when
+ *                there are losses but no wins (pure bleed); NaN when no
+ *                losses observed (nothing to rank against the target).
+ *   edge       — per-trade expectancy = winRate*avgWin - (1-winRate)*|avgLoss|.
+ *                Positive = net-profitable cohort member; this is the
+ *                value the membership band ranks on.
+ *   sampleCount — number of closes in the window.
+ *
+ * Pure; reads only state.rollingPnls. NaN edge when the window is empty.
+ */
+export interface RotationExpectancy {
+  winRate: number;
+  avgWin: number;
+  avgLoss: number;
+  lossWinRatio: number;
+  edge: number;
+  sampleCount: number;
+}
+
+export function rollingExpectancy(state: RotationState): RotationExpectancy {
+  const pnls = state.rollingPnls;
+  const n = pnls.length;
+  if (n === 0) {
+    return {
+      winRate: Number.NaN,
+      avgWin: 0,
+      avgLoss: 0,
+      lossWinRatio: Number.NaN,
+      edge: Number.NaN,
+      sampleCount: 0,
+    };
+  }
+  let wins = 0;
+  let sumWin = 0;
+  let sumLoss = 0; // signed (≤ 0)
+  for (const pnl of pnls) {
+    if (pnl > 0) {
+      wins += 1;
+      sumWin += pnl;
+    } else {
+      sumLoss += pnl;
+    }
+  }
+  const losses = n - wins;
+  const winRate = wins / n;
+  const avgWin = wins > 0 ? sumWin / wins : 0;
+  const avgLoss = losses > 0 ? sumLoss / losses : 0; // ≤ 0
+  const absAvgLoss = Math.abs(avgLoss);
+  // loss:win ratio. No losses → NaN (cannot rank). Losses but no wins →
+  // +Infinity (the worst possible bleed, never within target).
+  let lossWinRatio: number;
+  if (losses === 0) {
+    lossWinRatio = Number.NaN;
+  } else if (avgWin === 0) {
+    lossWinRatio = Number.POSITIVE_INFINITY;
+  } else {
+    lossWinRatio = absAvgLoss / avgWin;
+  }
+  const edge = winRate * avgWin - (1 - winRate) * absAvgLoss;
+  return { winRate, avgWin, avgLoss, lossWinRatio, edge, sampleCount: n };
+}
+
+/**
  * Snapshot of the data a kernel exposes to peers for cross-kernel
  * auto-promotion. Decoupled from MonkeyKernel so this module stays
  * pure-state (no circular imports).
@@ -158,6 +269,140 @@ export interface RotationPeerSnapshot {
   mode: KernelOperationalMode;
   rollingWinRate: number;        // NaN if no samples yet
   rollingSampleCount: number;
+  /** Per-trade realized expectancy (edge), issue #1032. NaN if no
+   *  samples yet. Used by the expectancy-gated membership criterion;
+   *  ignored entirely when MONKEY_ROTATION_EXPECTANCY_LIVE is off. */
+  rollingExpectancy?: number;
+  /** Loss:win VALUE ratio |avgLoss|/avgWin, issue #1032. NaN / Infinity
+   *  per rollingExpectancy semantics. Used as the cohort-relative bar
+   *  in the expectancy promotion gate; ignored when the flag is off. */
+  rollingLossWinRatio?: number;
+}
+
+/**
+ * Best (highest) per-trade expectancy among CI-firm LIVE peers.
+ * Returns NaN when no live peer has both ≥ ROTATION_WR_MIN_SAMPLES
+ * samples AND a finite rollingExpectancy. Shared by the chronic-demote
+ * and expectancy-promotion gates so they rank against the same cohort
+ * benchmark. Pure.
+ */
+function bestLivePeerExpectancy(
+  peers: ReadonlyArray<RotationPeerSnapshot>,
+): number {
+  let best = Number.NaN;
+  for (const peer of peers) {
+    if (peer.mode !== 'live') continue;
+    if (peer.rollingSampleCount < ROTATION_WR_MIN_SAMPLES) continue;
+    const e = peer.rollingExpectancy;
+    if (e === undefined || !Number.isFinite(e)) continue;
+    if (!Number.isFinite(best) || e > best) best = e;
+  }
+  return best;
+}
+
+/**
+ * Loss:win ratio of the SAME peer chosen as best-by-expectancy. We rank
+ * the cohort by expectancy (the profit benchmark) and read that peer's
+ * loss:win ratio as the relative bar — not the min ratio across the
+ * cohort, which would let a low-expectancy-but-tight-ratio peer set an
+ * unrealistically strict bar. Returns NaN when no benchmark peer exists.
+ * Pure.
+ */
+function bestLivePeerLossWinRatio(
+  peers: ReadonlyArray<RotationPeerSnapshot>,
+): number {
+  let bestE = Number.NaN;
+  let ratioOfBest = Number.NaN;
+  for (const peer of peers) {
+    if (peer.mode !== 'live') continue;
+    if (peer.rollingSampleCount < ROTATION_WR_MIN_SAMPLES) continue;
+    const e = peer.rollingExpectancy;
+    if (e === undefined || !Number.isFinite(e)) continue;
+    if (!Number.isFinite(bestE) || e > bestE) {
+      bestE = e;
+      ratioOfBest = peer.rollingLossWinRatio ?? Number.NaN;
+    }
+  }
+  return ratioOfBest;
+}
+
+/**
+ * True iff `mine` is within ROTATION_EXPECTANCY_BAND (fractional) of
+ * `best`. "Within band" means the FRACTIONAL shortfall below the best
+ * peer is no worse than the band: best - mine ≤ band·|best|. A kernel
+ * ABOVE the best peer is trivially within band. When best is ~0 we fall
+ * back to an absolute comparison (mine ≥ best, i.e. not strictly worse)
+ * to avoid divide-by-zero amplification. Pure.
+ */
+function withinExpectancyBand(mine: number, best: number): boolean {
+  if (!Number.isFinite(mine) || !Number.isFinite(best)) return false;
+  const scale = Math.abs(best);
+  if (scale < 1e-12) return mine >= best;
+  return best - mine <= ROTATION_EXPECTANCY_BAND * scale;
+}
+
+/**
+ * CHRONIC membership demote (issue #1032). Catches the negative-EV
+ * bleeder that the 5-consecutive-loss breaker misses: a ~50%-WR kernel
+ * that sprinkles tiny wins between large losses never hits 5-in-a-row,
+ * yet its expectancy sits far below the best live peer's.
+ *
+ * Fires (returns a reason string) iff:
+ *   0. expectancyLive is true (flag MONKEY_ROTATION_EXPECTANCY_LIVE).
+ *      When false this ALWAYS returns null — behaviour is unchanged.
+ *   1. The candidate is currently LIVE.
+ *   2. The candidate has ≥ ROTATION_WR_MIN_SAMPLES closes (no demote on
+ *      noise).
+ *   3. There is at least one CI-firm LIVE peer with a finite expectancy
+ *      to rank against (the cohort benchmark — incl. the CC race peer).
+ *   4. The candidate's expectancy falls OUTSIDE the relative band of the
+ *      best live peer's expectancy (symmetric with the promotion band).
+ *
+ * Returns null otherwise. Pure — does NOT mutate; the caller flips mode.
+ */
+export function shouldChronicDemote(
+  candidate: RotationState,
+  peers: ReadonlyArray<RotationPeerSnapshot>,
+  expectancyLive: boolean,
+): string | null {
+  if (!expectancyLive) return null;
+  if (candidate.mode !== 'live') return null;
+
+  const mine = rollingExpectancy(candidate);
+  if (mine.sampleCount < ROTATION_WR_MIN_SAMPLES) return null;
+  if (!Number.isFinite(mine.edge)) return null;
+
+  const best = bestLivePeerExpectancy(peers);
+  if (!Number.isFinite(best)) return null; // no benchmark peer yet
+
+  if (withinExpectancyBand(mine.edge, best)) return null; // still a member
+
+  return (
+    `chronic-demote: expectancy ${mine.edge.toFixed(4)} outside ` +
+    `${(ROTATION_EXPECTANCY_BAND * 100).toFixed(0)}% band of best live ` +
+    `${best.toFixed(4)} (WR ${(mine.winRate * 100).toFixed(1)}%, ` +
+    `loss:win ${Number.isFinite(mine.lossWinRatio) ? mine.lossWinRatio.toFixed(2) : 'n/a'})`
+  );
+}
+
+/**
+ * Apply the chronic-demote decision to state, mutating in place
+ * (mirrors recordClose's mutate-in-place contract). Returns the same
+ * shape as recordClose so the loop wiring is symmetric. No-op (returns
+ * demoted:false) when shouldChronicDemote declines.
+ */
+export function applyChronicDemote(
+  state: RotationState,
+  peers: ReadonlyArray<RotationPeerSnapshot>,
+  expectancyLive: boolean,
+  nowMs: number = Date.now(),
+): { demoted: boolean; reason: string | null } {
+  const reason = shouldChronicDemote(state, peers, expectancyLive);
+  if (!reason) return { demoted: false, reason: null };
+  state.mode = 'paper';
+  state.lastDemotionAtMs = nowMs;
+  state.lastTransitionReason = reason;
+  return { demoted: true, reason };
 }
 
 /**
@@ -175,11 +420,22 @@ export interface RotationPeerSnapshot {
  *   4. The candidate's rolling WR must be within
  *      ROTATION_PROMOTION_WR_GAP of the BEST live peer's WR.
  *
+ * When `expectancyLive` is true (flag MONKEY_ROTATION_EXPECTANCY_LIVE),
+ * an ADDITIONAL profit-shaped gate is layered on top of the WR gate:
+ *   5. The candidate's expectancy must be within ROTATION_EXPECTANCY_BAND
+ *      of the best live peer's expectancy, AND
+ *   6. The candidate's loss:win VALUE ratio must be trending toward the
+ *      1:8 target — i.e. ≤ the best live peer's loss:win ratio (a
+ *      cohort-relative bar), or already at/under the 1:8 target.
+ * When `expectancyLive` is false the function is byte-for-byte the
+ * legacy WR-only gate.
+ *
  * Returns the reason string when promotion should fire, null otherwise.
  */
 export function shouldAutoPromote(
   candidate: RotationState,
   peers: ReadonlyArray<RotationPeerSnapshot>,
+  expectancyLive: boolean = false,
 ): string | null {
   if (candidate.mode !== 'paper') return null;
   const myN = candidate.rollingPnls.length;
@@ -201,6 +457,36 @@ export function shouldAutoPromote(
 
   if (!Number.isFinite(bestLiveWR)) return null;  // no informative live peer
   if (myWR < bestLiveWR - ROTATION_PROMOTION_WR_GAP) return null;
+
+  if (expectancyLive) {
+    // Profit gate: within-band expectancy AND loss:win trending to 1:8.
+    const mine = rollingExpectancy(candidate);
+    if (!Number.isFinite(mine.edge)) return null;
+    const bestE = bestLivePeerExpectancy(peers);
+    if (!Number.isFinite(bestE)) return null; // no expectancy benchmark
+    if (!withinExpectancyBand(mine.edge, bestE)) return null;
+
+    // loss:win ratio bar. The target is 1:8 = ROTATION_TARGET_LOSS_WIN_RATIO.
+    // A paper kernel earns re-entry when its ratio is trending toward
+    // the target: at/under the 1:8 target OUTRIGHT, or at/under the best
+    // live peer's ratio (a cohort-relative bar — you're no worse than
+    // the benchmark on size asymmetry). NaN ratio (no losses observed in
+    // window) is the best possible case and passes.
+    const bestRatio = bestLivePeerLossWinRatio(peers);
+    const ratioOk =
+      !Number.isFinite(mine.lossWinRatio) || // no losses → trivially fine
+      mine.lossWinRatio <= ROTATION_TARGET_LOSS_WIN_RATIO ||
+      (Number.isFinite(bestRatio) && mine.lossWinRatio <= bestRatio);
+    if (!ratioOk) return null;
+
+    return (
+      `auto-promotion(expectancy): WR ${(myWR * 100).toFixed(1)}% within band; ` +
+      `expectancy ${mine.edge.toFixed(4)} within ${(ROTATION_EXPECTANCY_BAND * 100).toFixed(0)}% ` +
+      `of best live ${bestE.toFixed(4)}; loss:win ` +
+      `${Number.isFinite(mine.lossWinRatio) ? mine.lossWinRatio.toFixed(2) : 'n/a'} ` +
+      `trending to ${ROTATION_TARGET_LOSS_WIN_RATIO.toFixed(3)}`
+    );
+  }
 
   return `auto-promotion: rolling WR ${(myWR * 100).toFixed(1)}% >= ` +
     `best live ${(bestLiveWR * 100).toFixed(1)}% - ${(ROTATION_PROMOTION_WR_GAP * 100).toFixed(0)}pp`;
