@@ -63,6 +63,7 @@ describe('stateReconciliationService ghost recovery', () => {
             side: 'buy',
             entry_price: '2077.30',
             quantity: '0.38',
+            leverage: 16,
             order_id: 'open-order',
             entry_time: new Date('2026-05-27T08:02:13Z'),
           },
@@ -117,6 +118,7 @@ describe('stateReconciliationService ghost recovery', () => {
             side: 'buy',
             entry_price: '2077.30',
             quantity: '0.38',
+            leverage: 16,
             order_id: 'open-order',
             entry_time: new Date(entryMs),
           },
@@ -149,6 +151,57 @@ describe('stateReconciliationService ghost recovery', () => {
     expect(ev.payload.pnlSource).toBe('polo_bills_external_close');
     expect(ev.payload.agent).toBe('K');
     expect(ev.payload.pnl).toBeCloseTo(-1.5, 6);
+    // The reviewed knob fix: the published margin is the REAL position margin
+    // (entry_price × quantity / leverage = 2077.30 × 0.38 / 16 ≈ 49.336), NOT
+    // the retired synthetic 5. The loop.ts subscriber reads this for
+    // pnl_fraction = pnl / marginUsdt.
+    expect(ev.payload.marginUsdt).toBeCloseTo((2077.30 * 0.38) / 16, 4);
+    expect(ev.payload.marginUsdt).not.toBe(5);
+  });
+
+  // ── Flag ON but real margin unavailable → decline (decline-over-guess) ────
+  it('flag ON: declines (no publish) when leverage is missing → real margin unavailable', async () => {
+    process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE = 'true';
+    const entryMs = Date.parse('2026-05-27T08:02:13Z');
+    getAccountBillsMock.mockResolvedValue([
+      { type: 'PNL', sz: '-1.0', symbol: 'ETH_USDT_PERP', cTime: Date.now(), id: 'b1' },
+    ]);
+
+    queryMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'trade-1',
+            symbol: 'ETH_USDT_PERP',
+            side: 'buy',
+            entry_price: '2077.30',
+            quantity: '0.38',
+            // leverage NULL → margin cannot be derived → decline, do NOT
+            // reward at a guessed scale.
+            leverage: null,
+            order_id: 'open-order',
+            entry_time: new Date(entryMs),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            exit_order_id: null,
+            reason: 'monkey|kernel=monkey-swing|agent=K|lane=scalp|src=v0.10',
+            agent: 'K',
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+    const { stateReconciliationService } = await import('../stateReconciliationService.js');
+    await stateReconciliationService.reconcile('user-1');
+
+    // The row still closes (bookkeeping) but NO reward is published because the
+    // real margin (the chemistry scale) is unavailable.
+    expect(publishMock).not.toHaveBeenCalled();
   });
 
   // ── Flag ON: a kernel-own late close is NOT double-rewarded ───────────────
@@ -168,6 +221,7 @@ describe('stateReconciliationService ghost recovery', () => {
             side: 'buy',
             entry_price: '2077.30',
             quantity: '0.38',
+            leverage: 16,
             order_id: 'open-order',
             entry_time: new Date(entryMs),
           },

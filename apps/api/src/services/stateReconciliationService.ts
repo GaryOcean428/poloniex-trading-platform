@@ -115,7 +115,13 @@ class StateReconciliationService {
 
       // ── 4. Fetch DB-recorded open trades ────────────────────────────────────
       const dbResult = await pool.query(
-        `SELECT id, symbol, side, entry_price, quantity, order_id, entry_time
+        // `leverage` (nullable INTEGER, migration 048) is needed to compute the
+        // real position margin for the external-close reward (#1033 refine):
+        // margin = entry_price × quantity / leverage. Without it the chemistry
+        // scale would fall back to a synthetic constant (the retired
+        // marginUsdt=5 knob). quantity is base-asset (migration 060) so
+        // entry_price × quantity is the USDT notional directly.
+        `SELECT id, symbol, side, entry_price, quantity, leverage, order_id, entry_time
          FROM autonomous_trades
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
@@ -126,6 +132,7 @@ class StateReconciliationService {
         side: string;
         entry_price: string;
         quantity: string;
+        leverage: number | string | null;
         order_id: string | null;
         entry_time: Date | string;
       }[] = dbResult.rows;
@@ -633,6 +640,23 @@ class StateReconciliationService {
             // entry and now. Use a generous [holdStart, now+5s] window for PNL
             // matching — these are external closes the kernel never timed, so
             // a tight cTime window (used on kernel-own closes) is unavailable.
+            //
+            // KNOWN LIMITATION (#1033 refine): bills carry no ordId/side, so
+            // the PNL sum is matched by symbol + this time window only. If two
+            // DISTINCT close events of the SAME symbol+side land inside one
+            // reconciler interval, their PNL bills aggregate. For the
+            // external-close group this is actually CORRECT — every K-owned row
+            // in the group is attributed the aggregate, pro-rated by qty. The
+            // residual unhandled case is a same-symbol+side PNL bill from a
+            // DIFFERENT lifecycle (e.g. a kernel-own close that landed in the
+            // same window) being folded into the external reward magnitude.
+            // Tightening this reliably needs an ordId-tagged or per-fill bills
+            // surface (tracked as the polo per-row-vs-per-position follow-up);
+            // a time-only heuristic would mis-split legitimately-aggregated
+            // closes, so we keep the symbol+window match and accept the rare
+            // cross-lifecycle overlap rather than ship a fragile narrower
+            // window. The flag default-OFF keeps this inert until the surface
+            // improves.
             const billsComp = composePoloBillsReward(billRows, {
               symbol: normSymbol,
               closeStartMs: holdStartMs,
@@ -654,6 +678,46 @@ class StateReconciliationService {
               err: billsErr instanceof Error ? billsErr.message : String(billsErr),
             });
           }
+        }
+
+        // ── Real position margin for the external-close reward (#1033 refine) ──
+        //
+        // The reward chemistry scales by `pnl_fraction = pnl / marginUsdt`, so
+        // marginUsdt IS the lesson's scale. The original PR passed a hardcoded
+        // `marginUsdt = 5` into the loop.ts reward subscriber — a synthetic
+        // scale knob (P1 violation). Replace it with the position's REAL margin
+        // derived from the autonomous_trades row(s):
+        //   margin = entry_price × quantity / leverage
+        // (quantity is base-asset post migration 060, so entry_price × quantity
+        // is the USDT notional directly — no contract-size multiplier; this is
+        // the SAME formula the kernel's own close path uses, #992 loop.ts).
+        //
+        // Computed per-row (leverage can differ across DCA-stacked rows) so each
+        // pro-rata reward carries its OWN real scale, and summed for the
+        // group-level eligibility decision. A row whose entry/qty/leverage is
+        // missing or non-positive contributes null → decline over guess.
+        const rowMarginUsdt = (t: typeof groupGhosts[number]['dbTrade']): number | null => {
+          const entry = parseFloat(t.entry_price);
+          const qty = Math.abs(parseFloat(t.quantity));
+          const levRaw = t.leverage === null || t.leverage === undefined
+            ? NaN
+            : Number(t.leverage);
+          const lev = Number.isFinite(levRaw) ? levRaw : NaN;
+          if (!Number.isFinite(entry) || entry <= 0) return null;
+          if (!Number.isFinite(qty) || qty <= 0) return null;
+          if (!Number.isFinite(lev) || lev <= 0) return null;
+          const margin = (entry * qty) / lev;
+          return Number.isFinite(margin) && margin > 0 ? margin : null;
+        };
+        // Group margin: present only if EVERY external ghost row has a real
+        // margin. Any null → the group's real scale is incomplete → decline
+        // (rather than reward part of the group at a guessed scale).
+        let groupExternalMargin: number | null = 0;
+        for (const g of groupGhosts) {
+          if (g.ghostReason !== 'manual_close_user' || g.agent === null) continue;
+          const m = rowMarginUsdt(g.dbTrade);
+          if (m === null) { groupExternalMargin = null; break; }
+          groupExternalMargin = (groupExternalMargin ?? 0) + m;
         }
 
         // Write each ghost row with pro-rata PnL share.
@@ -717,14 +781,23 @@ class StateReconciliationService {
             //
             // We only publish when THIS tick transitioned the row (dedup) so
             // the chemistry sees each external close exactly once.
+            // Per-row REAL margin (entry_price × quantity / leverage). This is
+            // THIS row's own scale — passed in the OUTCOME payload so the
+            // loop.ts subscriber feeds `pnl_fraction = pnl / marginUsdt` with
+            // the real position margin, NOT the retired synthetic `5`.
+            const rowMargin = rowMarginUsdt(g.dbTrade);
             const rewardDecision = decideExternalCloseReward({
               enabled: externalRewardEnabled,
               ghostReason: g.ghostReason,
               agent: g.agent,
               billsRealizedPnl: externalBillsRealizedPnl,
               pnlBillRowCount: externalBillsPnlRowCount,
+              // Group-level real margin gates eligibility (decline if any row
+              // in the group lacks a real margin); the per-row margin below
+              // sets the published scale.
+              marginUsdt: groupExternalMargin,
             });
-            if (rewardDecision.eligible && transitioned) {
+            if (rewardDecision.eligible && transitioned && rowMargin !== null) {
               // Pro-rata the group's authoritative realized PnL by this row's
               // qty share so a DCA-stacked external close attributes each row
               // its proportional slice (mirrors the bookkeeping rowShare).
@@ -741,6 +814,9 @@ class StateReconciliationService {
                       instanceId: g.instanceId,
                       side: normalizeDbSide(g.dbTrade.side),
                       pnl: rowRewardPnl,
+                      // REAL per-row margin → the loop.ts subscriber uses this
+                      // for pnl_fraction instead of the synthetic marginUsdt=5.
+                      marginUsdt: rowMargin,
                       // The loop.ts subscriber keys on
                       // `source.startsWith('reconciler_recovered')` →
                       // applyOutcomeToAgent + pushReward + callAutonomicReward.
@@ -755,6 +831,7 @@ class StateReconciliationService {
                     symbol: g.dbTrade.symbol,
                     agent: g.agent,
                     rowRewardPnl: rowRewardPnl.toFixed(4),
+                    rowMarginUsdt: rowMargin.toFixed(4),
                     pnlSource: rewardDecision.pnlSource,
                   });
                 } catch (busErr) {

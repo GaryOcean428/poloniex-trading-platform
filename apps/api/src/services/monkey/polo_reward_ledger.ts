@@ -276,12 +276,32 @@ export function composePoloBillsReward(
  *    one).
  * 4. AGENT-OWNED. Only K/M/T/L-attributed rows feed an agent's chemistry.
  *    A null/unknown agent → not eligible (nothing to attribute to).
+ * 5. REAL MARGIN (no synthetic scale knob). The reward chemistry derives its
+ *    dopamine/serotonin magnitude from `pnl_fraction = pnl / marginUsdt`, so
+ *    `marginUsdt` IS the scale of the lesson. A hardcoded constant
+ *    (`marginUsdt = 5`) was a P1 knob that synthetically scaled the chemistry
+ *    independent of the position's real size. The reconciler computes the
+ *    actual position margin from the autonomous_trades row(s) —
+ *    `Σ(entry_price × quantity) / leverage` (quantity is base-asset post
+ *    migration 060, so entry_price × quantity is the USDT notional directly;
+ *    no contract-size multiplier is needed) — the SAME formula the kernel's
+ *    own close path uses (#992, loop.ts). If the real margin is unavailable
+ *    (missing/zero leverage, qty, or entry price → non-finite or ≤0), we
+ *    DECLINE rather than feed a guessed/synthetic-margin reward (decline over
+ *    guess: better to miss a lesson than teach it at the wrong scale).
  */
 export type ExternalCloseRewardEligibility =
   | {
       eligible: true;
       /** Bills-authoritative realized PnL to feed the reward chemistry. */
       realizedPnl: number;
+      /**
+       * Real position margin (USDT) computed from the autonomous_trades
+       * row(s) — `Σ(entry_price × quantity) / leverage`. Drives
+       * `pnl_fraction = pnl / marginUsdt` in the reward chemistry. NEVER a
+       * hardcoded constant (the retired `marginUsdt = 5` P1 knob).
+       */
+      marginUsdt: number;
       /** Provenance tag for the OUTCOME publish + telemetry. */
       pnlSource: 'polo_bills_external_close';
     }
@@ -293,7 +313,8 @@ export type ExternalCloseRewardEligibility =
         | 'not_external_close'
         | 'no_agent'
         | 'no_bills_pnl'
-        | 'non_finite_pnl';
+        | 'non_finite_pnl'
+        | 'no_real_margin';
     };
 
 export function decideExternalCloseReward(input: {
@@ -307,6 +328,13 @@ export function decideExternalCloseReward(input: {
   billsRealizedPnl: number;
   /** Count of PNL bill rows matched (0 → no authoritative magnitude). */
   pnlBillRowCount: number;
+  /**
+   * Real position margin (USDT) for the group, computed by the reconciler as
+   * `Σ(entry_price × quantity) / leverage` over the ghost rows. `null` (or a
+   * non-finite/≤0 value) means the real margin could not be derived (missing
+   * leverage/qty/entry) → decline over guess. NEVER a hardcoded fallback.
+   */
+  marginUsdt: number | null;
 }): ExternalCloseRewardEligibility {
   if (!input.enabled) return { eligible: false, reason: 'flag_off' };
   // Guard 1: ONLY operator/CC external closes. `reconciled_post_close_race`
@@ -322,9 +350,18 @@ export function decideExternalCloseReward(input: {
   if (!Number.isFinite(input.billsRealizedPnl)) {
     return { eligible: false, reason: 'non_finite_pnl' };
   }
+  // Guard 5: REAL margin only — decline over guess. The retired `marginUsdt=5`
+  // knob synthetically scaled the chemistry; here the scale must be the
+  // position's real margin or we decline.
+  if (input.marginUsdt === null
+      || !Number.isFinite(input.marginUsdt)
+      || input.marginUsdt <= 0) {
+    return { eligible: false, reason: 'no_real_margin' };
+  }
   return {
     eligible: true,
     realizedPnl: input.billsRealizedPnl,
+    marginUsdt: input.marginUsdt,
     pnlSource: 'polo_bills_external_close',
   };
 }

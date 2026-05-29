@@ -1435,25 +1435,35 @@ export class MonkeyKernel extends EventEmitter {
           src.startsWith('reconciler_recovered');
         if (!isRecovered) return;
         if (!recoveredOutcomeMatchesInstance(payload, this.instanceId)) return;
-        // Reconciler-recovered events use marginUsdt=5 to match the
-        // global pushReward path's constant for ghost-close recoveries
-        // (see lines below this subscriber, marginUsdt: 5).
-        this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl, 5);
+        // Margin scale for `pnl_fraction = pnl / marginUsdt`.
+        //
+        // #1033 refine: external-close reward events (the reconciler's
+        // `manual_close_user` path) now carry the position's REAL margin in
+        // `payload.marginUsdt` (= entry_price × quantity / leverage) so the
+        // chemistry learns at the TRUE scale of the lesson. The hardcoded
+        // `marginUsdt = 5` was a synthetic scale knob (P1 violation): it set
+        // pnl_fraction = pnl / 5 regardless of the actual position size.
+        //
+        // Legacy ghost-recovery events (other ghostReasons: exchange-side
+        // liquidation, partial-fill cleanup) still lack qty/leverage and emit
+        // no `payload.marginUsdt`, so they fall through to the nominal 5 —
+        // UNCHANGED, byte-identical behaviour. Only the external-close path,
+        // which now emits a real `payload.marginUsdt`, uses the real scale.
+        const payloadMargin = Number(payload.marginUsdt ?? NaN);
+        const rewardMargin =
+          Number.isFinite(payloadMargin) && payloadMargin > 0 ? payloadMargin : 5;
+        this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl, rewardMargin);
         // 2026-05-16 per-agent NC: also feed reconciler-recovered
         // ghost-closes into the agent's chemistry queue. Without this,
         // M/T/L closes that the close-path missed (exchange-side
         // liquidation, manual UI close, partial-fill cleanup) would
         // update emotion state but NOT the agent's dopamine window.
-        // Margin estimation: ghost-recovered events lack qty + mark
-        // price; reuse the witnessExit pattern of a fixed nominal
-        // margin (5 USDT) so pnlFraction = pnl / 5 stays bounded and
-        // doesn't blow out the dop/ser/endo deltas on a one-off ghost.
         try {
           this.pushReward({
             source: `reconciler_recovered:${String(payload.ghostReason ?? 'unknown')}`,
             symbol: event.symbol,
             realizedPnlUsdt: pnl,
-            marginUsdt: 5,
+            marginUsdt: rewardMargin,
             agent,
           });
         } catch { /* non-fatal */ }
@@ -1465,7 +1475,7 @@ export class MonkeyKernel extends EventEmitter {
           source: `reconciler_recovered:${String(payload.ghostReason ?? 'unknown')}`,
           symbol: event.symbol,
           realizedPnlUsdt: pnl,
-          marginUsdt: 5,
+          marginUsdt: rewardMargin,
         });
         const ghostReason = String(payload.ghostReason ?? 'unknown');
         logger.info(
