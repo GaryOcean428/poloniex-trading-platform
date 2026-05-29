@@ -29,7 +29,7 @@ Reference implementations:
 from __future__ import annotations
 
 import logging
-import os
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -279,6 +279,22 @@ class AutonomicKernel:
             "serotonin_delta": 0.0,
             "n": 0.0,
         }
+        # 2026-05-29 hindsight (MONKEY_HINDSIGHT_REGRET_LIVE — DESIGN HYPOTHESIS).
+        # The legibility-gated counterfactual-regret NT vector resolved on the
+        # TS side (loop.ts owns the watches) is fanned out here so the Py
+        # chemistry surface (which drives executive sizing + survives restarts)
+        # stays in parity. Mirrors _cached_prediction_chemistry: REPLACED each
+        # fanout, folded additively into reward_sums on each tick(), cleared on
+        # wake. P14: SEPARATE channel from trade-outcome rewards. All-zero when
+        # the flag is OFF → byte-identical chemistry.
+        self._cached_hindsight_chemistry: dict[str, float] = {
+            "dopamine_delta": 0.0,
+            "serotonin_delta": 0.0,
+            "acetylcholine_delta": 0.0,
+            "norepinephrine_delta": 0.0,
+            "gaba_delta": 0.0,
+            "endorphin_delta": 0.0,
+        }
         # Restore decay-aware reward queue from Redis if available.
         # The persistence layer drops entries whose decay < 0.01 so
         # we don't restore zero-contribution rewards.
@@ -374,33 +390,7 @@ class AutonomicKernel:
             # so every losing close raised UnboundLocalError and the
             # autonomic /reward endpoint 500'd before chemistry updated).
             loss_dop_scale = get_reward_loss_dop_scale()
-            # ── Loss-side de-saturation (MONKEY_HINDSIGHT_REGRET_LIVE) ──────
-            # The legacy shape `-tanh(-pnl_frac * 0.5) * 0.1` SATURATES: at
-            # real trading scale a -3% ROE loss is pnl_frac≈-0.03, so
-            # tanh(0.015)≈0.015 → dop≈-0.0015, and even a -50% loss only
-            # reaches dop≈-0.025. Big losses ≈ small losses in pain — the
-            # kernel cannot "feel" magnitude. For the counterfactual-regret
-            # signal to register, loss magnitude must be preserved.
-            #
-            # Fix (flag-gated, observer-derived, P1): normalise pnl_frac by
-            # the MAD of the kernel's own realised pnl_frac history (exactly
-            # the pushReward / observer pattern — no hardcoded scale) before
-            # tanh, and apply a cap that lets a typical loss reach a
-            # meaningful mood dip while staying BELOW the win-side dop cap
-            # (0.5) so losses still aren't a punishment, just felt. Byte-
-            # identical to legacy when the flag is OFF.
-            if os.environ.get("MONKEY_HINDSIGHT_REGRET_LIVE") == "true":
-                from .hindsight_regret import median_absolute_deviation
-                hist = self._pnl_frac_history if hasattr(self, "_pnl_frac_history") else []
-                pnl_frac_norm = pnl_frac
-                if len(hist) >= 5:
-                    mad = median_absolute_deviation(hist)
-                    if mad > 1e-12:
-                        pnl_frac_norm = pnl_frac / mad
-                # cap 0.3 < win cap 0.5: losses felt with magnitude, not punished
-                dop = float(-np.tanh(-pnl_frac_norm) * 0.3)
-            else:
-                dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
+            dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
             ser = 0.0
 
         # Per 2026-04-13 two-channel doctrine (Frozen Facts v1.01F 20260527) + P1:
@@ -505,6 +495,40 @@ class AutonomicKernel:
             "dopamine_delta": float(dopamine_delta),
             "serotonin_delta": float(serotonin_delta),
             "n": float(n),
+        }
+
+    def push_hindsight_chemistry(
+        self,
+        *,
+        dopamine_delta: float = 0.0,
+        serotonin_delta: float = 0.0,
+        acetylcholine_delta: float = 0.0,
+        norepinephrine_delta: float = 0.0,
+        gaba_delta: float = 0.0,
+        endorphin_delta: float = 0.0,
+    ) -> None:
+        """Replace the cached hindsight NT vector (flag-gated; DESIGN HYPOTHESIS).
+
+        Caller (TS loop.ts) resolves the legibility-gated counterfactual-regret
+        signal via resolve_hindsight()/resolveHindsight() and fans the decayed
+        E6 NT deltas here so the Py chemistry surface stays in parity. REPLACES
+        (does not append) so each fanout contributes once. P14: SEPARATE channel.
+        Fail-closed: non-finite inputs coerced to 0.
+        """
+        def _f(x: float) -> float:
+            try:
+                v = float(x)
+                return v if math.isfinite(v) else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+
+        self._cached_hindsight_chemistry = {
+            "dopamine_delta": _f(dopamine_delta),
+            "serotonin_delta": _f(serotonin_delta),
+            "acetylcholine_delta": _f(acetylcholine_delta),
+            "norepinephrine_delta": _f(norepinephrine_delta),
+            "gaba_delta": _f(gaba_delta),
+            "endorphin_delta": _f(endorphin_delta),
         }
 
     # ─────────────────────── decayed reward sums ───────────────────────
@@ -668,22 +692,46 @@ class AutonomicKernel:
         # into the same reward channel. Additive - same shape as the
         # TS-side wiring in loop.ts tick() (cf. predDop / predSer).
         pred = self._cached_prediction_chemistry
+        # 2026-05-29 hindsight (flag-gated; all-zero when OFF → byte-identical).
+        # dop/ser/endo fold into the reward channel exactly like prediction
+        # chemistry; ACh/NE/GABA are applied additively to the derived NC after
+        # _compute_nc (parity with neurochemistry.ts reward*Delta inputs).
+        hs = self._cached_hindsight_chemistry
         reward_sums_combined = {
-            "dopamine": reward_sums["dopamine"] + pred["dopamine_delta"],
-            "serotonin": reward_sums["serotonin"] + pred["serotonin_delta"],
-            "endorphin": reward_sums["endorphin"],
+            "dopamine": reward_sums["dopamine"] + pred["dopamine_delta"] + hs["dopamine_delta"],
+            "serotonin": reward_sums["serotonin"] + pred["serotonin_delta"] + hs["serotonin_delta"],
+            "endorphin": reward_sums["endorphin"] + hs["endorphin_delta"],
         }
         nc = self._compute_nc(inputs, reward_sums_combined, inputs.is_awake)
+        # Fold ACh / NE / GABA hindsight deltas additively onto the derived
+        # levels (mirror neurochemistry.ts achOut/neOut/gabaOut). Zero when OFF.
+        if hs["acetylcholine_delta"] or hs["norepinephrine_delta"] or hs["gaba_delta"]:
+            nc = NeurochemicalState(
+                acetylcholine=_clip(nc.acetylcholine + hs["acetylcholine_delta"], 0.0, 1.0),
+                dopamine=nc.dopamine,
+                serotonin=nc.serotonin,
+                norepinephrine=_clip(nc.norepinephrine + hs["norepinephrine_delta"], 0.0, 1.0),
+                gaba=_clip(nc.gaba + hs["gaba_delta"], 0.0, 1.0),
+                endorphins=nc.endorphins,
+            )
 
-        # Fresh mood on wake - clear stale reward events AND prediction
-        # cache (the residual rows underlying the cached delta are now
-        # stale relative to the new wake-state regime).
+        # Fresh mood on wake - clear stale reward events AND prediction +
+        # hindsight caches (the lived events underlying them are now stale
+        # relative to the new wake-state regime).
         if inputs.woke:
             self._pending_rewards.clear()
             self._cached_prediction_chemistry = {
                 "dopamine_delta": 0.0,
                 "serotonin_delta": 0.0,
                 "n": 0.0,
+            }
+            self._cached_hindsight_chemistry = {
+                "dopamine_delta": 0.0,
+                "serotonin_delta": 0.0,
+                "acetylcholine_delta": 0.0,
+                "norepinephrine_delta": 0.0,
+                "gaba_delta": 0.0,
+                "endorphin_delta": 0.0,
             }
 
         return AutonomicTickResult(nc=nc, reward_sums=reward_sums_combined)

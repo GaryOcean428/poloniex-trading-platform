@@ -102,6 +102,8 @@ import {
   callAutonomicTick,
   callAutonomicReward,
   callAutonomicPredictionReward,
+  callAutonomicHindsight,
+  isPythonKernelEnabled,
 } from './autonomic_client.js';
 import { aggregatePeakTracker } from './aggregate_peak.js';
 import { wsPositionCache } from './ws_position_cache.js';
@@ -218,10 +220,11 @@ import {
   type PredictionChemistryDeltas,
 } from './predictionRewardEmitter.js';
 import {
-  advanceWatch,
-  resolveRegret,
+  counterfactualPnlUsdt,
+  resolveHindsight,
   isHindsightRegretLive,
-  type HindsightWatch,
+  type CloseSenseBundle,
+  type CounterfactualOutcome,
 } from './hindsightRegret.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { observeEquity, sizeDeflection, type EquityRichContext } from './equity_gradient.js';
@@ -668,6 +671,34 @@ export interface MonkeyKernelConfig {
   sizeFraction?: number;
 }
 
+/**
+ * Orchestration state for one hindsight watch (loop-owned; the pure transform
+ * in hindsightRegret.ts is stateless). Holds the close-time sense bundle, the
+ * derived horizon, and the per-tick-advanced counterfactual + regime-
+ * persistence trackers. Resolved at horizon end into the NT vector.
+ */
+interface HindsightWatchOrch {
+  symbol: string;
+  /** +1 closed long, -1 closed short. */
+  sideSign: 1 | -1;
+  qty: number;
+  exitPrice: number;
+  realizedPnlUsdt: number;
+  marginUsdt: number;
+  closedAtMs: number;
+  /** ms epoch this watch resolves — derived from the kernel's own observed
+   *  regime-persistence horizon at registration, NOT a fixed window. */
+  expiresAtMs: number;
+  /** Close-time senses for the legibility gate + GABA target. */
+  bundle: CloseSenseBundle;
+  /** Most recent counterfactual pnl (of having held) — updated each tick;
+   *  this is the HORIZON-END pnl when the watch resolves (NOT max excursion). */
+  lastCounterfactualPnlUsdt: number;
+  /** True while the regime observed at close still holds; set false the
+   *  first tick the live regime differs from `bundle.regimeAtClose`. */
+  regimePersisted: boolean;
+}
+
 interface SymbolState {
   lastBasin: Basin;
   /** Identity basin — starts uniform, crystallizes after N lived trades per §3.4 */
@@ -794,6 +825,22 @@ interface SymbolState {
   latestBasinSnapshot: {
     basinDir: number;
     tapeTrend: number;
+    computedAtMs: number;
+  } | null;
+  /** 2026-05-29 hindsight (flag-gated): the most recent qig-warp expectation
+   *  decision computed for this symbol (entry path), kept so the hindsight
+   *  legibility gate at close time can read the kernel's own latest forecast
+   *  direction + confidence + observed regime-persistence horizon. Null until
+   *  the first reverse-tape expectation call. Best-effort — when null, the
+   *  hindsight gate treats the continuation as NOT legible (no signal). */
+  lastExpectation: {
+    direction: 'long' | 'short' | 'flat' | 'observe';
+    confidence: number;
+    regime: string;
+    /** Observed regime-persistence horizon in HOURS, surfaced by the bubble
+     *  (qig_warp_horizon_hours) when available; else null → caller derives a
+     *  fallback from the kernel's own regime-coherence and documents it. */
+    horizonHours: number | null;
     computedAtMs: number;
   } | null;
   /** v0.8.8 per-agent reactive cognition state. Each of K/M/T/L gets
@@ -1037,21 +1084,35 @@ export class MonkeyKernel extends EventEmitter {
   private cachedPredictionChemistry: PredictionChemistryDeltas | null = null;
   /**
    * Hindsight / counterfactual-regret subsystem (MONKEY_HINDSIGHT_REGRET_LIVE,
-   * default OFF). After a kernel close we keep watching the symbol for a
-   * forward window; if holding would have beaten the realised close (the
-   * trend continued in the position's favour) we emit an aversive dopamine
-   * delta scaled by the foregone gain. Asymmetric: a correct close earns a
-   * mild positive, never a penalty. In-memory + best-effort — never blocks
-   * trading, no DB.
+   * default OFF; DESIGN HYPOTHESIS for operator review — see hindsightRegret.ts).
    *
-   * `hindsightWatches`: symbol → list of active watches (a symbol can have
-   * several overlapping closes in the window). `cachedHindsightDopamine` is
-   * folded additively into rewardDopamineDelta in tick(), exactly like
-   * predDop. It decays toward 0 each tick so a resolved regret is a transient
-   * mood event, not a permanent bias.
+   * After a KERNEL-OWNED close we keep watching the symbol until the derived
+   * HORIZON elapses (observer-derived regime-persistence window — NOT a fixed
+   * 30 min). We track the pnl of having HELD to the horizon end (NOT max
+   * favourable excursion) and whether the SAME regime persisted. At horizon
+   * end we resolve the close-time SENSE BUNDLE + the counterfactual through
+   * the legibility-gated transform (resolveHindsight). Regret fires ONLY when
+   * the close was owned, the continuation was legible at close, and the regime
+   * persisted; otherwise the move is surprise/noise and NO aversive signal is
+   * emitted. The full E6 NT vector is folded into decaying caches.
+   *
+   * `hindsightWatches`: symbol → list of active orchestration watches. The
+   * `cachedHindsight*` caches each carry one NT channel, folded additively
+   * into the corresponding reward delta in tick() and decayed toward 0 so a
+   * resolved hindsight event is transient, not a permanent bias. P14: own
+   * channels, not folded into pnl-frac history.
    */
-  private hindsightWatches: Map<string, HindsightWatch[]> = new Map();
+  private hindsightWatches: Map<string, HindsightWatchOrch[]> = new Map();
   private cachedHindsightDopamine = 0;
+  private cachedHindsightSerotonin = 0;
+  private cachedHindsightAcetylcholine = 0;
+  private cachedHindsightNorepinephrine = 0;
+  private cachedHindsightGaba = 0;
+  private cachedHindsightEndorphin = 0;
+  /** Targeted-GABA bindings: pattern key (premature_close:regime:side) →
+   *  decaying weight. Read by the executive's per-pattern caution, NOT by a
+   *  global "close less" gate — this is what keeps GABA targeted. */
+  private hindsightGabaTargets: Map<string, number> = new Map();
   private tickMs: number;
   private readonly baseTickMs: number;
   private readonly symbols: string[];
@@ -1990,6 +2051,7 @@ export class MonkeyKernel extends EventEmitter {
       entryTimeMsByLane: {},
       integrationHistory: [],
       latestBasinSnapshot: null,
+      lastExpectation: null,
       agentStates: {
         K: newPerAgentState(),
         M: newPerAgentState(),
@@ -2251,13 +2313,10 @@ export class MonkeyKernel extends EventEmitter {
       price: lastPrice,
     });
 
-    // Hindsight / counterfactual-regret evaluation (flag-gated, default OFF).
-    // Advance any active watches for this symbol with the fresh price and
-    // resolve the ones whose window has elapsed into a dopamine delta.
-    // Best-effort; never throws into the tick.
-    if (isHindsightRegretLive()) {
-      this.evaluateHindsightWatches(symbol, lastPrice);
-    }
+    // Hindsight / counterfactual-regret evaluation runs BELOW regime
+    // classification (it needs the live regime to track regime-persistence
+    // for the legibility gate). See the evaluateHindsightWatches() call after
+    // `regimeReading` is computed.
 
     // SENSE-2 Phase 2 (#768) — BTC beacon shared price cache. BTC ticks
     // write the latest mark; non-BTC ticks read it for cross-symbol
@@ -2523,20 +2582,48 @@ export class MonkeyKernel extends EventEmitter {
     const predDop = predChem?.dopamineDelta ?? 0;
     const predSer = predChem?.serotoninDelta ?? 0;
 
-    // Hindsight / counterfactual-regret dopamine (flag-gated, default OFF).
-    // `cachedHindsightDopamine` accumulates resolved regret deltas
-    // (evaluateHindsightWatches) and decays toward 0 each tick so the
-    // "closed too early" sting is a transient mood event, not a permanent
-    // bias. Decay uses the same 20-min half-life as the reward queue: a
-    // per-tick factor of 0.5^(tickMs / halfLife). P14: its own channel,
-    // not folded into pnl-frac history.
+    // Hindsight / counterfactual-regret NT vector (flag-gated, default OFF).
+    // The `cachedHindsight*` caches accumulate the resolved E6 NT deltas
+    // (evaluateHindsightWatches) and decay toward 0 each tick so a resolved
+    // hindsight event is a transient mood event, not a permanent bias. Decay
+    // uses the same 20-min half-life as the reward queue. P14: own channels,
+    // not folded into pnl-frac history. The dopamine + serotonin channels are
+    // folded into rewardDopamineDelta / rewardSerotoninDelta below; ACh / NE /
+    // GABA / endorphin are folded via the dedicated reward-delta inputs.
     let hindsightDop = 0;
+    let hindsightSer = 0;
+    let hindsightAch = 0;
+    let hindsightNe = 0;
+    let hindsightGaba = 0;
+    let hindsightEndo = 0;
     if (isHindsightRegretLive()) {
       hindsightDop = this.cachedHindsightDopamine;
+      hindsightSer = this.cachedHindsightSerotonin;
+      hindsightAch = this.cachedHindsightAcetylcholine;
+      hindsightNe = this.cachedHindsightNorepinephrine;
+      hindsightGaba = this.cachedHindsightGaba;
+      hindsightEndo = this.cachedHindsightEndorphin;
       const HINDSIGHT_HALF_LIFE_MS = 20 * 60 * 1000;
       const decay = Math.pow(0.5, this.tickMs / HINDSIGHT_HALF_LIFE_MS);
       this.cachedHindsightDopamine *= decay;
-      if (Math.abs(this.cachedHindsightDopamine) < 1e-6) this.cachedHindsightDopamine = 0;
+      this.cachedHindsightSerotonin *= decay;
+      this.cachedHindsightAcetylcholine *= decay;
+      this.cachedHindsightNorepinephrine *= decay;
+      this.cachedHindsightGaba *= decay;
+      this.cachedHindsightEndorphin *= decay;
+      const z = (v: number): number => (Math.abs(v) < 1e-6 ? 0 : v);
+      this.cachedHindsightDopamine = z(this.cachedHindsightDopamine);
+      this.cachedHindsightSerotonin = z(this.cachedHindsightSerotonin);
+      this.cachedHindsightAcetylcholine = z(this.cachedHindsightAcetylcholine);
+      this.cachedHindsightNorepinephrine = z(this.cachedHindsightNorepinephrine);
+      this.cachedHindsightGaba = z(this.cachedHindsightGaba);
+      this.cachedHindsightEndorphin = z(this.cachedHindsightEndorphin);
+      // Decay the targeted-GABA bindings on the same half-life and prune.
+      for (const [k, w] of this.hindsightGabaTargets) {
+        const nw = w * decay;
+        if (nw < 1e-6) this.hindsightGabaTargets.delete(k);
+        else this.hindsightGabaTargets.set(k, nw);
+      }
     }
 
     // 2026-05-16 (#715/#716/#717 derivation refactor): build the
@@ -2559,8 +2646,11 @@ export class MonkeyKernel extends EventEmitter {
       kappa: state.kappa,
       externalCoupling: couplingHealth,
       rewardDopamineDelta: rewardDeltas.dopamine + predDop + hindsightDop,
-      rewardSerotoninDelta: rewardDeltas.serotonin + predSer,
-      rewardEndorphinDelta: rewardDeltas.endorphin,
+      rewardSerotoninDelta: rewardDeltas.serotonin + predSer + hindsightSer,
+      rewardEndorphinDelta: rewardDeltas.endorphin + hindsightEndo,
+      rewardAcetylcholineDelta: hindsightAch,
+      rewardNorepinephrineDelta: hindsightNe,
+      rewardGabaDelta: hindsightGaba,
       observables: {
         phiHistory: state.phiHistory,
         surpriseHistory: state.surpriseHistory,
@@ -2829,6 +2919,15 @@ export class MonkeyKernel extends EventEmitter {
       ...state.basinHistory,
       basin,
     ]);
+
+    // Hindsight / counterfactual-regret evaluation (flag-gated, default OFF).
+    // Advance any active watches for this symbol with the fresh price + live
+    // regime: track the horizon-end counterfactual pnl and whether the regime
+    // observed at close still holds. Resolve the watches whose derived horizon
+    // has elapsed into the E6 NT vector. Best-effort; never throws into tick.
+    if (isHindsightRegretLive()) {
+      this.evaluateHindsightWatches(symbol, lastPrice, String(regimeReading.regime));
+    }
 
     // Phase B — geometry-derived TP/SL bracket. Recompute each tick from
     // the current φ, regime confidence and ATR(14); stash on symbol state
@@ -4313,6 +4412,23 @@ export class MonkeyKernel extends EventEmitter {
           });
         } catch (err) {
           expectationDecision = null;
+        }
+        // 2026-05-29 hindsight (flag-gated): persist the kernel's latest
+        // qig-warp forecast so the close-time legibility gate can read it.
+        // Stored regardless of the flag (cheap, no behavioural effect when
+        // the flag is OFF — nothing reads it).
+        if (expectationDecision !== null) {
+          state.lastExpectation = {
+            direction: expectationDecision.expectation_direction,
+            confidence: expectationDecision.expectation_confidence,
+            regime: String(expectationDecision.expectation_regime ?? ''),
+            horizonHours:
+              typeof expectationDecision.qig_warp_horizon_hours === 'number' &&
+              Number.isFinite(expectationDecision.qig_warp_horizon_hours)
+                ? expectationDecision.qig_warp_horizon_hours
+                : null,
+            computedAtMs: Date.now(),
+          };
         }
       }
 
@@ -9225,51 +9341,114 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
-   * Advance + resolve hindsight/counterfactual-regret watches for one
-   * symbol (MONKEY_HINDSIGHT_REGRET_LIVE, default OFF; caller gates).
+   * Advance + resolve hindsight/counterfactual-regret watches for one symbol
+   * (MONKEY_HINDSIGHT_REGRET_LIVE, default OFF; caller gates; DESIGN HYPOTHESIS).
    *
-   * For each active watch: update its running best counterfactual pnl with
-   * the fresh price. When a watch's forward window has elapsed, resolve it
-   * into a dopamine delta (aversive iff holding would have beaten the close;
-   * mild positive for a correct close) and fold the delta into the decaying
-   * `cachedHindsightDopamine` cache, which tick() adds to rewardDopamineDelta.
+   * For each active watch this tick:
+   *   1. update `lastCounterfactualPnlUsdt` = pnl of having HELD to NOW (this
+   *      becomes the horizon-end pnl when the watch resolves — NOT a running
+   *      max-favourable-excursion).
+   *   2. clear `regimePersisted` the first tick the live regime differs from
+   *      the regime observed at close (gate condition 3).
+   * When a watch's DERIVED horizon has elapsed, resolve the close-time sense
+   * bundle + the counterfactual through the legibility-gated transform
+   * (resolveHindsight) into the E6 NT vector + targeted-GABA binding, and
+   * fold the deltas into the decaying `cachedHindsight*` caches that tick()
+   * reads. Pure helpers do all the math; this method is orchestration only.
+   * Best-effort — wrapped so it never disturbs the tick.
    *
-   * Pure helpers do the math (hindsightRegret.ts); this method only does the
-   * orchestration. Best-effort — wrapped so it never disturbs the tick.
+   * @param currentRegime  the live regime label this tick (from regimeReading)
+   *                       — compared to each watch's close-time regime for the
+   *                       regime-persistence gate.
    */
-  private evaluateHindsightWatches(symbol: string, price: number): void {
+  private evaluateHindsightWatches(symbol: string, price: number, currentRegime: string): void {
     try {
       const list = this.hindsightWatches.get(symbol);
       if (!list || list.length === 0) return;
       const now = Date.now();
       const symState = this.symbolStates.get(symbol);
       const pnlFracHistory = symState?.pnlFracHistory ?? [];
-      const survivors: HindsightWatch[] = [];
-      for (let w of list) {
-        w = advanceWatch(w, price);
+      const liveRegime = (currentRegime ?? '').trim().toLowerCase();
+      const survivors: HindsightWatchOrch[] = [];
+      for (const w of list) {
+        // 1. Advance the horizon-end counterfactual with the fresh price.
+        const cf = counterfactualPnlUsdt(
+          { sideSign: w.sideSign, qty: w.qty, exitPrice: w.exitPrice, realizedPnlUsdt: w.realizedPnlUsdt },
+          price,
+        );
+        if (cf !== null) w.lastCounterfactualPnlUsdt = cf;
+        // 2. Regime-persistence: once the live regime diverges from the
+        //    close-time regime, the continuation is no longer the foreseeable
+        //    one. Latch false (a later re-match does not revive it).
+        if (w.regimePersisted && liveRegime.length > 0) {
+          const closeRegime = (w.bundle.regimeAtClose ?? '').trim().toLowerCase();
+          if (closeRegime.length > 0 && liveRegime !== closeRegime) {
+            w.regimePersisted = false;
+          }
+        }
         if (now < w.expiresAtMs) {
           survivors.push(w);
           continue;
         }
-        // Window elapsed — resolve into a chemistry delta.
-        const deltas = resolveRegret(w, pnlFracHistory);
-        // Fold additively into the decaying cache. K-only: hindsight is a
-        // mood event for the kernel that did the closing, like the K-scoped
-        // reward channel in tick().
-        this.cachedHindsightDopamine += deltas.dopamineDelta;
+        // Horizon elapsed — resolve through the legibility-gated transform.
+        const outcome: CounterfactualOutcome = {
+          realizedPnlUsdt: w.realizedPnlUsdt,
+          horizonEndPnlUsdt: w.lastCounterfactualPnlUsdt,
+          marginUsdt: w.marginUsdt,
+          regimePersisted: w.regimePersisted,
+        };
+        const res = resolveHindsight(w.bundle, outcome, pnlFracHistory);
+        // Fold the full NT vector into the decaying caches. K-only: hindsight
+        // is a mood event for the kernel that owned the close.
+        this.cachedHindsightDopamine += res.nt.dopamineDelta;
+        this.cachedHindsightSerotonin += res.nt.serotoninDelta;
+        this.cachedHindsightAcetylcholine += res.nt.acetylcholineDelta;
+        this.cachedHindsightNorepinephrine += res.nt.norepinephrineDelta;
+        this.cachedHindsightGaba += res.nt.gabaDelta;
+        this.cachedHindsightEndorphin += res.nt.endorphinDelta;
+        // Targeted GABA binding — pattern-keyed, NOT global. This is what
+        // keeps the kernel from becoming "afraid to close": the caution is
+        // bound to (regime, side) of the premature close, not to closing.
+        if (res.gabaTarget !== null && res.nt.gabaDelta > 0) {
+          const prev = this.hindsightGabaTargets.get(res.gabaTarget) ?? 0;
+          this.hindsightGabaTargets.set(res.gabaTarget, prev + res.nt.gabaDelta);
+        }
         logger.info('[Monkey] hindsight watch resolved', {
           symbol,
-          source: deltas.source,
-          foregoneGainUsdt: deltas.foregoneGainUsdt.toFixed(4),
+          source: res.source,
+          gabaTarget: res.gabaTarget,
+          foregoneGainUsdt: res.foregoneGainUsdt.toFixed(4),
           realizedPnl: w.realizedPnlUsdt.toFixed(4),
-          bestCounterfactual: w.bestCounterfactualPnlUsdt.toFixed(4),
-          dopamineDelta: deltas.dopamineDelta.toFixed(4),
+          horizonEndPnl: w.lastCounterfactualPnlUsdt.toFixed(4),
+          predictionErrorZ: res.predictionErrorZ.toFixed(3),
+          regimePersisted: w.regimePersisted,
+          dop: res.nt.dopamineDelta.toFixed(4),
+          ser: res.nt.serotoninDelta.toFixed(4),
+          ach: res.nt.acetylcholineDelta.toFixed(4),
+          ne: res.nt.norepinephrineDelta.toFixed(4),
+          gaba: res.nt.gabaDelta.toFixed(4),
+          endo: res.nt.endorphinDelta.toFixed(4),
         });
       }
       if (survivors.length === 0) {
         this.hindsightWatches.delete(symbol);
       } else {
         this.hindsightWatches.set(symbol, survivors);
+      }
+      // TS→Py parity fanout: push the current decayed hindsight NT vector to
+      // the Py autonomic surface so its chemistry (which drives executive
+      // sizing + survives restarts) matches the TS fold. Best-effort, gated
+      // on the Python kernel being enabled. Mirrors callAutonomicPredictionReward.
+      if (isPythonKernelEnabled()) {
+        void callAutonomicHindsight({
+          instanceId: this.instanceId,
+          dopamineDelta: this.cachedHindsightDopamine,
+          serotoninDelta: this.cachedHindsightSerotonin,
+          acetylcholineDelta: this.cachedHindsightAcetylcholine,
+          norepinephrineDelta: this.cachedHindsightNorepinephrine,
+          gabaDelta: this.cachedHindsightGaba,
+          endorphinDelta: this.cachedHindsightEndorphin,
+        });
       }
     } catch (err) {
       logger.warn('[Monkey] hindsight evaluation failed (non-fatal)', {
@@ -9770,41 +9949,83 @@ export class MonkeyKernel extends EventEmitter {
       noteHeartClose(symbol, Date.now(), poloRealized);
 
       // Hindsight / counterfactual-regret watch registration (flag-gated,
-      // default OFF). Operator 2026-05-29: the kernel "needs to feel the
-      // pain of [cutting a winning-direction position on noise]... enough
-      // that it thinks about thinking about the trend a second time before
-      // closing." We register a forward watch on the symbol; if the trend
-      // continues in the CLOSED position's favour over the window, the
-      // kernel pays an aversive dopamine delta scaled by the foregone gain
-      // (asymmetric — a correct close never incurs a penalty). Best-effort:
+      // default OFF; DESIGN HYPOTHESIS — see hindsightRegret.ts). Operator
+      // 2026-05-29: the kernel "needs to feel the pain of [cutting a
+      // winning-direction position on noise]... enough that it thinks about
+      // thinking about the trend a second time before closing" — but ONLY
+      // when the continuation was foreseeable (legible) at close. We capture
+      // the close-time SENSE BUNDLE + derive the watch HORIZON from the
+      // kernel's own forecast, then watch the symbol until the horizon
+      // elapses. resolveHindsight() applies the legibility gate. Best-effort:
       // wrapped so a bad row never disturbs the close path.
       if (isHindsightRegretLive()) {
         try {
           const sideSign: 1 | -1 = side === 'long' ? 1 : -1;
-          // qty + exit price from the closed rows we just persisted.
-          const qres = await pool.query<{ qty: string; exit_price: string }>(
+          // qty + exit price + ownership (reason) from the closed rows.
+          const qres = await pool.query<{ qty: string; exit_price: string; any_adopted: boolean }>(
             `SELECT COALESCE(SUM(COALESCE(quantity, 0)), 0) AS qty,
-                    COALESCE(AVG(NULLIF(exit_price, 0)), 0) AS exit_price
+                    COALESCE(AVG(NULLIF(exit_price, 0)), 0) AS exit_price,
+                    bool_or(COALESCE(reason, '') LIKE '%|adopted|%') AS any_adopted
                FROM autonomous_trades
               WHERE id = ANY($1)`,
             [tradeIds],
           );
           const qty = Number(qres.rows[0]?.qty ?? 0);
           const exitPrice = Number(qres.rows[0]?.exit_price ?? 0);
-          // Best-effort: skip the watch when we have no authoritative exit
-          // price (some close paths don't persist it). No fallback guess —
+          // Ownership (gate condition 1): a row that was reconciler-adopted
+          // from an operator-opened position is NOT a kernel-initiated close
+          // → not self-regret. (Operator/manual/liquidation closes that never
+          // reach this kernel path are excluded by construction.)
+          const kernelOwnedClose = qres.rows[0]?.any_adopted !== true;
+          // Best-effort: skip the watch with no authoritative exit price —
           // a wrong exit price would produce a wrong counterfactual.
           if (Number.isFinite(qty) && qty > 0 && Number.isFinite(exitPrice) && exitPrice > 0) {
-            // Forward window length — FLAGGED FOR OPERATOR REVIEW. 30 min is
-            // a deliberately conservative bound: long enough that a genuine
-            // continuing trend registers, short enough that the watch is
-            // retired before the regime turns over (mirrors the 20-min
-            // reward half-life + the predictionRewardEmitter 5-min scan
-            // window). This is the single non-observer-derived constant in
-            // the signal; see the PR body for the calibration discussion.
-            const HINDSIGHT_WINDOW_MS = 30 * 60 * 1000;
+            const symState = this.symbolStates.get(symbol);
+            const snap = symState?.latestBasinSnapshot;
+            const lastExp = symState?.lastExpectation ?? null;
+
+            // ── Derive the watch HORIZON (doctrine: window = the kernel's own
+            // forecast horizon, NOT a fixed 30 min). Priority:
+            //   (a) the qig-warp expectation horizon (observed regime-
+            //       persistence in HOURS) if the bubble surfaced it;
+            //   (b) FALLBACK — the kernel's own observed coherence horizon:
+            //       coherenceStreak ticks (how long perception+forecast
+            //       stayed coherent on the held position) × tickMs. This is
+            //       derived from lived observation, not a designer table.
+            //       Documented as a fallback per doctrine.
+            // Floored at one tick so a watch always has positive duration.
+            const horizonFromWarpMs =
+              lastExp && lastExp.horizonHours !== null
+                ? lastExp.horizonHours * 60 * 60 * 1000
+                : null;
+            const coherenceTicks = Math.max(1, symState?.coherenceStreak ?? 1);
+            const horizonFallbackMs = coherenceTicks * this.tickMs;
+            const horizonMs = horizonFromWarpMs ?? horizonFallbackMs;
+
+            // ── Close-time SENSE BUNDLE (legibility gate + GABA target). ──
+            // warp expectation direction → sign; basinDir / tapeTrend from
+            // the latest snapshot; regime from the lane's open anchor (the
+            // regime the kernel committed to); coherenceStreak as legibility.
+            const warpDir = lastExp?.direction;
+            const warpExpectationSign: -1 | 0 | 1 =
+              warpDir === 'long' ? 1 : warpDir === 'short' ? -1 : 0;
+            const regimeAtClose =
+              symState?.regimeAtOpenByLane
+                ? (Object.values(symState.regimeAtOpenByLane)[0] ?? lastExp?.regime ?? 'unknown')
+                : (lastExp?.regime ?? 'unknown');
+            const bundle: CloseSenseBundle = {
+              kernelOwnedClose,
+              sideSign,
+              warpExpectationSign,
+              warpExpectationConfidence: lastExp?.confidence ?? 0,
+              regimeAtClose: String(regimeAtClose),
+              basinDirAtClose: snap?.basinDir ?? 0,
+              tapeTrendAtClose: snap?.tapeTrend ?? 0,
+              coherenceStreak: symState?.coherenceStreak ?? 0,
+            };
+
             const now = Date.now();
-            const watch: HindsightWatch = {
+            const watch: HindsightWatchOrch = {
               symbol,
               sideSign,
               qty,
@@ -9812,18 +10033,25 @@ export class MonkeyKernel extends EventEmitter {
               realizedPnlUsdt: poloRealized,
               marginUsdt,
               closedAtMs: now,
-              expiresAtMs: now + HINDSIGHT_WINDOW_MS,
-              bestCounterfactualPnlUsdt: poloRealized,
+              expiresAtMs: now + horizonMs,
+              bundle,
+              lastCounterfactualPnlUsdt: poloRealized,
+              regimePersisted: true,
             };
             const list = this.hindsightWatches.get(symbol) ?? [];
             list.push(watch);
-            // Bound per-symbol watch list to avoid unbounded growth on a
-            // symbol that closes repeatedly.
+            // Bound per-symbol watch list to avoid unbounded growth.
             if (list.length > 16) list.shift();
             this.hindsightWatches.set(symbol, list);
             logger.info('[Monkey] hindsight watch registered', {
               symbol, side, qty, exitPrice, realizedPnl: poloRealized.toFixed(4),
-              expiresInMs: HINDSIGHT_WINDOW_MS,
+              kernelOwnedClose,
+              warpExpectationSign,
+              warpConfidence: (lastExp?.confidence ?? 0).toFixed(3),
+              regimeAtClose: String(regimeAtClose),
+              coherenceStreak: symState?.coherenceStreak ?? 0,
+              horizonSource: horizonFromWarpMs !== null ? 'qig_warp' : 'coherence_fallback',
+              horizonMs: Math.round(horizonMs),
             });
           }
         } catch (err) {

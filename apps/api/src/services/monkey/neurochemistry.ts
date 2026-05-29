@@ -208,6 +208,19 @@ export interface NeurochemicalInputs {
   /** As above — peak-state reward on strong-regime wins. */
   rewardEndorphinDelta?: number;
   /**
+   * 2026-05-29 (hindsight, MONKEY_HINDSIGHT_REGRET_LIVE — DESIGN HYPOTHESIS):
+   * additive ACh / NE / GABA reward deltas from the hindsight NT vector. The
+   * trade-outcome reward channel only carries dop/ser/endo; the hindsight
+   * signal also wants to bind cues (ACh↑), mark salience (NE↑), and apply
+   * TARGETED inhibition (GABA↑). These are folded additively AFTER the
+   * basin-observed derivation so flag-OFF (all default 0) is byte-identical.
+   * GABA here is a small additive nudge on the global level; the actual
+   * targeting lives in the kernel's per-pattern hindsightGabaTargets map —
+   * this delta only reflects that *some* targeted caution is active. */
+  rewardAcetylcholineDelta?: number;
+  rewardNorepinephrineDelta?: number;
+  rewardGabaDelta?: number;
+  /**
    * 2026-05-16 (#715/#716/#717 derivation refactor): basin-observed
    * history slices used to z-score each per-tick chemical against the
    * basin's own scale. When absent, the chemical falls back to the
@@ -485,12 +498,19 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   }
   const endo = clip(endoBase + (inputs.rewardEndorphinDelta ?? 0), 0, 1);
 
+  // 2026-05-29 hindsight (flag-gated; deltas default 0 → byte-identical when
+  // OFF): fold the hindsight ACh / NE / GABA reward deltas additively onto the
+  // derived levels, exactly as dop/ser/endo already fold their reward deltas.
+  const achOut = clip(ach + (inputs.rewardAcetylcholineDelta ?? 0), 0, 1);
+  const neOut = clip(ne + (inputs.rewardNorepinephrineDelta ?? 0), 0, 1);
+  const gabaOut = clip(gaba + (inputs.rewardGabaDelta ?? 0), 0, 1);
+
   return {
-    acetylcholine: ach,
+    acetylcholine: achOut,
     dopamine: dop,
     serotonin: ser,
-    norepinephrine: ne,
-    gaba,
+    norepinephrine: neOut,
+    gaba: gabaOut,
     endorphins: endo,
   };
 }

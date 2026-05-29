@@ -43,6 +43,15 @@ export interface ExpectationDecision {
   qig_warp_source: 'QIG_WARP_RUNTIME' | 'QIG_WARP_UNAVAILABLE' | 'QIG_WARP_DISABLED';
   tape_trend: number;
   basin_direction: number;
+  /**
+   * 2026-05-29 hindsight (DESIGN HYPOTHESIS): observed regime-persistence
+   * horizon in HOURS, surfaced by the bubble from
+   * forecast_horizon_observer.temporal_scale_for(regime) (the e-fold
+   * autocorrelation decay lag converted to hours). The hindsight subsystem
+   * uses this as its watch WINDOW (per doctrine: window = the kernel's own
+   * forecast horizon). Optional — when the bubble does not supply it, the
+   * caller derives a documented fallback. */
+  qig_warp_horizon_hours?: number;
   tape_basin_disagreement: number;
   reverse_tape_window: boolean;
   reverse_tape_side: 'long' | 'short' | null;

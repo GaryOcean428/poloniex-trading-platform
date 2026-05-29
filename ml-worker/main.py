@@ -1470,6 +1470,36 @@ async def monkey_autonomic_prediction_reward(request: Request):
     }
 
 
+@app.post("/monkey/autonomic/hindsight")
+async def monkey_autonomic_hindsight(request: Request):
+    """Push the resolved hindsight NT vector (MONKEY_HINDSIGHT_REGRET_LIVE —
+    DESIGN HYPOTHESIS). The legibility-gated counterfactual-regret signal is
+    resolved TS-side (loop.ts owns the watches); this fans the decayed E6 NT
+    deltas to the Py chemistry surface so it stays in parity. REPLACES (does
+    not append); folded additively into chemistry on each tick(); cleared on
+    wake. P14: separate channel. Fail-closed: non-finite → 0.
+
+    Request body:
+      { instance_id, dopamine_delta, serotonin_delta, acetylcholine_delta,
+        norepinephrine_delta, gaba_delta, endorphin_delta }
+    """
+    payload = await request.json()
+    instance_id = payload.get("instance_id", "monkey-primary")
+    kernel = _get_autonomic(instance_id)
+    kernel.push_hindsight_chemistry(
+        dopamine_delta=float(payload.get("dopamine_delta", 0.0)),
+        serotonin_delta=float(payload.get("serotonin_delta", 0.0)),
+        acetylcholine_delta=float(payload.get("acetylcholine_delta", 0.0)),
+        norepinephrine_delta=float(payload.get("norepinephrine_delta", 0.0)),
+        gaba_delta=float(payload.get("gaba_delta", 0.0)),
+        endorphin_delta=float(payload.get("endorphin_delta", 0.0)),
+    )
+    return {
+        "cached": kernel._cached_hindsight_chemistry,
+        "snapshot": kernel.snapshot(),
+    }
+
+
 @app.post("/monkey/expectation/evaluate")
 async def monkey_expectation_evaluate(request: Request):
     """Evaluate the qig-warp expectation bubble for one tape/basin
