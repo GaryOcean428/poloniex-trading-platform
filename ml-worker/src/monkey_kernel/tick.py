@@ -1855,10 +1855,20 @@ def run_tick(
         try:
             expectation_trade_id = inputs.account.own_position_trade_id
             if expectation_trade_id is None and inputs.account.lane_positions:
-                for lp in inputs.account.lane_positions:
-                    if lp.lane == lane or lp.side == held_side:
-                        expectation_trade_id = lp.trade_id
-                        break
+                lane_match = next(
+                    (lp for lp in inputs.account.lane_positions if lp.lane == lane),
+                    None,
+                )
+                held_match = next(
+                    (
+                        lp for lp in inputs.account.lane_positions
+                        if held_side is not None and lp.side == held_side
+                    ),
+                    None,
+                )
+                matched_position = lane_match if held_side is None else (held_match or lane_match)
+                if matched_position is not None:
+                    expectation_trade_id = matched_position.trade_id
             if action in ("scalp_exit", "exit", "flatten"):
                 expectation_side_after = None
                 decision_surface = "exit"

@@ -227,7 +227,7 @@ def test_qig_warp_forbidden_literal_patterns_absent_repo_wide():
 
 def test_qig_warp_forbidden_literal_regex_positive_controls():
     hold_bias = re.compile(
-        r"[A-Za-z_]*HOLD_BIAS[A-Za-z_]*\s*[:=]\s*(?!1(?:\.0+)?\b)[0-9.]+" ,
+        r"[A-Za-z_]*HOLD_BIAS[A-Za-z_]*\s*[:=]\s*(?!1(?:\.0+)?\b)[0-9.]+",
         re.I,
     )
     reward_scale = re.compile(
