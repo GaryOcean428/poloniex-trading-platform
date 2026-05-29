@@ -1231,11 +1231,12 @@ def run_tick(
         "topology": {
             "stud": stud_reading_to_dict(stud_reading),
             "stud_live_flag": stud_live,
-            # qig-warp expectation decisions are evaluated by the ml-worker
-            # HTTP endpoint and applied/audited by the TS entry path. Keep
-            # this legacy telemetry key explicitly disabled so consumers do not
-            # infer a tick-side bubble decision from stud-only topology output.
-            "expectation": {"live": False, "source": "ts_entry_path"},
+            # qig-warp expectation decisions are evaluated by
+            # POST /monkey/expectation/evaluate and applied/audited by the
+            # TypeScript entry path. Keep this legacy telemetry key explicitly
+            # disabled so consumers do not infer a tick-side bubble decision
+            # from stud-only topology output.
+            "expectation": {"live": False, "source": "typescript_entry_path"},
             "expectation_live_flag": False,
             "figure8": {
                 "current_loop_assignment": assign_loop(side_candidate).value,
