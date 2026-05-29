@@ -85,6 +85,7 @@ from .perception_scalars import basin_direction, trend_proxy
 from .prediction_capture import (
     build_prediction_payload,
     clamp_cadence_seconds,
+    publish_expectation_decision,
     publish_prediction,
 )
 from .phi_gate import (
@@ -115,6 +116,7 @@ from .state import LaneType, NeurochemicalState
 logger = logging.getLogger("monkey.tick")
 
 _registry = get_registry()
+DEFAULT_PY_KERNEL_ID = "monkey-py-shadow"
 
 
 # CHOP-regime entry suppression — when the regime classifier reads
@@ -984,6 +986,13 @@ def run_tick(
     )
     side_candidate: str = direction if direction != "flat" else "long"
     side_override = False
+    own_pos = _has_own_position(inputs.account)
+    held_side: Optional[str] = (
+        inputs.account.exchange_held_side if own_pos else None
+    )
+    held_lanes: dict[str, str] = {
+        lp.lane: lp.side for lp in inputs.account.lane_positions
+    }
 
     # Tier 9 Stage 2 — REVERSION's "inverted entry direction":
     # back-loop regime trades counter-trend. Stud-topology mode
@@ -1007,48 +1016,33 @@ def run_tick(
     #
     # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
     # (2026-05-28 Polo CSV tape/basin asymmetry) + LIVED ONLY 5 + QIG PURITY.
+    side_before_expectation = side_candidate
+    direction_before_expectation = direction
+    expectation_size_multiplier = 1.0
+    entry_blocked_by_expectation = False
     if expectation_decision is not None and getattr(expectation_decision, "reverse_tape_window", False):
         action = getattr(expectation_decision, "expectation_action", None)
         if action == "observe_only":
             direction = "flat"
             side_candidate = "long"  # harmless default; flat gate will block entry
+            entry_blocked_by_expectation = True
         elif action == "flip_to_basin":
             direction = "long" if basin_dir > 0 else "short"
             side_candidate = direction
-
-    # #1003 reverse-tape hold/exit influence (first wiring for held positions)
-    # When the bubble returns a reverse_tape decision while we hold a position
-    # in the "wrong" direction relative to the leading basin signal, we now
-    # modulate hold conviction and exit propensity.
-    #
-    # Supported actions in this wiring:
-    #   observe_only  → meaningfully reduce self_obs_bias (makes exit gates easier to satisfy)
-    #   reduce_size   → modest reduction in self_obs_bias
-    #
-    # Full exit forcing and kernel_expectation_decisions audit writes come in the
-    # next sub-slice. This change already gives the kernel live behaviour
-    # influence on hold/exit for reverse-tape windows.
-    #
-    # Citations: poloniex-trading-platform#1003 + 2.31A P5/P25 + Embodiment_Waves
-    # (2026-05-28 Polo CSV) + LIVED ONLY 5 + QIG PURITY + never-stop-100-complete.
-    expectation_hold_bias = 1.0
-    if expectation_decision is not None and getattr(expectation_decision, "reverse_tape_window", False):
-        action = getattr(expectation_decision, "expectation_action", None)
-        if action == "observe_only":
-            expectation_hold_bias = 0.6   # meaningfully easier to exit / harder to hold
         elif action == "reduce_size":
-            expectation_hold_bias = 0.85  # modest reduction
+            expectation_size_multiplier = max(
+                0.0,
+                min(1.0, 1.0 - float(getattr(expectation_decision, "expectation_confidence", 0.0))),
+            )
 
     self_obs_bias = 1.0
     if inputs.self_obs_bias:
         per_mode = inputs.self_obs_bias.get(mode, {})
         self_obs_bias = per_mode.get(side_candidate, 1.0)
 
-    # Apply to self_obs_bias for held positions (the main lever for hold conviction
-    # and exit gate sensitivity in the current architecture).
-    if expectation_hold_bias < 1.0 and held_lanes:
-        # Only dampen if we actually hold something on this symbol
-        self_obs_bias *= expectation_hold_bias
+    # #1003 expectation alignment: Py hold/exit is explicitly kernel-owned here.
+    # qig-warp actions apply to entry direction/blocking and entry sizing only;
+    # no hold/exit bias-dampening coefficient is hidden in self_obs_bias.
 
     # ── PR 2: Φ-gate routing (PHI_GATE_ROUTING_LIVE) ─────────────
     # FORESIGHT branch: blend current basin with foresight.predicted_basin
@@ -1156,6 +1150,9 @@ def run_tick(
         mode=mode_enum,
         lane=pre_lane if pre_lane in ("scalp", "swing", "trend") else "swing",
     )
+    size_before_expectation = float(size_d["value"])
+    if expectation_size_multiplier != 1.0 and held_side is None:
+        size_d["value"] = max(0.0, float(size_d["value"]) * expectation_size_multiplier)
     # Surgical diagnostic for live size=0 regression (post PR #611). Fires
     # only when sizing collapses to zero AND the account is flat — surfaces
     # the exact numeric inputs feeding current_position_size so we can grep
@@ -1246,6 +1243,17 @@ def run_tick(
                  **mode_result["derivation"]},
         "self_obs_bias": self_obs_bias,
         "side_candidate": side_candidate,
+        "expectation_application": {
+            "side_before": side_before_expectation,
+            "side_after": side_candidate if direction != "flat" else None,
+            "direction_before": direction_before_expectation,
+            "direction_after": direction,
+            "entry_blocked": entry_blocked_by_expectation,
+            "size_multiplier": expectation_size_multiplier,
+            "size_before_usdt": size_before_expectation,
+            "size_after_usdt": float(size_d["value"]),
+            "hold_exit": "kernel_owned_no_expectation_bias",
+        },
         "basin_direction": basin_dir,
         "tape_trend": tape_trend,
         "side_override": side_override,
@@ -1368,19 +1376,12 @@ def run_tick(
         },
     }
 
-    own_pos = _has_own_position(inputs.account)
-    held_side: Optional[str] = (
-        inputs.account.exchange_held_side if own_pos else None
-    )
     derivation["exchange_held_side"] = inputs.account.exchange_held_side
     derivation["monkey_held_side"] = held_side
     # Proposal #10 — per-lane held-side map. When the caller populated
     # ``lane_positions``, this is the authoritative view of which lanes
     # currently hold a position. Empty dict (no lanes held) means the
     # entry path is wide open across all lanes.
-    held_lanes: dict[str, str] = {
-        lp.lane: lp.side for lp in inputs.account.lane_positions
-    }
     derivation["held_lanes"] = dict(held_lanes)
     # Funding-drag telemetry — surface the dimensionless cost-on-margin
     # ratio per lane plus the worst-of value fed into compute_emotions.
@@ -1848,6 +1849,91 @@ def run_tick(
     else:
         direction = "flat"
 
+    # Py-side #1003 audit row. Python still respects the existing DB boundary
+    # (no libpq in ml-worker); it publishes the INSERT payload to the TS Redis
+    # bridge, which persists to kernel_expectation_decisions best-effort.
+    if expectation_decision is not None:
+        try:
+            expectation_trade_id = inputs.account.own_position_trade_id
+            if expectation_trade_id is None and inputs.account.lane_positions:
+                lane_match = next(
+                    (lp for lp in inputs.account.lane_positions if lp.lane == lane),
+                    None,
+                )
+                held_match = next(
+                    (
+                        lp for lp in inputs.account.lane_positions
+                        if held_side is not None and lp.side == held_side
+                    ),
+                    None,
+                )
+                if held_side is not None:
+                    matched_position = held_match or lane_match
+                else:
+                    matched_position = lane_match
+                if matched_position is not None:
+                    expectation_trade_id = matched_position.trade_id
+            if action in ("scalp_exit", "exit", "flatten"):
+                expectation_side_after = None
+                decision_surface = "exit"
+            elif action.startswith("enter_long") or action == "reverse_long":
+                expectation_side_after = "long"
+                decision_surface = "size" if expectation_size_multiplier != 1.0 else "entry"
+            elif action.startswith("enter_short") or action == "reverse_short":
+                expectation_side_after = "short"
+                decision_surface = "size" if expectation_size_multiplier != 1.0 else "entry"
+            elif held_side is not None:
+                expectation_side_after = held_side
+                decision_surface = "hold"
+            else:
+                expectation_side_after = direction if direction in ("long", "short") else None
+                decision_surface = "entry"
+            expectation_side_before = held_side if held_side is not None else side_before_expectation
+            size_after_expectation = (
+                None if entry_blocked_by_expectation else float(size_d["value"])
+            )
+            did_change_expectation = (
+                entry_blocked_by_expectation
+                or expectation_side_after != expectation_side_before
+                or expectation_size_multiplier != 1.0
+            )
+            publish_expectation_decision({
+                "trade_id": str(expectation_trade_id) if expectation_trade_id is not None else None,
+                "kernel_id": os.environ.get("MONKEY_PY_INSTANCE_ID", DEFAULT_PY_KERNEL_ID),
+                "tape_trend": float(getattr(expectation_decision, "tape_trend", tape_trend)),
+                "basin_direction": float(getattr(expectation_decision, "basin_direction", basin_dir)),
+                "fisher_rao_disagreement": float(drift_now),
+                "tape_basin_disagreement": float(
+                    getattr(expectation_decision, "tape_basin_disagreement", tape_trend * basin_dir)
+                ),
+                "reverse_tape_window": bool(getattr(expectation_decision, "reverse_tape_window", False)),
+                "reverse_tape_side": getattr(expectation_decision, "reverse_tape_side", None),
+                "qig_warp_version": getattr(expectation_decision, "qig_warp_version", "unknown"),
+                "qig_warp_mode": getattr(expectation_decision, "qig_warp_mode", "qig_regime"),
+                "qig_warp_source": getattr(expectation_decision, "qig_warp_source", "QIG_WARP_UNAVAILABLE"),
+                "expectation_direction": getattr(expectation_decision, "expectation_direction", "observe"),
+                "expectation_confidence": float(
+                    getattr(expectation_decision, "expectation_confidence", 0.0)
+                ),
+                "expectation_regime": getattr(expectation_decision, "expectation_regime", "invalid"),
+                "expectation_action": getattr(expectation_decision, "expectation_action", "allow"),
+                "expectation_reason": getattr(expectation_decision, "expectation_reason", ""),
+                "decision_surface": decision_surface,
+                "side_before": expectation_side_before,
+                "side_after": expectation_side_after,
+                "lane_before": pre_lane,
+                "lane_after": lane,
+                "size_before_usdt": size_before_expectation,
+                "size_after_usdt": size_after_expectation,
+                "did_change_decision": bool(did_change_expectation),
+                "formula_version": "py-qig-warp-entry-size-v1",
+                "source_path": "ml-worker/src/monkey_kernel/tick.py:run_tick",
+                "kernel_version": "v0.8-py",
+                "raw": getattr(expectation_decision, "raw", {}),
+            })
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[ExpectationDecision] audit publish failed: %s", err)
+
     # Prediction corpus snapshot (read-only, fail-soft). Python cannot touch
     # Postgres directly; publish to the existing Redis bridge path.
     try:
@@ -1906,7 +1992,7 @@ def run_tick(
             pred_terminal = prediction_sign * notional * max(0.000001, float(entry_thr_d["value"]))
             payload = build_prediction_payload(
                 trade_id=str(trade_id) if trade_id is not None else None,
-                kernel_id=os.environ.get("MONKEY_PY_INSTANCE_ID", "monkey-py-shadow"),
+                kernel_id=os.environ.get("MONKEY_PY_INSTANCE_ID", DEFAULT_PY_KERNEL_ID),
                 perception_basin=basin,
                 strategy_forecast_basin=state.identity_basin,
                 basin_velocity=float(bv),

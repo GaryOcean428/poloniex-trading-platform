@@ -37,6 +37,7 @@ import { insertKernelPrediction } from './kernel_predictions.js';
 
 export const BASIN_SYNC_WRITE_CHANNEL = 'monkey:basin:sync:writes';
 export const PREDICTION_WRITE_CHANNEL = 'monkey:prediction:writes';
+export const EXPECTATION_DECISION_WRITE_CHANNEL = 'monkey:expectation:decisions';
 
 interface BasinSyncWritePayload {
   instance_id: string;
@@ -82,6 +83,37 @@ interface PredictionWritePayload {
   triggering_gate?: string | null;
   kernel_version?: string;
   source_path: string;
+}
+
+interface ExpectationDecisionWritePayload {
+  trade_id?: string | number | null;
+  prediction_id?: number | null;
+  kernel_id: string;
+  tape_trend: number;
+  basin_direction: number;
+  fisher_rao_disagreement?: number | null;
+  tape_basin_disagreement: number;
+  reverse_tape_window: boolean;
+  reverse_tape_side?: string | null;
+  qig_warp_version: string;
+  qig_warp_mode: string;
+  qig_warp_source: string;
+  expectation_direction: string;
+  expectation_confidence: number;
+  expectation_regime: string;
+  expectation_action: string;
+  expectation_reason: string;
+  decision_surface: string;
+  side_before?: string | null;
+  side_after?: string | null;
+  lane_before?: string | null;
+  lane_after?: string | null;
+  size_before_usdt?: number | null;
+  size_after_usdt?: number | null;
+  did_change_decision: boolean;
+  formula_version?: string | null;
+  source_path: string;
+  kernel_version: string;
 }
 
 function bridgeLive(): boolean {
@@ -156,6 +188,49 @@ function validatePrediction(raw: unknown): PredictionWritePayload | null {
   if (typeof r.snapshot_reason !== 'string' || r.snapshot_reason.length === 0) return null;
   if (typeof r.source_path !== 'string' || r.source_path.length === 0) return null;
   return r as unknown as PredictionWritePayload;
+}
+
+function validateExpectationDecision(raw: unknown): ExpectationDecisionWritePayload | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const requiredStrings = [
+    'kernel_id',
+    'qig_warp_version',
+    'qig_warp_mode',
+    'qig_warp_source',
+    'expectation_direction',
+    'expectation_regime',
+    'expectation_action',
+    'expectation_reason',
+    'decision_surface',
+    'source_path',
+    'kernel_version',
+  ];
+  for (const key of requiredStrings) {
+    if (typeof r[key] !== 'string' || (r[key] as string).length === 0) return null;
+  }
+  const requiredNumbers = [
+    'tape_trend',
+    'basin_direction',
+    'tape_basin_disagreement',
+    'expectation_confidence',
+  ];
+  for (const key of requiredNumbers) {
+    if (typeof r[key] !== 'number' || !Number.isFinite(r[key])) return null;
+  }
+  if (r.fisher_rao_disagreement !== undefined && r.fisher_rao_disagreement !== null) {
+    if (typeof r.fisher_rao_disagreement !== 'number' || !Number.isFinite(r.fisher_rao_disagreement)) {
+      return null;
+    }
+  }
+  for (const key of ['size_before_usdt', 'size_after_usdt']) {
+    if (r[key] !== undefined && r[key] !== null && (typeof r[key] !== 'number' || !Number.isFinite(r[key]))) {
+      return null;
+    }
+  }
+  if (typeof r.reverse_tape_window !== 'boolean') return null;
+  if (typeof r.did_change_decision !== 'boolean') return null;
+  return r as unknown as ExpectationDecisionWritePayload;
 }
 
 async function handleMessage(raw: string): Promise<void> {
@@ -247,6 +322,82 @@ async function handlePredictionMessage(raw: string): Promise<void> {
   }
 }
 
+async function handleExpectationDecisionMessage(raw: string): Promise<void> {
+  _messagesReceived++;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    _messagesDropped++;
+    logger.debug('[BasinSyncBridge] expectation decision JSON parse failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  const payload = validateExpectationDecision(parsed);
+  if (!payload) {
+    _messagesDropped++;
+    logger.debug('[BasinSyncBridge] expectation decision payload validation failed');
+    return;
+  }
+  try {
+    await pool.query(
+      `INSERT INTO kernel_expectation_decisions (
+         trade_id, prediction_id, kernel_id,
+         tape_trend, basin_direction, fisher_rao_disagreement, tape_basin_disagreement,
+         reverse_tape_window, reverse_tape_side,
+         qig_warp_version, qig_warp_mode, qig_warp_source,
+         expectation_direction, expectation_confidence, expectation_regime,
+         expectation_action, expectation_reason,
+         decision_surface, side_before, side_after, lane_before, lane_after,
+         size_before_usdt, size_after_usdt,
+         did_change_decision, formula_version, source_path, kernel_version
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+         $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
+         $27, $28
+       )`,
+      [
+        payload.trade_id === null || payload.trade_id === undefined ? null : String(payload.trade_id),
+        payload.prediction_id ?? null,
+        payload.kernel_id,
+        payload.tape_trend,
+        payload.basin_direction,
+        payload.fisher_rao_disagreement ?? null,
+        payload.tape_basin_disagreement,
+        payload.reverse_tape_window,
+        payload.reverse_tape_side ?? null,
+        payload.qig_warp_version,
+        payload.qig_warp_mode,
+        payload.qig_warp_source,
+        payload.expectation_direction,
+        payload.expectation_confidence,
+        payload.expectation_regime,
+        payload.expectation_action,
+        payload.expectation_reason,
+        payload.decision_surface,
+        payload.side_before ?? null,
+        payload.side_after ?? null,
+        payload.lane_before ?? null,
+        payload.lane_after ?? null,
+        payload.size_before_usdt ?? null,
+        payload.size_after_usdt ?? null,
+        payload.did_change_decision,
+        payload.formula_version ?? null,
+        payload.source_path,
+        payload.kernel_version,
+      ],
+    );
+    _messagesPersisted++;
+  } catch (err) {
+    _messagesDropped++;
+    logger.debug('[BasinSyncBridge] expectation decision persist failed', {
+      kernel_id: payload.kernel_id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /**
  * Initialize the Redis subscriber. Call once at apps/api boot; idempotent.
  * No-op when CONSENSUS_BASIN_SYNC_BRIDGE_LIVE is unset.
@@ -284,10 +435,18 @@ export async function initBasinSyncBridge(): Promise<void> {
         });
       });
     });
+    await _subscriber.subscribe(EXPECTATION_DECISION_WRITE_CHANNEL, (raw: string) => {
+      handleExpectationDecisionMessage(raw).catch((err) => {
+        logger.debug('[BasinSyncBridge] handleExpectationDecisionMessage threw', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    });
     _initialized = true;
     logger.info('[BasinSyncBridge] subscribed', {
       channel: BASIN_SYNC_WRITE_CHANNEL,
       predictionChannel: PREDICTION_WRITE_CHANNEL,
+      expectationDecisionChannel: EXPECTATION_DECISION_WRITE_CHANNEL,
     });
   } catch (err) {
     logger.error('[BasinSyncBridge] init failed', {
