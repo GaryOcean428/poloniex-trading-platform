@@ -192,7 +192,7 @@ router.get('/active', authenticateToken, async (req: Request, res: Response) => 
 router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user?.id);
-    const { id } = req.params;
+    const id = String(req.params.id);
 
     // Extract exchange from ID (format: userId-exchange)
     const exchange = id.split('-')[1] || 'poloniex';
@@ -225,7 +225,7 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
 router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user?.id);
-    const { id } = req.params;
+    const id = String(req.params.id);
     const { isActive } = req.body;
 
     // Extract exchange from ID

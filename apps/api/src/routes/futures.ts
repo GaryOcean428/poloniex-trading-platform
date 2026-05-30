@@ -63,7 +63,7 @@ router.get('/products', async (req: Request, res: Response) => {
  */
 router.get('/products/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const product = await poloniexFuturesService.getProduct(symbol);
     res.json(product);
   } catch (error: unknown) {
@@ -98,7 +98,7 @@ router.get('/ticker', async (req: Request, res: Response) => {
  */
 router.get('/orderbook/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const { depth = '20' } = req.query;
     const orderbook = await poloniexFuturesService.getOrderBook(symbol, parseInt(depth as string, 10));
     res.json(orderbook);
@@ -116,7 +116,7 @@ router.get('/orderbook/:symbol', async (req: Request, res: Response) => {
  */
 router.get('/klines/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const { interval = '1h', limit = '100' } = req.query;
 
     // Convert interval to Poloniex format (MINUTE_1, HOUR_1, etc.)
@@ -151,7 +151,7 @@ router.get('/klines/:symbol', async (req: Request, res: Response) => {
  */
 router.get('/trades/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const trades = await poloniexFuturesService.getMarketTrades(symbol);
     res.json(trades);
   } catch (error: unknown) {
@@ -317,7 +317,7 @@ router.delete('/order/:orderId', authenticateToken, async (req: Request, res: Re
       });
     }
 
-    const { orderId } = req.params;
+    const orderId = String(req.params.orderId);
     const { symbol } = req.query;
 
     if (!symbol) {
@@ -387,7 +387,7 @@ router.get('/leverage/:symbol', authenticateToken, async (req: Request, res: Res
       });
     }
 
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const leverage = await poloniexFuturesService.getLeverages(credentials, symbol);
     res.json(leverage);
   } catch (error: unknown) {
@@ -599,7 +599,7 @@ router.get('/position-mode/:symbol', authenticateToken, async (req: Request, res
       });
     }
 
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const mode = await poloniexFuturesService.getPositionMode(credentials, symbol);
     res.json(mode);
   } catch (error: unknown) {
@@ -694,7 +694,7 @@ router.post('/position/margin', authenticateToken, async (req: Request, res: Res
  */
 router.get('/mark-price/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const markPrice = await poloniexFuturesService.getMarkPrice(symbol);
     res.json(markPrice);
   } catch (error: unknown) {
@@ -711,7 +711,7 @@ router.get('/mark-price/:symbol', async (req: Request, res: Response) => {
  */
 router.get('/index-price/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const indexPrice = await poloniexFuturesService.getIndexPrice(symbol);
     res.json(indexPrice);
   } catch (error: unknown) {
@@ -728,7 +728,7 @@ router.get('/index-price/:symbol', async (req: Request, res: Response) => {
  */
 router.get('/index-price-components/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const components = await poloniexFuturesService.getIndexPriceComponents(symbol);
     res.json(components);
   } catch (error: unknown) {
@@ -745,7 +745,7 @@ router.get('/index-price-components/:symbol', async (req: Request, res: Response
  */
 router.get('/funding-rate/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const fundingRate = await poloniexFuturesService.getFundingRate(symbol);
     res.json(fundingRate);
   } catch (error: unknown) {
@@ -762,7 +762,7 @@ router.get('/funding-rate/:symbol', async (req: Request, res: Response) => {
  */
 router.get('/funding-rate-history/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const params = req.query;
     const history = await poloniexFuturesService.getFundingRateHistory(symbol, params);
     res.json(history);
@@ -780,7 +780,7 @@ router.get('/funding-rate-history/:symbol', async (req: Request, res: Response) 
  */
 router.get('/open-interest/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const openInterest = await poloniexFuturesService.getOpenInterest(symbol);
     res.json(openInterest);
   } catch (error: unknown) {
@@ -797,7 +797,7 @@ router.get('/open-interest/:symbol', async (req: Request, res: Response) => {
  */
 router.get('/risk-limit/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const riskLimit = await poloniexFuturesService.getRiskLimit(symbol);
     res.json(riskLimit);
   } catch (error: unknown) {
@@ -823,7 +823,7 @@ router.get('/user-risk-limit/:symbol', authenticateToken, async (req: Request, r
       });
     }
 
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const userRiskLimit = await poloniexFuturesService.getUserRiskLimit(credentials, symbol);
     res.json(userRiskLimit);
   } catch (error: unknown) {
@@ -874,7 +874,7 @@ router.get('/market-info', async (req: Request, res: Response) => {
  */
 router.get('/limit-price/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = String(req.params.symbol);
     const limitPrice = await poloniexFuturesService.getMarketLimitPrice(symbol);
     res.json(limitPrice);
   } catch (error: unknown) {
