@@ -1379,7 +1379,7 @@ export class MonkeyKernel extends EventEmitter {
    * /monkey/snapshot dashboard so the operator can see the veto rate
    * before/after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
-  * Per-symbol counts let the operator confirm the veto is
+   * Per-symbol counts let the operator confirm the veto is
    * actually firing on ETH (the over-trader) and not unintentionally
    * suppressing BTC entries where K has been profitable.
    */
