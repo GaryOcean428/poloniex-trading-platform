@@ -63,6 +63,11 @@ except ImportError:
     WarpBubble = None  # type: ignore[assignment]
     _QIG_WARP_VERSION = "not-installed"
 
+try:
+    from forecast_horizon_observer import temporal_scale_lags_for as _temporal_scale_for_regime
+except ImportError:  # pragma: no cover - package layout fallback
+    from ..forecast_horizon_observer import temporal_scale_lags_for as _temporal_scale_for_regime  # type: ignore[no-redef]
+
 
 # Disagreement detection: both signals must carry non-trivial magnitude
 # before we treat their polarity disagreement as meaningful. This is a
@@ -94,6 +99,7 @@ class ExpectationDecision:
     tape_basin_disagreement: float
     reverse_tape_window: bool
     reverse_tape_side: Optional[str]
+    qig_warp_horizon_hours: Optional[float] = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -193,6 +199,7 @@ def _allow_fallback(
         tape_basin_disagreement=disagreement,
         reverse_tape_window=reverse_tape_window,
         reverse_tape_side=reverse_tape_side,
+        qig_warp_horizon_hours=None,
     )
 
 
@@ -334,6 +341,14 @@ def evaluate_expectation(
             f"reduce size pending kill-test data"
         )
 
+    qig_warp_horizon_hours: Optional[float] = None
+    try:
+        observed_horizon = float(_temporal_scale_for_regime(expectation_regime))
+        if math.isfinite(observed_horizon) and observed_horizon > 0:
+            qig_warp_horizon_hours = observed_horizon
+    except Exception as exc:  # noqa: BLE001 - horizon is advisory, fail-open
+        logger.debug("[expectation_bubble] horizon observer unavailable: %s", exc)
+
     return ExpectationDecision(
         expectation_id=str(uuid.uuid4()),
         expectation_direction=expectation_direction,
@@ -349,6 +364,7 @@ def evaluate_expectation(
         tape_basin_disagreement=disagreement,
         reverse_tape_window=reverse_tape_window,
         reverse_tape_side=reverse_tape_side,
+        qig_warp_horizon_hours=qig_warp_horizon_hours,
         raw={
             "h": h,
             "J": j,
@@ -376,6 +392,7 @@ def decision_to_dict(d: ExpectationDecision) -> dict[str, Any]:
         "tape_basin_disagreement": d.tape_basin_disagreement,
         "reverse_tape_window": d.reverse_tape_window,
         "reverse_tape_side": d.reverse_tape_side,
+        "qig_warp_horizon_hours": d.qig_warp_horizon_hours,
         "raw": d.raw,
     }
 
