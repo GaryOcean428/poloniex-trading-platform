@@ -78,7 +78,7 @@ export function rewardRpeDeltas(input: RewardRpeInputs): RewardRpeDeltas {
     input.serotoninDisposition,
     input.legibility,
   ];
-  if (values.some((v) => !Number.isFinite(v))) {
+  if (values.some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
     return {
       valid: false,
       phasicRpe: 0,
