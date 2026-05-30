@@ -29,6 +29,7 @@ Reference implementations:
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -278,6 +279,23 @@ class AutonomicKernel:
             "serotonin_delta": 0.0,
             "n": 0.0,
         }
+        # 2026-05-29 hindsight (MONKEY_HINDSIGHT_REGRET_LIVE — DESIGN HYPOTHESIS).
+        # The legibility-gated counterfactual-regret NT vector resolved on the
+        # TS side (loop.ts owns the watches) is fanned out here so the Py
+        # chemistry surface (which drives executive sizing + survives restarts)
+        # stays in parity. Mirrors _cached_prediction_chemistry: REPLACED each
+        # fanout, folded additively into reward_sums on each tick(), cleared on
+        # wake. P14: SEPARATE channel from trade-outcome rewards. All-zero when
+        # the flag is OFF → byte-identical chemistry.
+        self._cached_hindsight_chemistry: dict[str, float] = {
+            "dopamine_delta": 0.0,
+            "serotonin_delta": 0.0,
+            "acetylcholine_delta": 0.0,
+            "norepinephrine_delta": 0.0,
+            "gaba_delta": 0.0,
+            "endorphin_delta": 0.0,
+        }
+        self._cached_hindsight_chemistry_at_ms: float = time.time() * 1000.0
         # Restore decay-aware reward queue from Redis if available.
         # The persistence layer drops entries whose decay < 0.01 so
         # we don't restore zero-contribution rewards.
@@ -480,6 +498,61 @@ class AutonomicKernel:
             "n": float(n),
         }
 
+    def push_hindsight_chemistry(
+        self,
+        *,
+        dopamine_delta: float = 0.0,
+        serotonin_delta: float = 0.0,
+        acetylcholine_delta: float = 0.0,
+        norepinephrine_delta: float = 0.0,
+        gaba_delta: float = 0.0,
+        endorphin_delta: float = 0.0,
+    ) -> None:
+        """Replace the cached hindsight NT vector (flag-gated; DESIGN HYPOTHESIS).
+
+        Caller (TS loop.ts) resolves the legibility-gated counterfactual-regret
+        signal via resolve_hindsight()/resolveHindsight() and fans the decayed
+        E6 NT deltas here so the Py chemistry surface stays in parity. REPLACES
+        (does not append) so each fanout contributes once. P14: SEPARATE channel.
+        Fail-closed: non-finite inputs coerced to 0.
+        """
+        def _f(x: float) -> float:
+            try:
+                v = float(x)
+                return v if math.isfinite(v) else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+
+        self._cached_hindsight_chemistry = {
+            "dopamine_delta": _f(dopamine_delta),
+            "serotonin_delta": _f(serotonin_delta),
+            "acetylcholine_delta": _f(acetylcholine_delta),
+            "norepinephrine_delta": _f(norepinephrine_delta),
+            "gaba_delta": _f(gaba_delta),
+            "endorphin_delta": _f(endorphin_delta),
+        }
+        self._cached_hindsight_chemistry_at_ms = time.time() * 1000.0
+
+    def _decayed_hindsight_chemistry(self, now_ms: Optional[float] = None) -> dict[str, float]:
+        """Decay the cached hindsight vector with the reward half-life.
+
+        TS decays the same vector each tick. This Py-side decay keeps parity
+        after the final watch resolves and TS no longer has a watch loop to
+        fan out fresh values.
+        """
+        now = time.time() * 1000.0 if now_ms is None else now_ms
+        age_ms = max(0.0, now - self._cached_hindsight_chemistry_at_ms)
+        if age_ms <= 0.0:
+            return self._cached_hindsight_chemistry
+        decay = 0.5 ** (age_ms / REWARD_HALF_LIFE_MS)
+        decayed = {
+            k: (0.0 if abs(v * decay) < 1e-6 else v * decay)
+            for k, v in self._cached_hindsight_chemistry.items()
+        }
+        self._cached_hindsight_chemistry = decayed
+        self._cached_hindsight_chemistry_at_ms = now
+        return decayed
+
     # ─────────────────────── decayed reward sums ───────────────────────
 
     def _decayed_reward_sums(self, now_ms: Optional[float] = None) -> dict[str, float]:
@@ -641,16 +714,35 @@ class AutonomicKernel:
         # into the same reward channel. Additive - same shape as the
         # TS-side wiring in loop.ts tick() (cf. predDop / predSer).
         pred = self._cached_prediction_chemistry
+        # 2026-05-29 hindsight (flag-gated; all-zero when OFF → byte-identical).
+        # dop/ser/endo fold into the reward channel exactly like prediction
+        # chemistry; ACh/NE are applied additively to the derived NC after
+        # _compute_nc (parity with neurochemistry.ts reward*Delta inputs).
+        # GABA is intentionally NOT applied globally: hindsight GABA is
+        # targeted by pattern on the TS side and remains telemetry-only here
+        # until an equivalent targeted executive consumer exists.
+        hs = self._decayed_hindsight_chemistry(inputs.now_ms)
         reward_sums_combined = {
-            "dopamine": reward_sums["dopamine"] + pred["dopamine_delta"],
-            "serotonin": reward_sums["serotonin"] + pred["serotonin_delta"],
-            "endorphin": reward_sums["endorphin"],
+            "dopamine": reward_sums["dopamine"] + pred["dopamine_delta"] + hs["dopamine_delta"],
+            "serotonin": reward_sums["serotonin"] + pred["serotonin_delta"] + hs["serotonin_delta"],
+            "endorphin": reward_sums["endorphin"] + hs["endorphin_delta"],
         }
         nc = self._compute_nc(inputs, reward_sums_combined, inputs.is_awake)
+        # Fold ACh / NE hindsight deltas additively onto the derived levels
+        # (mirror neurochemistry.ts achOut/neOut). Zero when OFF.
+        if hs["acetylcholine_delta"] or hs["norepinephrine_delta"]:
+            nc = NeurochemicalState(
+                acetylcholine=_clip(nc.acetylcholine + hs["acetylcholine_delta"], 0.0, 1.0),
+                dopamine=nc.dopamine,
+                serotonin=nc.serotonin,
+                norepinephrine=_clip(nc.norepinephrine + hs["norepinephrine_delta"], 0.0, 1.0),
+                gaba=nc.gaba,
+                endorphins=nc.endorphins,
+            )
 
-        # Fresh mood on wake - clear stale reward events AND prediction
-        # cache (the residual rows underlying the cached delta are now
-        # stale relative to the new wake-state regime).
+        # Fresh mood on wake - clear stale reward events AND prediction +
+        # hindsight caches (the lived events underlying them are now stale
+        # relative to the new wake-state regime).
         if inputs.woke:
             self._pending_rewards.clear()
             self._cached_prediction_chemistry = {
@@ -658,6 +750,17 @@ class AutonomicKernel:
                 "serotonin_delta": 0.0,
                 "n": 0.0,
             }
+            self._cached_hindsight_chemistry = {
+                "dopamine_delta": 0.0,
+                "serotonin_delta": 0.0,
+                "acetylcholine_delta": 0.0,
+                "norepinephrine_delta": 0.0,
+                "gaba_delta": 0.0,
+                "endorphin_delta": 0.0,
+            }
+            self._cached_hindsight_chemistry_at_ms = (
+                inputs.now_ms if inputs.now_ms is not None else time.time() * 1000.0
+            )
 
         return AutonomicTickResult(nc=nc, reward_sums=reward_sums_combined)
 

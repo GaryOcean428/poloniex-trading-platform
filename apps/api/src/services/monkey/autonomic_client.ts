@@ -184,6 +184,54 @@ export async function callAutonomicPredictionReward(req: {
   }
 }
 
+/**
+ * Fan the resolved hindsight NT vector to the Py autonomic surface
+ * (MONKEY_HINDSIGHT_REGRET_LIVE — DESIGN HYPOTHESIS). Mirrors
+ * callAutonomicPredictionReward: best-effort, non-fatal, REPLACES the Py
+ * cached hindsight vector. Keeps the Py chemistry (which drives executive
+ * sizing + survives restarts) in parity with the TS fold. */
+export async function callAutonomicHindsight(req: {
+  instanceId: string;
+  dopamineDelta: number;
+  serotoninDelta: number;
+  acetylcholineDelta: number;
+  norepinephrineDelta: number;
+  gabaDelta: number;
+  endorphinDelta: number;
+}): Promise<void> {
+  const body = JSON.stringify({
+    instance_id: req.instanceId,
+    dopamine_delta: req.dopamineDelta,
+    serotonin_delta: req.serotoninDelta,
+    acetylcholine_delta: req.acetylcholineDelta,
+    norepinephrine_delta: req.norepinephrineDelta,
+    gaba_delta: req.gabaDelta,
+    endorphin_delta: req.endorphinDelta,
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/monkey/autonomic/hindsight`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      logger.warn('[autonomic_client] hindsight push failed', {
+        status: res.status,
+        body: await res.text(),
+      });
+    }
+  } catch (err) {
+    logger.warn('[autonomic_client] hindsight push threw', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Feature-flag helper. */
 export function isPythonKernelEnabled(): boolean {
   return process.env.MONKEY_KERNEL_PY === 'true';
