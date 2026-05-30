@@ -284,7 +284,7 @@ router.post('/run', authenticateToken, async (req: Request, res: Response) => {
  */
 router.get('/status/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     let backtest = runningBacktests.get(id);
     
     // Fall back to database if not in memory (e.g., after server restart)
@@ -391,7 +391,7 @@ router.get('/history', authenticateToken, async (req: Request, res: Response) =>
  */
 router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const backtest = runningBacktests.get(id);
     
     if (!backtest) {

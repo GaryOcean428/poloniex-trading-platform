@@ -149,6 +149,20 @@ Context: balance peaked ~$1900 over 4wk, issues, now ~$760 (net-positive on inpu
 | 12:46 | +2.14 uPnL | +1.31 uPnL | low-vol grind; no break; HOLD |
 | 12:59 | ~−0.01 uPnL (holding shorts into bounce) | **+0.14 realized, FLAT** | CHOP-TEST: kernel ratio worsened |
 
+### Cycle — 14:13 UTC — flat, no clean entry (grind near low)
+- BTC grind ~73,006 (lower highs 73,181→73,138→72,996 but tiny bounces); ETH ~1,996. Down-bias intact but LOW-VOL GRIND, no pullback-up to short into. Shorting here = selling the low (the mistake). FLAT; wait for pullback ~73,100+ or impulsive break. Kernel green-short (BTC +1.98/ETH +0.88). totalEq $737. No flags. Distinction: declining a poor ENTRY, not the trend.
+
+### Cycle — 14:08 UTC — REGRET REALIZED: down-trend resumed, I cut too early
+- Down-move RESUMED after the bounce: BTC →72,945 (below my 73,212 cut), ETH →1,993 (below my 1,999 cut). **If I'd held my shorts I'd be green. The kernel held (BTC +2.56/ETH +1.79) and is green. I cut at the bounce top = mistake #2.**
+- Pattern (honest): mistake #1 = breakeven-bail on 0.1% noise (twitchy); mistake #2 = chase mature leg + cut at bounce top (before resumption). Root = poor ENTRY TIMING (entering leg extremes) + mis-reading pullback-vs-reversal. Kernel out-traded me both times. This is exactly what hindsight/regret (#1038) trains — applies to me too.
+- **Fix = better entries, not more trades.** BTC at a fresh low now = selling the low (bad R:R). STAY FLAT; wait to short the NEXT pullback up (~73,100+) w/ stop >73,320, then HOLD through noise. CC net realized ~-$11 (flat). totalEq $738.7 (stable; kernel green on current). No halt.
+
+### Cycle — 13:34 UTC — OPERATOR COURSE-CORRECTION: stop over-caution, capture the move
+- Operator: "my trades and your trades do the same thing; I don't see your trades; huge opportunity for wins right now; kernel is winning." Mea culpa: I closed my BTC short at breakeven on a MINOR bounce (~0.1% higher-low noise) then stood aside — but the downtrend RESUMED and operator (+$23.5: BTC +16.62/ETH +6.84 at 13:26) + kernel banked it. **My 1:8 discipline curdled into over-caution; I got faked out by noise and missed the real win.**
+- Lesson: trade the move that's HAPPENING, not a textbook one. Hold trends through noise; invalidate only on real structure breaks. Flat = invisible + unprofitable.
+- **RE-ENTERED (aggressive, real):** BTC SHORT 30c iso @72,896 (liq 76,084) + ETH SHORT 12c iso @1,988 (liq 2,075). ~$4.6k notional, $121 margin. Down-move intact (BTC lows 73,077→72,885; ETH 1,995→1,988). Invalidation: BTC >73,300 / ETH >2,008 (wide — survive noise). NO tight 8R cap — ride + pyramid on continuation. totalEq $800.9.
+- Also found (answers operator's "did kernel learn from my trades"): **operator-close hole** — external/manual closes feed bookkeeping (autonomous_trades.pnl) but NOT the reward chemistry (only kernel's own closes do). Fix subagent spawned (route external-close PnL → push_reward, guarded, flag-gated).
+
 ### Cycle — 12:59 UTC — CHOP-TEST arrives + disciplined exit
 - Down-move STALLED into a bounce: BTC higher lows (73,168→73,220→73,253), ETH bounced to ~2,000. Trend-continuation thesis invalidated.
 - **CC: CLOSED BTC short at ~breakeven (+$0.14 realized), now FLAT.** Exit-on-invalidation > ride to −1R hoping. Standing aside (no clean trend either way; don't churn). First real realized CC trade: +$0.14 scratch — protected capital in a no-trend tape.
