@@ -181,6 +181,9 @@ def legibility_strength(b: CloseSenseBundle, regime_persisted: bool = True) -> f
         if _is_finite(b.basin_dir_at_close) and _sign(float(b.basin_dir_at_close)) == b.side_sign
         else 0.0
     )
+    # n/(n+1) is the structural odds form: one coherent tick is evidence but
+    # not certainty, and longer streaks approach full trust asymptotically
+    # without introducing a tunable saturation window.
     coherence = (
         float(b.coherence_streak) / float(b.coherence_streak + 1)
         if _is_finite(b.coherence_streak) and b.coherence_streak > 0

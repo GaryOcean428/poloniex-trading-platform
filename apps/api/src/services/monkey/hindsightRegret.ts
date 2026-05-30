@@ -276,6 +276,9 @@ export function legibilityStrength(b: CloseSenseBundle, regimePersisted = true):
     Math.sign(b.basinDirAtClose) === b.sideSign
       ? Math.tanh(Math.abs(b.basinDirAtClose))
       : 0;
+  // n/(n+1) is the structural odds form: one coherent tick is evidence but
+  // not certainty, and longer streaks approach full trust asymptotically
+  // without introducing a tunable saturation window.
   const coherence =
     isFiniteNumber(b.coherenceStreak) && b.coherenceStreak > 0
       ? b.coherenceStreak / (b.coherenceStreak + 1)
