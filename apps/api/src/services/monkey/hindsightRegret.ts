@@ -440,7 +440,11 @@ export function resolveHindsight(
   };
 }
 
-/** Feature-flag helper. Default OFF — behaviour byte-identical when unset. */
+/**
+ * Hindsight regret is CANONICAL — the kernel always learns the counterfactual
+ * "if I'd held, I'd have earned the reward" signal. Not a knob; built to be
+ * used. (Was gated behind MONKEY_HINDSIGHT_REGRET_LIVE; gate removed 2026-05-30.)
+ */
 export function isHindsightRegretLive(): boolean {
-  return process.env.MONKEY_HINDSIGHT_REGRET_LIVE === 'true';
+  return true;
 }

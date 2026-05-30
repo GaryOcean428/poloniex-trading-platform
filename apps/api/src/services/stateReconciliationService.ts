@@ -567,24 +567,24 @@ class StateReconciliationService {
         // events is starved because the conservative LIVED ONLY guard nulls
         // `pnlForLedger` and gates the publish on it being non-null.
         //
-        // Behind MONKEY_REWARD_EXTERNAL_CLOSES_LIVE (default OFF), for external
-        // (`manual_close_user`) closes we recover the authoritative realized
-        // PnL from /v3/account/bills (type=PNL sum, #1028 — the SAME surface
-        // the kernel's own close path consumes) and publish the OUTCOME event
-        // so the kernel learns from these exemplar closes. The lossy ±90s
-        // position-history match above is NOT used for the reward magnitude.
+        // CANONICAL: for external (`manual_close_user`) closes we recover the
+        // authoritative realized PnL from /v3/account/bills (type=PNL sum,
+        // #1028 — the SAME surface the kernel's own close path consumes) and
+        // publish the OUTCOME event so the kernel learns from these exemplar
+        // closes. The lossy ±90s position-history match above is NOT used for
+        // the reward magnitude. No env gate — always on.
         //
         // Best-effort: any failure here is swallowed and never blocks
-        // reconciliation. Flag OFF → this block is inert and behaviour is
-        // byte-identical to today (bookkeeping-only).
-        const externalRewardEnabled =
-          process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE === 'true';
+        // reconciliation. CANONICAL — external (CC/operator) closes always feed
+        // the kernel's reward chemistry. Not a knob; built to be used. (Was
+        // gated behind MONKEY_REWARD_EXTERNAL_CLOSES_LIVE; gate removed
+        // 2026-05-30 — operator/CC exemplar trades must teach the kernel.)
         const groupHasExternalGhost = groupGhosts.some(
           (g) => g.ghostReason === 'manual_close_user' && g.agent !== null,
         );
         let externalBillsRealizedPnl = 0;
         let externalBillsPnlRowCount = 0;
-        if (externalRewardEnabled && groupHasExternalGhost && credentials && symbol) {
+        if (groupHasExternalGhost && credentials && symbol) {
           try {
             // Tight close window around the time the reconciler is finalizing
             // these ghosts (NOW); funding hold window back to the oldest
@@ -787,7 +787,6 @@ class StateReconciliationService {
             // the real position margin, NOT the retired synthetic `5`.
             const rowMargin = rowMarginUsdt(g.dbTrade);
             const rewardDecision = decideExternalCloseReward({
-              enabled: externalRewardEnabled,
               ghostReason: g.ghostReason,
               agent: g.agent,
               billsRealizedPnl: externalBillsRealizedPnl,

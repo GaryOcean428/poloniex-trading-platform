@@ -248,13 +248,12 @@ def test_gaba_target_defaults_unknown_regime():
     assert gaba_target_key(legible_short_bundle(regime_at_close="")) == "premature_close:unknown:short"
 
 
-def test_flag_default_off(monkeypatch):
+def test_hindsight_is_canonical_no_gate(monkeypatch):
+    # Hindsight is always on — not env-gated.
     monkeypatch.delenv("MONKEY_HINDSIGHT_REGRET_LIVE", raising=False)
-    assert is_hindsight_regret_live() is False
-    monkeypatch.setenv("MONKEY_HINDSIGHT_REGRET_LIVE", "true")
     assert is_hindsight_regret_live() is True
-    monkeypatch.setenv("MONKEY_HINDSIGHT_REGRET_LIVE", "1")
-    assert is_hindsight_regret_live() is False
+    monkeypatch.setenv("MONKEY_HINDSIGHT_REGRET_LIVE", "false")
+    assert is_hindsight_regret_live() is True
 
 
 # ───────────────────────── TS↔Py fixture-level parity ─────────────────────────
@@ -305,7 +304,7 @@ def test_parity_small_foregone_salience():
     assert res.prediction_error_z == pytest.approx(1.0, abs=1e-9)
 
 
-# ───────── AutonomicKernel hindsight fold (flag-OFF byte-identity) ─────────
+# ───────── AutonomicKernel hindsight fold (no-push byte-identity) ─────────
 
 from monkey_kernel.autonomic import AutonomicKernel, AutonomicTickInputs  # noqa: E402
 
@@ -323,7 +322,7 @@ def _tick_inputs(**overrides) -> AutonomicTickInputs:
     return AutonomicTickInputs(**base)
 
 
-def test_autonomic_flag_off_byte_identical():
+def test_autonomic_no_push_byte_identical():
     """No hindsight push → chemistry identical to a kernel that never knew
     about hindsight (the cache is all-zero, folds add nothing)."""
     k_base = AutonomicKernel(label="t-base")

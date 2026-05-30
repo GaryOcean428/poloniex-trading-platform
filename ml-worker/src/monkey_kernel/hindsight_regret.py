@@ -337,8 +337,9 @@ def resolve_hindsight(
 
 
 def is_hindsight_regret_live() -> bool:
-    """Feature flag. Default OFF — behaviour byte-identical when unset."""
-    return os.environ.get("MONKEY_HINDSIGHT_REGRET_LIVE") == "true"
+    """Hindsight regret is CANONICAL — always on. Not a knob; built to be used.
+    (Was gated behind MONKEY_HINDSIGHT_REGRET_LIVE; gate removed 2026-05-30.)"""
+    return True
 
 
 __all__ = [
