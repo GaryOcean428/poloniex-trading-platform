@@ -728,7 +728,7 @@ router.get('/index-price/:symbol', async (req: Request, res: Response) => {
  */
 router.get('/index-price-components/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = Array.isArray(req.params.symbol) ? req.params.symbol[0] : req.params.symbol;
     const components = await poloniexFuturesService.getIndexPriceComponents(symbol);
     res.json(components);
   } catch (error: unknown) {
@@ -823,7 +823,7 @@ router.get('/user-risk-limit/:symbol', authenticateToken, async (req: Request, r
       });
     }
 
-    const { symbol } = req.params;
+    const symbol = Array.isArray(req.params.symbol) ? req.params.symbol[0] : req.params.symbol;
     const userRiskLimit = await poloniexFuturesService.getUserRiskLimit(credentials, symbol);
     res.json(userRiskLimit);
   } catch (error: unknown) {
@@ -874,7 +874,7 @@ router.get('/market-info', async (req: Request, res: Response) => {
  */
 router.get('/limit-price/:symbol', async (req: Request, res: Response) => {
   try {
-    const { symbol } = req.params;
+    const symbol = Array.isArray(req.params.symbol) ? req.params.symbol[0] : req.params.symbol;
     const limitPrice = await poloniexFuturesService.getMarketLimitPrice(symbol);
     res.json(limitPrice);
   } catch (error: unknown) {
