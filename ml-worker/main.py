@@ -1502,12 +1502,12 @@ async def monkey_autonomic_hindsight(request: Request):
     instance_id = payload.get("instance_id", "monkey-primary")
     kernel = _get_autonomic(instance_id)
     kernel.push_hindsight_chemistry(
-        dopamine_delta=float(payload.get("dopamine_delta", 0.0)),
-        serotonin_delta=float(payload.get("serotonin_delta", 0.0)),
-        acetylcholine_delta=float(payload.get("acetylcholine_delta", 0.0)),
-        norepinephrine_delta=float(payload.get("norepinephrine_delta", 0.0)),
-        gaba_delta=float(payload.get("gaba_delta", 0.0)),
-        endorphin_delta=float(payload.get("endorphin_delta", 0.0)),
+        dopamine_delta=payload.get("dopamine_delta", 0.0),
+        serotonin_delta=payload.get("serotonin_delta", 0.0),
+        acetylcholine_delta=payload.get("acetylcholine_delta", 0.0),
+        norepinephrine_delta=payload.get("norepinephrine_delta", 0.0),
+        gaba_delta=payload.get("gaba_delta", 0.0),
+        endorphin_delta=payload.get("endorphin_delta", 0.0),
     )
     return {
         "cached": kernel._cached_hindsight_chemistry,

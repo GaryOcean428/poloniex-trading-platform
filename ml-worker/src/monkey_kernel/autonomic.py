@@ -295,6 +295,7 @@ class AutonomicKernel:
             "gaba_delta": 0.0,
             "endorphin_delta": 0.0,
         }
+        self._cached_hindsight_chemistry_at_ms: float = time.time() * 1000.0
         # Restore decay-aware reward queue from Redis if available.
         # The persistence layer drops entries whose decay < 0.01 so
         # we don't restore zero-contribution rewards.
@@ -530,6 +531,27 @@ class AutonomicKernel:
             "gaba_delta": _f(gaba_delta),
             "endorphin_delta": _f(endorphin_delta),
         }
+        self._cached_hindsight_chemistry_at_ms = time.time() * 1000.0
+
+    def _decayed_hindsight_chemistry(self, now_ms: Optional[float] = None) -> dict[str, float]:
+        """Decay the cached hindsight vector with the reward half-life.
+
+        TS decays the same vector each tick. This Py-side decay keeps parity
+        after the final watch resolves and TS no longer has a watch loop to
+        fan out fresh values.
+        """
+        now = time.time() * 1000.0 if now_ms is None else now_ms
+        age_ms = max(0.0, now - self._cached_hindsight_chemistry_at_ms)
+        if age_ms <= 0.0:
+            return self._cached_hindsight_chemistry
+        decay = 0.5 ** (age_ms / REWARD_HALF_LIFE_MS)
+        decayed = {
+            k: (0.0 if abs(v * decay) < 1e-6 else v * decay)
+            for k, v in self._cached_hindsight_chemistry.items()
+        }
+        self._cached_hindsight_chemistry = decayed
+        self._cached_hindsight_chemistry_at_ms = now
+        return decayed
 
     # ─────────────────────── decayed reward sums ───────────────────────
 
@@ -696,7 +718,7 @@ class AutonomicKernel:
         # dop/ser/endo fold into the reward channel exactly like prediction
         # chemistry; ACh/NE/GABA are applied additively to the derived NC after
         # _compute_nc (parity with neurochemistry.ts reward*Delta inputs).
-        hs = self._cached_hindsight_chemistry
+        hs = self._decayed_hindsight_chemistry(inputs.now_ms)
         reward_sums_combined = {
             "dopamine": reward_sums["dopamine"] + pred["dopamine_delta"] + hs["dopamine_delta"],
             "serotonin": reward_sums["serotonin"] + pred["serotonin_delta"] + hs["serotonin_delta"],
@@ -733,6 +755,9 @@ class AutonomicKernel:
                 "gaba_delta": 0.0,
                 "endorphin_delta": 0.0,
             }
+            self._cached_hindsight_chemistry_at_ms = (
+                inputs.now_ms if inputs.now_ms is not None else time.time() * 1000.0
+            )
 
         return AutonomicTickResult(nc=nc, reward_sums=reward_sums_combined)
 

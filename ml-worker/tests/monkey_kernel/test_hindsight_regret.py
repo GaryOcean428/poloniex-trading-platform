@@ -336,9 +336,22 @@ def test_autonomic_hindsight_fold_moves_all_six_channels():
 
 def test_autonomic_hindsight_fail_closed_non_finite():
     k = AutonomicKernel(label="t-nan")
-    k.push_hindsight_chemistry(dopamine_delta=float("nan"), gaba_delta=float("inf"))
+    k.push_hindsight_chemistry(
+        dopamine_delta=float("nan"),
+        gaba_delta=float("inf"),
+        serotonin_delta="not-a-number",
+    )
     assert k._cached_hindsight_chemistry["dopamine_delta"] == 0.0
     assert k._cached_hindsight_chemistry["gaba_delta"] == 0.0
+    assert k._cached_hindsight_chemistry["serotonin_delta"] == 0.0
+
+
+def test_autonomic_hindsight_cache_decays_without_new_push():
+    k = AutonomicKernel(label="t-decay")
+    k.push_hindsight_chemistry(gaba_delta=0.8)
+    k._cached_hindsight_chemistry_at_ms = 0.0
+    k.tick(_tick_inputs(now_ms=20 * 60 * 1000.0))
+    assert k._cached_hindsight_chemistry["gaba_delta"] == pytest.approx(0.4, abs=1e-6)
 
 
 def test_autonomic_hindsight_cleared_on_wake():

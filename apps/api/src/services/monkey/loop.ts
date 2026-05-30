@@ -8214,6 +8214,10 @@ export class MonkeyKernel extends EventEmitter {
           side: heldSide,
           grossPnlByRow: grossById,
           credentials: (this as any).credentials ?? null,
+          closeLane,
+          regimeAtClose: closeLane
+            ? this.symbolStates.get(symbol)?.regimeAtOpenByLane[closeLane]
+            : undefined,
         });
       }
     } catch (err) {
@@ -9506,6 +9510,8 @@ export class MonkeyKernel extends EventEmitter {
     side: 'long' | 'short';
     grossPnlByRow?: Record<string, number>; // synthetic gross per row id (optional)
     credentials?: any;            // optional: caller-provided creds; if omitted, fetched inline
+    closeLane?: 'scalp' | 'swing' | 'trend';
+    regimeAtClose?: string;
   }): Promise<void> {
     const { tradeIds, symbol, closeTimeMs, side, grossPnlByRow } = params;
     const closeOrderIds = params.closeOrderIds ?? [];
@@ -9975,10 +9981,21 @@ export class MonkeyKernel extends EventEmitter {
         try {
           const sideSign: 1 | -1 = side === 'long' ? 1 : -1;
           // qty + exit price + ownership (reason) from the closed rows.
-          const qres = await pool.query<{ qty: string; exit_price: string; any_adopted: boolean }>(
-            `SELECT COALESCE(SUM(COALESCE(quantity, 0)), 0) AS qty,
-                    COALESCE(AVG(NULLIF(exit_price, 0)), 0) AS exit_price,
-                    bool_or(COALESCE(reason, '') LIKE '%|adopted|%') AS any_adopted
+          const qres = await pool.query<{ qty: string; exit_price: string; any_adopted: boolean; close_lane: string | null }>(
+            `SELECT COALESCE(SUM(ABS(COALESCE(quantity, 0))), 0) AS qty,
+                    COALESCE(
+                      SUM(ABS(COALESCE(quantity, 0)) * NULLIF(exit_price, 0))
+                        / NULLIF(SUM(
+                            CASE
+                              WHEN NULLIF(exit_price, 0) IS NOT NULL
+                                THEN ABS(COALESCE(quantity, 0))
+                              ELSE 0
+                            END
+                          ), 0),
+                      0
+                    ) AS exit_price,
+                    bool_or(COALESCE(reason, '') LIKE '%|adopted|%') AS any_adopted,
+                    (array_agg(lane ORDER BY ABS(COALESCE(quantity, 0)) DESC) FILTER (WHERE lane IS NOT NULL))[1] AS close_lane
                FROM autonomous_trades
               WHERE id = ANY($1)`,
             [tradeIds],
@@ -10022,10 +10039,14 @@ export class MonkeyKernel extends EventEmitter {
             const warpDir = lastExp?.direction;
             const warpExpectationSign: -1 | 0 | 1 =
               warpDir === 'long' ? 1 : warpDir === 'short' ? -1 : 0;
+            const closeLane = params.closeLane ?? qres.rows[0]?.close_lane ?? undefined;
             const regimeAtClose =
-              symState?.regimeAtOpenByLane
-                ? (Object.values(symState.regimeAtOpenByLane)[0] ?? lastExp?.regime ?? 'unknown')
-                : (lastExp?.regime ?? 'unknown');
+              params.regimeAtClose ??
+              (closeLane && symState?.regimeAtOpenByLane
+                ? symState.regimeAtOpenByLane[closeLane]
+                : undefined) ??
+              lastExp?.regime ??
+              'unknown';
             const bundle: CloseSenseBundle = {
               kernelOwnedClose,
               sideSign,
