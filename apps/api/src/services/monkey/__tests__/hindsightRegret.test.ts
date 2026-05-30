@@ -249,18 +249,13 @@ describe('deriveMagnitude + medianAndMad', () => {
   });
 });
 
-describe('flag gating', () => {
-  afterEach(() => {
-    delete process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
-  });
-  it('default OFF', () => {
-    expect(isHindsightRegretLive()).toBe(false);
-  });
-  it('ON only on exact "true"', () => {
-    process.env.MONKEY_HINDSIGHT_REGRET_LIVE = 'true';
+describe('hindsight is canonical (no gate)', () => {
+  it('always live — not env-gated', () => {
     expect(isHindsightRegretLive()).toBe(true);
-    process.env.MONKEY_HINDSIGHT_REGRET_LIVE = '1';
-    expect(isHindsightRegretLive()).toBe(false);
+    process.env.MONKEY_HINDSIGHT_REGRET_LIVE = 'false';
+    expect(isHindsightRegretLive()).toBe(true);
+    delete process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
+    expect(isHindsightRegretLive()).toBe(true);
   });
 });
 

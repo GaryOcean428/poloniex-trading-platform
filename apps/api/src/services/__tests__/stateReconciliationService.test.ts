@@ -49,10 +49,9 @@ describe('stateReconciliationService ghost recovery', () => {
     queryMock.mockReset();
     getAccountBillsMock.mockReset();
     getAccountBillsMock.mockResolvedValue([]);
-    delete process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE;
   });
 
-  it('closes a ghost row even when aggregate recovered PnL is conservatively ignored', async () => {
+  it('closes a ghost row and declines the reward when no authoritative bills magnitude exists', async () => {
     queryMock
       // Open autonomous_trades rows.
       .mockResolvedValueOnce({
@@ -95,13 +94,15 @@ describe('stateReconciliationService ghost recovery', () => {
     );
     expect(updateCall).toBeTruthy();
     expect(updateCall?.[1]).toEqual(['manual_close_user', 'trade-1', null]);
+    // External-close reward is canonical (always evaluated), so bills ARE
+    // fetched — but with no authoritative PNL rows the reward declines
+    // (no_bills_pnl), so nothing is published. Bookkeeping close still happens.
+    expect(getAccountBillsMock).toHaveBeenCalled();
     expect(publishMock).not.toHaveBeenCalled();
-    expect(getAccountBillsMock).not.toHaveBeenCalled();
   });
 
   // ── Flag ON: external close fires exactly one bills-authoritative reward ───
-  it('flag ON: publishes exactly one external-close reward with the bills magnitude', async () => {
-    process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE = 'true';
+  it('publishes exactly one external-close reward with the bills magnitude', async () => {
     const entryMs = Date.parse('2026-05-27T08:02:13Z');
     // Two PNL bill rows in the close window → Σ = −1.5 (authoritative).
     getAccountBillsMock.mockResolvedValue([
@@ -160,8 +161,7 @@ describe('stateReconciliationService ghost recovery', () => {
   });
 
   // ── Flag ON but real margin unavailable → decline (decline-over-guess) ────
-  it('flag ON: declines (no publish) when leverage is missing → real margin unavailable', async () => {
-    process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE = 'true';
+  it('declines (no publish) when leverage is missing → real margin unavailable', async () => {
     const entryMs = Date.parse('2026-05-27T08:02:13Z');
     getAccountBillsMock.mockResolvedValue([
       { type: 'PNL', sz: '-1.0', symbol: 'ETH_USDT_PERP', cTime: Date.now(), id: 'b1' },
@@ -205,8 +205,7 @@ describe('stateReconciliationService ghost recovery', () => {
   });
 
   // ── Flag ON: a kernel-own late close is NOT double-rewarded ───────────────
-  it('flag ON: does NOT reward a kernel-own late-landing close (post_close_race)', async () => {
-    process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE = 'true';
+  it('does NOT reward a kernel-own late-landing close (post_close_race)', async () => {
     const entryMs = Date.parse('2026-05-27T08:02:13Z');
     getAccountBillsMock.mockResolvedValue([
       { type: 'PNL', sz: '-1.0', symbol: 'ETH_USDT_PERP', cTime: Date.now(), id: 'b1' },

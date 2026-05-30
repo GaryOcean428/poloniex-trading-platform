@@ -149,11 +149,16 @@ export const ROTATION_TARGET_LOSS_WIN_RATIO = 1 / 8;
  */
 export const ROTATION_EXPECTANCY_FLAG = 'MONKEY_ROTATION_EXPECTANCY_LIVE';
 
-/** True iff the chronic-expectancy membership criterion is enabled. */
+/**
+ * The expectancy-membership capital firewall is CANONICAL — always on. It's how
+ * the kernel governs its own capital (negative-EV bleeders route to paper while
+ * the kernel keeps ticking blind), not an operator dial. Built to be used.
+ * (Was gated behind MONKEY_ROTATION_EXPECTANCY_LIVE; gate removed 2026-05-30.)
+ */
 export function expectancyLiveEnabled(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return env[ROTATION_EXPECTANCY_FLAG] === 'true';
+  return true;
 }
 
 export type KernelOperationalMode = 'live' | 'paper';

@@ -575,16 +575,16 @@ class StateReconciliationService {
         // position-history match above is NOT used for the reward magnitude.
         //
         // Best-effort: any failure here is swallowed and never blocks
-        // reconciliation. Flag OFF → this block is inert and behaviour is
-        // byte-identical to today (bookkeeping-only).
-        const externalRewardEnabled =
-          process.env.MONKEY_REWARD_EXTERNAL_CLOSES_LIVE === 'true';
+        // reconciliation. CANONICAL — external (CC/operator) closes always feed
+        // the kernel's reward chemistry. Not a knob; built to be used. (Was
+        // gated behind MONKEY_REWARD_EXTERNAL_CLOSES_LIVE; gate removed
+        // 2026-05-30 — operator/CC exemplar trades must teach the kernel.)
         const groupHasExternalGhost = groupGhosts.some(
           (g) => g.ghostReason === 'manual_close_user' && g.agent !== null,
         );
         let externalBillsRealizedPnl = 0;
         let externalBillsPnlRowCount = 0;
-        if (externalRewardEnabled && groupHasExternalGhost && credentials && symbol) {
+        if (groupHasExternalGhost && credentials && symbol) {
           try {
             // Tight close window around the time the reconciler is finalizing
             // these ghosts (NOW); funding hold window back to the oldest
@@ -787,7 +787,6 @@ class StateReconciliationService {
             // the real position margin, NOT the retired synthetic `5`.
             const rowMargin = rowMarginUsdt(g.dbTrade);
             const rewardDecision = decideExternalCloseReward({
-              enabled: externalRewardEnabled,
               ghostReason: g.ghostReason,
               agent: g.agent,
               billsRealizedPnl: externalBillsRealizedPnl,

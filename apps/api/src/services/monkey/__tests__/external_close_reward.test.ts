@@ -3,16 +3,15 @@
  * "operator-close hole" reward decision (#1033).
  *
  * The reconciler does the DB/Polo I/O + bus publish; the testable policy
- * lives in `decideExternalCloseReward`. These tests pin the four required
- * behaviours from the spec:
+ * lives in `decideExternalCloseReward`. External (CC/operator) closes always
+ * feed the kernel's reward chemistry — it is CANONICAL, not gated. These tests
+ * pin the required behaviours from the spec:
  *
- *   1. Flag ON + external close + agent + authoritative bills magnitude
- *      → fires exactly one reward with the correct (bills) magnitude.
+ *   1. External close + agent + authoritative bills magnitude → fires exactly
+ *      one reward with the correct (bills) magnitude.
  *   2. A kernel-own close (ghostReason='reconciled_post_close_race') is NOT
- *      double-rewarded — it is declined regardless of flag/magnitude.
- *   3. Flag OFF → declined (`flag_off`) → byte-identical to today
- *      (bookkeeping-only; no reward).
- *   4. Authoritative-only magnitude: no PNL bill rows → declined
+ *      double-rewarded — it is declined regardless of magnitude.
+ *   3. Authoritative-only magnitude: no PNL bill rows → declined
  *      (`no_bills_pnl`) rather than rewarding a guessed value.
  *
  * The reward magnitude fed downstream is the bills-authoritative realized
@@ -23,24 +22,9 @@ import { describe, expect, it } from 'vitest';
 import { decideExternalCloseReward } from '../polo_reward_ledger.js';
 
 describe('decideExternalCloseReward (operator-close hole #1033)', () => {
-  // ── Guard 3: flag OFF → byte-identical to today (regression pin) ──────────
-  it('declines when the flag is OFF (flag_off) regardless of inputs', () => {
-    const out = decideExternalCloseReward({
-      enabled: false,
-      ghostReason: 'manual_close_user',
-      agent: 'K',
-      billsRealizedPnl: -4.2499,
-      pnlBillRowCount: 8,
-      marginUsdt: 12.5,
-    });
-    expect(out.eligible).toBe(false);
-    if (!out.eligible) expect(out.reason).toBe('flag_off');
-  });
-
-  // ── Happy path: flag ON + external close + agent + authoritative magnitude ─
+  // ── Happy path: external close + agent + authoritative magnitude ───────────
   it('fires exactly one reward with the bills-authoritative magnitude + real margin', () => {
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: 'K',
       billsRealizedPnl: -4.2499,
@@ -59,7 +43,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
 
   it('fires for a positive (winning) external/CC exemplar close', () => {
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: 'M',
       billsRealizedPnl: 3.14,
@@ -79,7 +62,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
     const realizedPnl = -0.50;
     const realMargin = 0.50;
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: 'K',
       billsRealizedPnl: realizedPnl,
@@ -108,7 +90,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
     'declines (no_real_margin) when margin is unavailable: %s',
     (_label, margin) => {
       const out = decideExternalCloseReward({
-        enabled: true,
         ghostReason: 'manual_close_user',
         agent: 'K',
         billsRealizedPnl: -4.2499,
@@ -123,7 +104,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
   // ── Guard 1: NO double-count vs the kernel's own close path ───────────────
   it('declines a kernel-own late-landing close (reconciled_post_close_race)', () => {
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'reconciled_post_close_race',
       agent: 'K',
       billsRealizedPnl: -4.2499,
@@ -137,7 +117,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
   it('declines any non-external ghost reason', () => {
     for (const reason of ['reconciled', 'kernel_adopted', 'unknown', '']) {
       const out = decideExternalCloseReward({
-        enabled: true,
         ghostReason: reason,
         agent: 'T',
         billsRealizedPnl: -1.0,
@@ -152,7 +131,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
   // ── Guard 4: must attribute to an agent's chemistry ───────────────────────
   it('declines an unattributed (null-agent) external close', () => {
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: null,
       billsRealizedPnl: -2.0,
@@ -166,7 +144,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
   // ── Guard 3: authoritative-only magnitude ─────────────────────────────────
   it('declines when no PNL bill rows matched (no_bills_pnl) — never guesses', () => {
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: 'K',
       billsRealizedPnl: 0,
@@ -179,7 +156,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
 
   it('declines a non-finite magnitude (defensive)', () => {
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: 'L',
       billsRealizedPnl: Number.NaN,
@@ -194,7 +170,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
   // bad margin reports the pnl reason (the lesson is undefined either way).
   it('reports non_finite_pnl before no_real_margin when both are bad', () => {
     const out = decideExternalCloseReward({
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: 'K',
       billsRealizedPnl: Number.NaN,
@@ -212,7 +187,6 @@ describe('decideExternalCloseReward (operator-close hole #1033)', () => {
   // that could let a second tick re-reward).
   it('is a pure deterministic decision (same inputs → same output)', () => {
     const input = {
-      enabled: true,
       ghostReason: 'manual_close_user',
       agent: 'K' as const,
       billsRealizedPnl: -4.2499,
