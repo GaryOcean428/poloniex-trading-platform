@@ -471,24 +471,18 @@ class AutonomicKernel:
         if reward_rpe_live:
             if not bool(rpe.get("valid", 0.0)):
                 logger.info(
-                    "[%s.autonomic] reward-rpe live skipped (invalid prediction/residual), source=%s symbol=%s",
+                    "[%s.autonomic] reward-rpe live zero-delta (invalid prediction/residual), source=%s symbol=%s",
                     self.label,
                     source,
                     symbol,
                 )
-                return ActivityReward(
-                    source=source,
-                    symbol=symbol,
-                    dopamine_delta=0.0,
-                    serotonin_delta=0.0,
-                    endorphin_delta=0.0,
-                    realized_pnl_usdt=realized_pnl_usdt,
-                    pnl_fraction=pnl_frac,
-                    at_ms=time.time() * 1000.0,
-                )
-            dop = float(rpe["dopamine_delta"])
-            ser = float(rpe["serotonin_delta"])
-            endo = float(rpe["endorphin_delta"])
+                dop = 0.0
+                ser = 0.0
+                endo = 0.0
+            else:
+                dop = float(rpe["dopamine_delta"])
+                ser = float(rpe["serotonin_delta"])
+                endo = float(rpe["endorphin_delta"])
         else:
             dop = legacy_dop
             ser = legacy_ser

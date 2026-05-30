@@ -360,6 +360,7 @@ const REWARD_HALF_LIFE_MS = 20 * 60_000;  // 20 min
 
 /** Max rewards retained; FIFO eviction. */
 const REWARD_QUEUE_MAX = 50;
+const REWARD_RPE_SIGMA_CACHE_TTL_MS = 60_000;
 
 /**
  * v0.8.7 regime-hysteresis — minimum number of consecutive ticks where
@@ -1145,6 +1146,8 @@ export class MonkeyKernel extends EventEmitter {
   private rewardRateEma = 0;
   private serotoninDispositionEma = 0;
   private rewardRateSamples = 0;
+  private rewardRpeSigmaResidualUsdt: number | undefined;
+  private rewardRpeSigmaResidualUsdtExpiresAt = 0;
   /** Targeted-GABA bindings: pattern key (premature_close:regime:side) →
    *  decaying weight. Not folded into global GABA; executive consumption is
    *  the follow-up surface that will read this per-pattern caution. */
@@ -10166,14 +10169,26 @@ export class MonkeyKernel extends EventEmitter {
       const coherence = Math.max(0, symState?.coherenceStreak ?? 0);
       const regimePersistence = coherence / (coherence + 1);
       try {
-        const sigmaRes = await pool.query<{ sigma: string | number | null }>(
-          `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(residual_normalized)) AS sigma
-             FROM kernel_outcome_residuals
-            WHERE evaluated_at >= NOW() - INTERVAL '24 hours'`,
-        );
-        const sigma = Number(sigmaRes.rows[0]?.sigma ?? NaN);
-        if (Number.isFinite(sigma) && sigma > 0) {
-          sigmaResidual = sigma;
+        let sigmaUsdt = this.rewardRpeSigmaResidualUsdt;
+        const now = Date.now();
+        if (now >= this.rewardRpeSigmaResidualUsdtExpiresAt) {
+          const sigmaRes = await pool.query<{ sigma_usdt: string | number | null }>(
+            `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(residual_usdt)) AS sigma_usdt
+               FROM kernel_outcome_residuals
+              WHERE evaluated_at >= NOW() - INTERVAL '24 hours'`,
+          );
+          const queriedSigmaUsdt = Number(sigmaRes.rows[0]?.sigma_usdt ?? NaN);
+          this.rewardRpeSigmaResidualUsdtExpiresAt = now + REWARD_RPE_SIGMA_CACHE_TTL_MS;
+          if (Number.isFinite(queriedSigmaUsdt) && queriedSigmaUsdt > 0) {
+            sigmaUsdt = queriedSigmaUsdt;
+            this.rewardRpeSigmaResidualUsdt = sigmaUsdt;
+          } else {
+            sigmaUsdt = undefined;
+            this.rewardRpeSigmaResidualUsdt = undefined;
+          }
+        }
+        if (Number.isFinite(sigmaUsdt) && sigmaUsdt > 0 && marginUsdt > 0) {
+          sigmaResidual = sigmaUsdt / marginUsdt;
           if (warpExpectationSign !== 0 && warpConfidence > 0) {
             predictedPnlFrac = warpExpectationSign * warpConfidence * sigmaResidual;
           }
@@ -10490,11 +10505,10 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
     if (rewardRpeLive && !proposed.valid) {
-      logger.info(`[${this.label}] reward-rpe live skipped (invalid prediction/residual)`, {
+      logger.info(`[${this.label}] reward-rpe live zero-delta (invalid prediction/residual)`, {
         source: input.source,
         symbol: input.symbol,
       });
-      return;
     }
     const dop = rewardRpeLive ? proposed.dopamineDelta : legacyDop;
     const ser = rewardRpeLive ? proposed.serotoninDelta : legacySer;
