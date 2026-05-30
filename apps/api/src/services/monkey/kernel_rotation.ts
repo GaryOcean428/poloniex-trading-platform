@@ -151,9 +151,7 @@ export const ROTATION_EXPECTANCY_FLAG = 'MONKEY_ROTATION_EXPECTANCY_LIVE';
  * the kernel keeps ticking blind), not an operator dial. Built to be used.
  * (Was gated behind MONKEY_ROTATION_EXPECTANCY_LIVE; gate removed 2026-05-30.)
  */
-export function expectancyLiveEnabled(
-  _env: NodeJS.ProcessEnv = process.env,
-): boolean {
+export function expectancyLiveEnabled(): boolean {
   return true;
 }
 
