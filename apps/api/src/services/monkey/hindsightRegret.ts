@@ -253,7 +253,7 @@ export function counterfactualPnlUsdt(
  * If legibility fails → SURPRISE / NOISE → no aversive signal (canon §31:
  * unpredictable continuation is surprise, not a learnable mistake).
  */
-function clamp01(x: number): number {
+function clampToUnitInterval(x: number): number {
   if (!isFiniteNumber(x)) return 0;
   return Math.max(0, Math.min(1, x));
 }
@@ -268,7 +268,7 @@ export function legibilityStrength(b: CloseSenseBundle, regimePersisted = true):
   // i.e. expectation direction agrees with sideSign, with > 0 confidence.
   const warpStrength =
     b.warpExpectationSign === b.sideSign
-      ? clamp01(b.warpExpectationConfidence)
+      ? clampToUnitInterval(b.warpExpectationConfidence)
       : 0;
   // basin direction must still lean the held way (sign agreement).
   const basinStrength =
@@ -280,7 +280,7 @@ export function legibilityStrength(b: CloseSenseBundle, regimePersisted = true):
     isFiniteNumber(b.coherenceStreak) && b.coherenceStreak > 0
       ? b.coherenceStreak / (b.coherenceStreak + 1)
       : 0;
-  return clamp01(warpStrength * basinStrength * coherence);
+  return clampToUnitInterval(warpStrength * basinStrength * coherence);
 }
 
 export function isContinuationLegible(b: CloseSenseBundle): boolean {

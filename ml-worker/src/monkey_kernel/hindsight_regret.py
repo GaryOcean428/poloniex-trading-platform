@@ -156,7 +156,7 @@ def counterfactual_pnl_usdt(
     return float(realized_pnl_usdt + marginal)
 
 
-def _clamp01(x: float) -> float:
+def _clamp_to_unit_interval(x: float) -> float:
     if not _is_finite(x):
         return 0.0
     return max(0.0, min(1.0, float(x)))
@@ -172,7 +172,7 @@ def legibility_strength(b: CloseSenseBundle, regime_persisted: bool = True) -> f
     if not regime_persisted:
         return 0.0
     warp_strength = (
-        _clamp01(b.warp_expectation_confidence)
+        _clamp_to_unit_interval(b.warp_expectation_confidence)
         if b.warp_expectation_sign == b.side_sign
         else 0.0
     )
@@ -186,7 +186,7 @@ def legibility_strength(b: CloseSenseBundle, regime_persisted: bool = True) -> f
         if _is_finite(b.coherence_streak) and b.coherence_streak > 0
         else 0.0
     )
-    return _clamp01(warp_strength * basin_strength * coherence)
+    return _clamp_to_unit_interval(warp_strength * basin_strength * coherence)
 
 
 def is_continuation_legible(b: CloseSenseBundle) -> bool:
