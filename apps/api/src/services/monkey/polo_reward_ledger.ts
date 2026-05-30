@@ -240,3 +240,128 @@ export function composePoloBillsReward(
   }
   return { realizedPnl, fundingSigned, pnlRowCount, fundingRowCount };
 }
+
+/**
+ * External-close reward decision (the "operator-close hole" — #1033).
+ *
+ * Externally/operator-closed positions (closed in the exchange UI, or by a
+ * CC/operator exemplar trade — NOT by a kernel-issued close order) currently
+ * feed realized PnL into bookkeeping (`autonomous_trades.pnl` via the
+ * reconciler) but DO NOT feed the kernel's reward chemistry. The kernel's own
+ * close path (`applyPoloRealizedPnlAfterClose`, keyed on the kernel's own
+ * `closeOrderIds`) is the only thing that fires `pushReward` /
+ * `callAutonomicReward` today. So operator/CC exemplar trades teach nothing.
+ *
+ * This pure helper decides — for a SINGLE ghost-closed row the reconciler is
+ * about to finalize — whether to ALSO route its realized PnL into the reward
+ * chemistry, and with what magnitude. The reconciler does the DB/Polo I/O and
+ * the bus publish; this function holds the (testable) policy so the decision
+ * is unit-pinnable without the DB/Polo/env machinery.
+ *
+ * # Guards encoded here (mirrors the task spec)
+ *
+ * 1. NO DOUBLE-COUNT vs the kernel's own close path. A kernel-issued close
+ *    that lands late is tagged `reconciled_post_close_race` by the reconciler
+ *    (it carries an `exit_order_id`); its reward already fired on the kernel's
+ *    own path. ONLY `manual_close_user` (operator/CC external close) is
+ *    eligible here. Any other ghostReason → not eligible.
+ * 2. FLAG-GATED. `enabled=false` (flag OFF) → never eligible → byte-identical
+ *    to today's bookkeeping-only behaviour.
+ * 3. AUTHORITATIVE MAGNITUDE. The reward magnitude is the bills-authoritative
+ *    realized PnL (`/v3/account/bills` `type=PNL` sum, #1028) — the SAME
+ *    surface the kernel's own close path consumes. The lossy ±90s
+ *    position-history match is NOT used for reward. If no PNL bill rows
+ *    matched (`pnlBillRowCount <= 0`), we decline rather than reward a
+ *    synthetic/guessed magnitude (better to miss a lesson than teach a wrong
+ *    one).
+ * 4. AGENT-OWNED. Only K/M/T/L-attributed rows feed an agent's chemistry.
+ *    A null/unknown agent → not eligible (nothing to attribute to).
+ * 5. REAL MARGIN (no synthetic scale knob). The reward chemistry derives its
+ *    dopamine/serotonin magnitude from `pnl_fraction = pnl / marginUsdt`, so
+ *    `marginUsdt` IS the scale of the lesson. A hardcoded constant
+ *    (`marginUsdt = 5`) was a P1 knob that synthetically scaled the chemistry
+ *    independent of the position's real size. The reconciler computes the
+ *    actual position margin from the autonomous_trades row(s) —
+ *    `Σ(entry_price × quantity) / leverage` (quantity is base-asset post
+ *    migration 060, so entry_price × quantity is the USDT notional directly;
+ *    no contract-size multiplier is needed) — the SAME formula the kernel's
+ *    own close path uses (#992, loop.ts). If the real margin is unavailable
+ *    (missing/zero leverage, qty, or entry price → non-finite or ≤0), we
+ *    DECLINE rather than feed a guessed/synthetic-margin reward (decline over
+ *    guess: better to miss a lesson than teach it at the wrong scale).
+ */
+export type ExternalCloseRewardEligibility =
+  | {
+      eligible: true;
+      /** Bills-authoritative realized PnL to feed the reward chemistry. */
+      realizedPnl: number;
+      /**
+       * Real position margin (USDT) computed from the autonomous_trades
+       * row(s) — `Σ(entry_price × quantity) / leverage`. Drives
+       * `pnl_fraction = pnl / marginUsdt` in the reward chemistry. NEVER a
+       * hardcoded constant (the retired `marginUsdt = 5` P1 knob).
+       */
+      marginUsdt: number;
+      /** Provenance tag for the OUTCOME publish + telemetry. */
+      pnlSource: 'polo_bills_external_close';
+    }
+  | {
+      eligible: false;
+      /** Why the reward was declined (telemetry/debugging only). */
+      reason:
+        | 'flag_off'
+        | 'not_external_close'
+        | 'no_agent'
+        | 'no_bills_pnl'
+        | 'non_finite_pnl'
+        | 'no_real_margin';
+    };
+
+export function decideExternalCloseReward(input: {
+  /** `MONKEY_REWARD_EXTERNAL_CLOSES_LIVE === 'true'`. */
+  enabled: boolean;
+  /** The reconciler's ghost reason for this row. */
+  ghostReason: string;
+  /** The owning agent, or null if unattributed. */
+  agent: 'K' | 'M' | 'T' | 'L' | null;
+  /** Σ of `type=PNL` bill `sz` over the close window. */
+  billsRealizedPnl: number;
+  /** Count of PNL bill rows matched (0 → no authoritative magnitude). */
+  pnlBillRowCount: number;
+  /**
+   * Real position margin (USDT) for the group, computed by the reconciler as
+   * `Σ(entry_price × quantity) / leverage` over the ghost rows. `null` (or a
+   * non-finite/≤0 value) means the real margin could not be derived (missing
+   * leverage/qty/entry) → decline over guess. NEVER a hardcoded fallback.
+   */
+  marginUsdt: number | null;
+}): ExternalCloseRewardEligibility {
+  if (!input.enabled) return { eligible: false, reason: 'flag_off' };
+  // Guard 1: ONLY operator/CC external closes. `reconciled_post_close_race`
+  // (kernel's own late-landing close) and any other reason are excluded so a
+  // kernel-own close can never be double-rewarded here.
+  if (input.ghostReason !== 'manual_close_user') {
+    return { eligible: false, reason: 'not_external_close' };
+  }
+  // Guard 4: must attribute to an agent's chemistry.
+  if (input.agent === null) return { eligible: false, reason: 'no_agent' };
+  // Guard 3: authoritative magnitude only.
+  if (input.pnlBillRowCount <= 0) return { eligible: false, reason: 'no_bills_pnl' };
+  if (!Number.isFinite(input.billsRealizedPnl)) {
+    return { eligible: false, reason: 'non_finite_pnl' };
+  }
+  // Guard 5: REAL margin only — decline over guess. The retired `marginUsdt=5`
+  // knob synthetically scaled the chemistry; here the scale must be the
+  // position's real margin or we decline.
+  if (input.marginUsdt === null
+      || !Number.isFinite(input.marginUsdt)
+      || input.marginUsdt <= 0) {
+    return { eligible: false, reason: 'no_real_margin' };
+  }
+  return {
+    eligible: true,
+    realizedPnl: input.billsRealizedPnl,
+    marginUsdt: input.marginUsdt,
+    pnlSource: 'polo_bills_external_close',
+  };
+}

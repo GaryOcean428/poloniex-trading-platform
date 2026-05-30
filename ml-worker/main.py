@@ -52,7 +52,22 @@ from utils.redis_listener import (
 )
 
 logger = logging.getLogger("ml-worker")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# Route INFO/DEBUG → stdout and WARNING+ → stderr so the platform classifies log
+# levels correctly. `logging.basicConfig()` defaults to sys.stderr, which made
+# Railway tag EVERY line (incl. healthy INFO telemetry like ocean_coeff reward
+# logs) as level=error — burying real errors in false reds. Explicit two-handler
+# routing fixes the dashboard classification.
+_log_fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setLevel(logging.DEBUG)
+_stdout_handler.addFilter(lambda record: record.levelno < logging.WARNING)
+_stdout_handler.setFormatter(_log_fmt)
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(logging.WARNING)
+_stderr_handler.setFormatter(_log_fmt)
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+_root_logger.handlers = [_stdout_handler, _stderr_handler]
 
 # ---------------------------------------------------------------------------
 # Globals

@@ -124,9 +124,12 @@ import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import {
+  applyChronicDemote,
+  expectancyLiveEnabled,
   makeRotationState,
   promoteToLive,
   recordClose as recordRotationClose,
+  rollingExpectancy,
   rollingWinRate,
   shouldAutoPromote,
   type RotationPeerSnapshot,
@@ -1519,25 +1522,35 @@ export class MonkeyKernel extends EventEmitter {
           src.startsWith('reconciler_recovered');
         if (!isRecovered) return;
         if (!recoveredOutcomeMatchesInstance(payload, this.instanceId)) return;
-        // Reconciler-recovered events use marginUsdt=5 to match the
-        // global pushReward path's constant for ghost-close recoveries
-        // (see lines below this subscriber, marginUsdt: 5).
-        this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl, 5);
+        // Margin scale for `pnl_fraction = pnl / marginUsdt`.
+        //
+        // #1033 refine: external-close reward events (the reconciler's
+        // `manual_close_user` path) now carry the position's REAL margin in
+        // `payload.marginUsdt` (= entry_price × quantity / leverage) so the
+        // chemistry learns at the TRUE scale of the lesson. The hardcoded
+        // `marginUsdt = 5` was a synthetic scale knob (P1 violation): it set
+        // pnl_fraction = pnl / 5 regardless of the actual position size.
+        //
+        // Legacy ghost-recovery events (other ghostReasons: exchange-side
+        // liquidation, partial-fill cleanup) still lack qty/leverage and emit
+        // no `payload.marginUsdt`, so they fall through to the nominal 5 —
+        // UNCHANGED, byte-identical behaviour. Only the external-close path,
+        // which now emits a real `payload.marginUsdt`, uses the real scale.
+        const payloadMargin = Number(payload.marginUsdt ?? NaN);
+        const rewardMargin =
+          Number.isFinite(payloadMargin) && payloadMargin > 0 ? payloadMargin : 5;
+        this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl, rewardMargin);
         // 2026-05-16 per-agent NC: also feed reconciler-recovered
         // ghost-closes into the agent's chemistry queue. Without this,
         // M/T/L closes that the close-path missed (exchange-side
         // liquidation, manual UI close, partial-fill cleanup) would
         // update emotion state but NOT the agent's dopamine window.
-        // Margin estimation: ghost-recovered events lack qty + mark
-        // price; reuse the witnessExit pattern of a fixed nominal
-        // margin (5 USDT) so pnlFraction = pnl / 5 stays bounded and
-        // doesn't blow out the dop/ser/endo deltas on a one-off ghost.
         try {
           this.pushReward({
             source: `reconciler_recovered:${String(payload.ghostReason ?? 'unknown')}`,
             symbol: event.symbol,
             realizedPnlUsdt: pnl,
-            marginUsdt: 5,
+            marginUsdt: rewardMargin,
             agent,
           });
         } catch { /* non-fatal */ }
@@ -1549,7 +1562,7 @@ export class MonkeyKernel extends EventEmitter {
           source: `reconciler_recovered:${String(payload.ghostReason ?? 'unknown')}`,
           symbol: event.symbol,
           realizedPnlUsdt: pnl,
-          marginUsdt: 5,
+          marginUsdt: rewardMargin,
         });
         const ghostReason = String(payload.ghostReason ?? 'unknown');
         logger.info(
@@ -10351,13 +10364,76 @@ export class MonkeyKernel extends EventEmitter {
         },
       });
     }
+
+    // 2026-05-29 (issue #1032) — CHRONIC expectancy-based membership
+    // demote. Catches the negative-EV bleeder the 5-consecutive-loss
+    // breaker misses (tiny wins interspersed between large losses never
+    // hit 5-in-a-row). Flag-gated behind MONKEY_ROTATION_EXPECTANCY_LIVE
+    // (default OFF). When off, applyChronicDemote returns demoted:false
+    // unconditionally and behaviour is byte-for-byte unchanged. Only
+    // evaluated when the acute breaker did NOT already demote and the
+    // kernel is still live.
+    const expectancyLive = expectancyLiveEnabled();
+    if (expectancyLive && !rotationResult.demoted && this.rotation.mode === 'live') {
+      const peers = this.buildRotationPeerSnapshots(expectancyLive);
+      const chronic = applyChronicDemote(this.rotation, peers, expectancyLive);
+      if (chronic.demoted) {
+        logger.warn(`[${this.label}] kernel-rotation CHRONIC-DEMOTED to paper`, {
+          instanceId: this.instanceId,
+          reason: chronic.reason,
+          rollingWinRate: rollingWinRate(this.rotation),
+          rollingExpectancy: rollingExpectancy(this.rotation).edge,
+          rollingTrades: this.rotation.rollingPnls.length,
+        });
+        this.bus.publish({
+          type: BusEventType.OUTCOME,
+          source: this.instanceId,
+          symbol: input.symbol,
+          payload: {
+            kind: 'kernel_rotation_demotion',
+            mode: this.rotation.mode,
+            reason: chronic.reason,
+            rollingWinRate: rollingWinRate(this.rotation),
+          },
+        });
+      }
+    }
+
     // 2026-05-25 — auto-promotion check. If this is a paper-mode kernel
     // and its rolling WR has caught up to within ROTATION_PROMOTION_WR_GAP
     // (10pp) of the best live peer, promote back. Idempotent: returns
-    // null for live kernels or paper kernels still under the gate.
+    // null for live kernels or paper kernels still under the gate. When
+    // the expectancy flag is on, the promotion gate ALSO requires
+    // within-band expectancy + loss:win trending to 1:8 (issue #1032).
     if (this.rotation.mode === 'paper') {
       this.tryAutoPromote(input.symbol);
     }
+  }
+
+  /**
+   * Build peer snapshots for cross-kernel rotation decisions. When
+   * `withExpectancy` is true, each snapshot also carries the peer's
+   * rolling expectancy + loss:win ratio (issue #1032); otherwise those
+   * fields are left undefined and the WR-only path is used.
+   */
+  private buildRotationPeerSnapshots(withExpectancy: boolean): RotationPeerSnapshot[] {
+    const peers: RotationPeerSnapshot[] = [];
+    for (const peer of allMonkeyKernels) {
+      if (peer === this) continue;
+      const r = peer.rotation;
+      const snap: RotationPeerSnapshot = {
+        mode: r.mode,
+        rollingWinRate: rollingWinRate(r),
+        rollingSampleCount: r.rollingPnls.length,
+      };
+      if (withExpectancy) {
+        const e = rollingExpectancy(r);
+        snap.rollingExpectancy = e.edge;
+        snap.rollingLossWinRatio = e.lossWinRatio;
+      }
+      peers.push(snap);
+    }
+    return peers;
   }
 
   /**
@@ -10366,17 +10442,9 @@ export class MonkeyKernel extends EventEmitter {
    * kernel's paper-mode WR has reached the gate, promotes.
    */
   private tryAutoPromote(symbol: string | undefined): void {
-    const peers: RotationPeerSnapshot[] = [];
-    for (const peer of allMonkeyKernels) {
-      if (peer === this) continue;
-      const r = peer.rotation;
-      peers.push({
-        mode: r.mode,
-        rollingWinRate: rollingWinRate(r),
-        rollingSampleCount: r.rollingPnls.length,
-      });
-    }
-    const reason = shouldAutoPromote(this.rotation, peers);
+    const expectancyLive = expectancyLiveEnabled();
+    const peers = this.buildRotationPeerSnapshots(expectancyLive);
+    const reason = shouldAutoPromote(this.rotation, peers, expectancyLive);
     if (!reason) return;
     const result = promoteToLive(this.rotation, reason);
     if (result.promoted) {
@@ -10424,14 +10492,28 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
-   * Decide whether placeOrder calls should route to the paper simulator
-   * instead of the real exchange. Two paths reach this:
+   * THE CAPITAL FIREWALL GATE. Decide whether placeOrder calls route to
+   * the paper simulator instead of the real exchange. Two paths reach
+   * this:
    *   1. The global `MONKEY_PAPER_MODE=true` env (back-compat, applies
    *      to ALL kernels — used historically for whole-kernel dry runs).
    *   2. This kernel's rotation state has been demoted to 'paper'
-   *      (per-kernel paper rotation, PR #921 scaffold).
+   *      (per-kernel capital firewall — kernel_rotation.ts).
    * Either path routes the same way through `paperPlaceOrder`, so the
    * downstream code is unchanged.
+   *
+   * ROUTING-OWNERSHIP INVARIANT: this is the SOLE live order-routing
+   * gate. TS is the only live order-router; the Python ml-worker
+   * `place_order` is an unwired advisory capability (no caller in
+   * monkey_kernel/ or main.py as of 2026-05-29). The firewall is
+   * therefore complete here. The kernel never reads its own routing
+   * state in the decision/reward path — `mode` is consumed ONLY by this
+   * gate (routing) and by telemetry. Demotion removes a kernel's output
+   * from live money; it does not change how the kernel thinks or learns.
+   *
+   * ⚠ If Python execution is ever wired into the live path it MUST
+   *   consult this same per-kernel rotation state, or the firewall leaks
+   *   (see kernel_rotation.ts module header guard-note).
    */
   private shouldRouteOrdersToPaper(): boolean {
     return isMonkeyPaperMode() || this.rotation.mode === 'paper';
