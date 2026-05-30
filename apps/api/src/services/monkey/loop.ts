@@ -10156,7 +10156,7 @@ export class MonkeyKernel extends EventEmitter {
       // LIVED ONLY 5: this 'polo_authoritative_close' path carries explicit provenance and will receive hard asserts in pushReward.
       let predictedPnlFrac: number | undefined;
       let sigmaResidual: number | undefined;
-      const sideSign: -1 | 1 = side === 'buy' ? 1 : -1;
+      const sideSign: -1 | 1 = side === 'long' ? 1 : -1;
       const symState = this.symbolStates.get(symbol);
       const lastExp = symState?.lastExpectation ?? null;
       const warpExpectationSign: -1 | 0 | 1 =
