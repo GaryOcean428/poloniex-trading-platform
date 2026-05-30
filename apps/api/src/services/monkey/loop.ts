@@ -26,32 +26,42 @@ import { apiCache } from '../../utils/apiCache.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
 import { logger } from '../../utils/logger.js';
 import { apiCredentialsService } from '../apiCredentialsService.js';
+import { resolveExchangePositionNotional, resolveExchangePositionSide } from '../exchangePositionSide.js';
 import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
-import poloniexFuturesService from '../poloniexFuturesService.js';
-import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
-import { callExpectationBubble, type ExpectationDecision } from './expectation_client.js';
 import {
-  recordCloseAck,
-  record21002Incident,
-  // #1009 PR2: the real Polo flat-observation surface. Receives every
-  // getPositions snapshot's present-symbol set; for any symbol with a
-  // pending close-ack that is NOT present, the settlement-latency ring
-  // gets `tNow - tCloseAck` as the empirical p99 measurement.
-  observePositionSnapshot,
-} from './safety_floor.js';
+  paperClosePosition,
+  paperPlaceOrder,
+} from '../paperExchangeSimulator.js';
+import poloniexFuturesService from '../poloniexFuturesService.js';
+import {
+  evaluatePreTradeVetoes,
+  type KernelAccountState,
+  type KernelContext,
+  type KernelOrder,
+} from '../riskKernel.js';
 import { composeCooldown, formatCooldownTelemetry } from './cooldown_composer.js';
+import { callExpectationBubble, type ExpectationDecision } from './expectation_client.js';
 import { noteClose as noteHeartClose } from './heart_arbitrator.js';
-import { evaluatePostCloseCooldownGate } from './postclose_cooldown_gate.js';
 import {
   composePoloBillsReward,
   computePoloAuthoritativeReward,
   type PoloBillRow,
 } from './polo_reward_ledger.js';
+import { evaluatePostCloseCooldownGate } from './postclose_cooldown_gate.js';
 import {
-  recordLaneDecision,
+  // #1009 PR2: the real Polo flat-observation surface. Receives every
+  // getPositions snapshot's present-symbol set; for any symbol with a
+  // pending close-ack that is NOT present, the settlement-latency ring
+  // gets `tNow - tCloseAck` as the empirical p99 measurement.
+  observePositionSnapshot,
+  record21002Incident,
+  recordCloseAck,
+} from './safety_floor.js';
+import {
   getObservedLaneDecisionPeriodMs,
+  recordLaneDecision,
 } from './substrate_observer.js';
 
 /**
@@ -73,54 +83,102 @@ function _feedFlatObserverFromPositions(positions: unknown): void {
   }
   observePositionSnapshot(presentSymbols, Date.now());
 }
-import {
-  paperClosePosition,
-  paperPlaceOrder,
-} from '../paperExchangeSimulator.js';
-import {
-  evaluatePreTradeVetoes,
-  type KernelAccountState,
-  type KernelContext,
-  type KernelOrder,
-} from '../riskKernel.js';
 
-import { getKellyRollingStats } from './kelly_rolling_stats.js';
 import { forge, forgeBankWriteLive, shadowThreshold } from './forge.js';
+import { getKellyRollingStats } from './kelly_rolling_stats.js';
 
+import futuresWebSocket from '../../websocket/futuresWebSocket.js';
+import { Arbiter } from '../arbiter/arbiter.js';
+import { mlAgentDecide } from '../ml_agent/decide.js';
+import type { MLAgentInputs } from '../ml_agent/types.js';
+import {
+  newTurtleState,
+  turtleAgentDecide,
+  appendUnit as turtleAppendUnit,
+  clearUnitsAfterExit as turtleClearUnits,
+  turtleMinEquityUsdt,
+  type TurtleAgentInputs,
+  type TurtleState,
+} from '../turtle_agent/index.js';
+import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
+import { isQigramV2Enabled, QIGRAMv2Partition } from './agent_L_qigram_v2.js';
+import {
+  clampMarginToNotionalHeadroom,
+  clampSizeToHeadroom,
+  computeAgentHeadroom,
+  computeAgentNotionalHeadroom,
+} from './agentEquityBound.js';
+import { aggregatePeakTracker } from './aggregate_peak.js';
+import {
+  callAutonomicPredictionReward,
+  callAutonomicReward,
+  callAutonomicTick,
+} from './autonomic_client.js';
 import {
   BASIN_DIM,
-  KAPPA_STAR,
   fisherRao,
   frechetMean,
+  KAPPA_STAR,
   normalizedEntropy,
-  toSimplex,
   uniformBasin,
   velocity,
-  type Basin,
+  type Basin
 } from './basin.js';
-import {
-  callAutonomicTick,
-  callAutonomicReward,
-  callAutonomicPredictionReward,
-} from './autonomic_client.js';
-import { aggregatePeakTracker } from './aggregate_peak.js';
-import { wsPositionCache } from './ws_position_cache.js';
-import { marketIntelCache } from './market_intel.js';
-import futuresWebSocket from '../../websocket/futuresWebSocket.js';
 import { BasinSync } from './basin_sync.js';
+import {
+  entrySuppressionMultiplier,
+  getLatestBtcPrice,
+  noteBtcPrice,
+  observeBtcBeacon,
+  type BtcBeaconReading,
+} from './btc_beacon.js';
+import {
+  detectStrongest as detectStrongestCandlePattern,
+  hammerAgainstLongSl,
+  patternSignalScalar,
+} from './candlePatterns.js';
+import { isLikelyRaceLoss, releaseClose, tryAcquireClose } from './close_coordinator.js';
+import { planCloseChunks } from './closeChunker.js';
+import {
+  canonicalToPhase,
+  evaluateCell,
+  regimeToDirection,
+  type CellAction,
+} from './compositional_executive.js';
+import { applyConsensusOverride } from './consensus_arbiter.js';
+import { computeEmotions, type EmotionState } from './emotions.js';
+import { observeEquity, sizeDeflection } from './equity_gradient.js';
+import {
+  chooseLane,
+  currentEntryThreshold,
+  currentLeverage,
+  currentPositionSize,
+  geometricDirection,
+  shouldAggregateBleedExit,
+  shouldAggregateHarvest,
+  shouldAutoFlatten,
+  shouldBracketExit,
+  shouldDCAAdd,
+  shouldExit,
+  shouldExtendBracket,
+  shouldProfitHarvest,
+  shouldScalpExit,
+  shouldSlowBleedExit,
+  type BasinState,
+  type Direction,
+  type LaneType,
+} from './executive.js';
+import { frBracketDistances } from './fr_trade_params.js';
+import { observeFundingArb } from './funding_arb_observer.js';
+import { evaluateRejustification } from './held_position_rejustification.js';
+import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
+import { logParityDiff } from './kernel_client.js';
 import {
   clampPredictionCadenceSeconds,
   predictionDirectionFromSide,
   recordKernelPrediction,
   type PredictionSnapshotReason,
 } from './kernel_predictions.js';
-import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
-import { recoveredOutcomeMatchesInstance } from './recovered_outcome_routing.js';
-import { logParityDiff } from './kernel_client.js';
-import { computeEmotions, type EmotionState } from './emotions.js';
-import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
-import { computeMotivators } from './motivators.js';
-import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import {
   applyChronicDemote,
   expectancyLiveEnabled,
@@ -133,35 +191,67 @@ import {
   type RotationPeerSnapshot,
   type RotationState,
 } from './kernel_rotation.js';
-import { isPhiLeakyEnabled, updateLeakyPhi } from './phi_integrator.js';
-import { structuralVetoMonitor } from './structural_veto_monitor.js';
-import { mlAgentDecide } from '../ml_agent/decide.js';
-import type { MLAgentInputs } from '../ml_agent/types.js';
-import { Arbiter } from '../arbiter/arbiter.js';
+import { evaluateBankWrite } from './learning_gate_client.js';
+import { marketIntelCache } from './market_intel.js';
+import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
+import { computeMotivators } from './motivators.js';
 import {
-  appendUnit as turtleAppendUnit,
-  clearUnitsAfterExit as turtleClearUnits,
-  newTurtleState,
-  turtleAgentDecide,
-  turtleMinEquityUsdt,
-  type TurtleAgentInputs,
-  type TurtleState,
-} from '../turtle_agent/index.js';
+  mtfDecide,
+  isLongestHorizonExpired as mtfIsLongestHorizonExpired,
+  onTickAppend as mtfOnTickAppend,
+  recordAgreementTimestamps as mtfRecordAgreement,
+  newMTFState,
+} from './mtfLClassifier.js';
+import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
+import {
+  observerFibCoefficient,
+  oceanTrailRetracement,
+  oceanTrailTierIndex,
+} from './ocean_reward.js';
+import {
+  chemistryBoundedModulator,
+  computeBreakEvenNotionalFloor,
+  computeKellyFraction,
+  computeObserverLossFloorRoi,
+  getOutcomeRingStats,
+} from './outcomeRingStats.js';
+import {
+  buildCrossAgentContext,
+  convictionDampenerFromBus,
+  type AgentLabel,
+  type CrossAgentContext,
+} from './per_agent_bus.js';
+import { foresightVeto } from './per_agent_foresight.js';
+import {
+  applyOutcomeToState,
+  decayPerAgentState,
+  newPerAgentState,
+  riskModulator,
+  type AgentOutcomeEvent,
+  type PerAgentState
+} from './per_agent_state.js';
 import {
   atr14,
   basinDirection as computeBasinDirection,
+  trendProxy as computeTrendProxy,
   perceive,
   refract,
-  trendProxy as computeTrendProxy,
   type OHLCVCandle,
 } from './perception.js';
-import { frBracketDistances } from './fr_trade_params.js';
-import { applyConsensusOverride } from './consensus_arbiter.js';
+import { isPhiLeakyEnabled, updateLeakyPhi } from './phi_integrator.js';
+import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import {
-  oceanTrailRetracement,
-  oceanTrailTierIndex,
-  observerFibCoefficient,
-} from './ocean_reward.js';
+  clampNewContractsToCap,
+  kellyPrimaryContractCap,
+  kernelDerivedContractCap,
+  VENUE_CONTRACTS_CEILING,
+} from './positionContractsBound.js';
+import { startPredictionResidualJob } from './predictionResidualJob.js';
+import {
+  computePredictionChemistry,
+  type PredictionChemistryDeltas,
+} from './predictionRewardEmitter.js';
+import { recoveredOutcomeMatchesInstance } from './recovered_outcome_routing.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
   CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
@@ -170,113 +260,20 @@ import {
   type RegimeReading,
 } from './regime.js';
 import {
-  detectStrongest as detectStrongestCandlePattern,
-  hammerAgainstLongSl,
-  patternSignalScalar,
-} from './candlePatterns.js';
-import { evaluateBankWrite } from './learning_gate_client.js';
-import { resonanceBank } from './resonance_bank.js';
-import { computeSelfObservation, type SelfObservation } from './self_observation.js';
-import { WorkingMemory, type Bubble } from './working_memory.js';
-import {
-  currentEntryThreshold,
-  currentLeverage,
-  currentPositionSize,
-  geometricDirection,
-  shouldAutoFlatten,
-  shouldAggregateBleedExit,
-  shouldAggregateHarvest,
-  shouldBracketExit,
-  shouldExtendBracket,
-  shouldDCAAdd,
-  shouldExit,
-  shouldProfitHarvest,
-  shouldScalpExit,
-  shouldSlowBleedExit,
-  chooseLane,
-  type BasinState,
-  type Direction,
-  type LaneType,
-} from './executive.js';
-import { evaluateRejustification } from './held_position_rejustification.js';
-import {
-  computeAgentHeadroom,
-  clampSizeToHeadroom,
-  computeAgentNotionalHeadroom,
-  clampMarginToNotionalHeadroom,
-} from './agentEquityBound.js';
-import { planCloseChunks } from './closeChunker.js';
-import { SAFE_PNL_FROM_ROW, SAFE_PNL_EXPR, verifyPnl, computeSafePnl, checkNotionalConsistency, computeNetPnlForReward } from './safePnlSql.js';
-import {
-  getOutcomeRingStats,
-  computeBreakEvenNotionalFloor,
-  computeKellyFraction,
-  chemistryBoundedModulator,
-  computeObserverLossFloorRoi,
-} from './outcomeRingStats.js';
-import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
-import { startPredictionResidualJob } from './predictionResidualJob.js';
-import {
-  computePredictionChemistry,
-  type PredictionChemistryDeltas,
-} from './predictionRewardEmitter.js';
-import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
-import { observeEquity, sizeDeflection, type EquityRichContext } from './equity_gradient.js';
-import {
-  observeBtcBeacon,
-  entrySuppressionMultiplier,
-  noteBtcPrice,
-  getLatestBtcPrice,
-  type BtcBeaconReading,
-} from './btc_beacon.js';
-import { recordLaneOutcome, weightedWinRate } from './time_of_day_winrate.js';
-import { observeFundingArb } from './funding_arb_observer.js';
-import {
-  evaluateCell,
-  regimeToDirection,
-  canonicalToPhase,
-  type CellAction,
-} from './compositional_executive.js';
-import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
-import { signalScorer, resolveEntryGate } from './signal_scorer.js';
-import { getOperatorRiskSettings } from './risk_settings.js';
-import { QIGRAMv2Partition, isQigramV2Enabled } from './agent_L_qigram_v2.js';
-import {
-  newMTFState,
-  onTickAppend as mtfOnTickAppend,
-  mtfDecide,
-  recordAgreementTimestamps as mtfRecordAgreement,
-  isLongestHorizonExpired as mtfIsLongestHorizonExpired,
-} from './mtfLClassifier.js';
-import {
+  basinAlignmentToWindow,
   regimeScore as computeRegimeScore,
   regimeSizing as computeRegimeSizing,
   trailingRegimeStop as continuousTrailingRegimeStop,
-  basinAlignmentToWindow,
 } from './regimeSizing.js';
-import {
-  applyOutcomeToState,
-  decayPerAgentState,
-  newPerAgentState,
-  recordDecision,
-  riskModulator,
-  type PerAgentState,
-  type AgentOutcomeEvent,
-  type AgentDecisionRecord,
-} from './per_agent_state.js';
-import {
-  buildCrossAgentContext,
-  convictionDampenerFromBus,
-  type CrossAgentContext,
-  type AgentLabel,
-} from './per_agent_bus.js';
-import { foresightVeto } from './per_agent_foresight.js';
-import {
-  clampNewContractsToCap,
-  kernelDerivedContractCap,
-  kellyPrimaryContractCap,
-  VENUE_CONTRACTS_CEILING,
-} from './positionContractsBound.js';
+import { resonanceBank } from './resonance_bank.js';
+import { getOperatorRiskSettings } from './risk_settings.js';
+import { checkNotionalConsistency, computeNetPnlForReward, computeSafePnl, SAFE_PNL_EXPR, SAFE_PNL_FROM_ROW, verifyPnl } from './safePnlSql.js';
+import { computeSelfObservation, type SelfObservation } from './self_observation.js';
+import { resolveEntryGate, signalScorer } from './signal_scorer.js';
+import { structuralVetoMonitor } from './structural_veto_monitor.js';
+import { recordLaneOutcome, weightedWinRate } from './time_of_day_winrate.js';
+import { WorkingMemory, type Bubble } from './working_memory.js';
+import { wsPositionCache } from './ws_position_cache.js';
 
 /** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -508,7 +505,7 @@ function isMonkeyPaperMode(): boolean {
 // reverse-reopen leg). Does NOT block K exits, harvest, scalp_exit,
 // force_harvest. Does NOT block M, T, L or LiveSignal — only K.
 //
-// QIG purity: pure helper, no Adam/AdamW/LayerNorm/cosine. Reads L's
+// QIG purity: pure helper, no forbidden Euclidean/training primitives. Reads L's
 // AgentLDecision (signedScore, conviction, action) which is already
 // FR-KNN-derived, and a K side string. No new geometric operations.
 
@@ -554,12 +551,12 @@ export interface LVetoEvaluation {
   lSide: 'long' | 'short' | null;
   /** Reason code — useful for log-grepping and dashboard counters. */
   reasonCode:
-    | 'vetoed_high_conviction_disagreement'
-    | 'flag_disabled'
-    | 'k_not_entry'
-    | 'l_holding'
-    | 'l_agrees_with_k'
-    | 'l_conviction_below_threshold';
+  | 'vetoed_high_conviction_disagreement'
+  | 'flag_disabled'
+  | 'k_not_entry'
+  | 'l_holding'
+  | 'l_agrees_with_k'
+  | 'l_conviction_below_threshold';
 }
 
 export function evaluateLVetoOverK(opts: {
@@ -627,6 +624,35 @@ export function applyEntryExpectationDecision(
   }
 
   return { sideAfterExpectation, sizeMultiplier, entryBlockedByExpectation };
+}
+
+export interface EntrySignalConviction {
+  signal: number;
+  strength: number;
+  hasConviction: boolean;
+}
+
+/**
+ * Pure entry-conviction gate for the TS execution path.
+ *
+ * `geometricDirection()` intentionally preserves tiny non-zero leans so
+ * direction remains purely geometric. This helper is the separate veto:
+ * only act when the absolute geometric signal clears Monkey's already-
+ * derived `currentEntryThreshold()` value. That keeps sideways chop from
+ * trading on microscopic tape/basin noise without adding a new knob.
+ */
+export function hasEntrySignalConviction(args: {
+  basinDir: number;
+  tapeTrend: number;
+  entryThreshold: number;
+}): EntrySignalConviction {
+  const signal = args.basinDir + 0.5 * args.tapeTrend;
+  const strength = Math.abs(signal);
+  return {
+    signal,
+    strength,
+    hasConviction: strength >= args.entryThreshold,
+  };
 }
 
 export async function persistExpectationDecisionBestEffort(
@@ -1259,7 +1285,7 @@ export class MonkeyKernel extends EventEmitter {
    * /monkey/snapshot dashboard so the operator can see the veto rate
    * before/after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
-   * Per-symbol breakdown lets the operator confirm the veto is
+  * Per-symbol counts let the operator confirm the veto is
    * actually firing on ETH (the over-trader) and not unintentionally
    * suppressing BTC entries where K has been profitable.
    */
@@ -1706,8 +1732,8 @@ export class MonkeyKernel extends EventEmitter {
 
   /**
    * 2026-05-16 — L-veto-over-K telemetry accessor. Returns the running
-   * total of K entries suppressed by L's high-conviction disagreeing
-   * vote, plus a per-symbol breakdown. Used by the /monkey/snapshot
+  * total of K entries suppressed by L's high-conviction disagreeing
+  * vote, plus per-symbol counts. Used by the /monkey/snapshot
    * endpoint and the operator dashboard to confirm the veto fires
    * after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
@@ -1806,8 +1832,8 @@ export class MonkeyKernel extends EventEmitter {
     const previousStatus = this.mtfBootstrapStatus.get(symbol);
     const labelsToRetry = previousStatus
       ? previousStatus.perTimeframe
-          .filter((p) => p.status !== 'success')
-          .map((p) => p.label)
+        .filter((p) => p.status !== 'success')
+        .map((p) => p.label)
       : undefined;
     if (labelsToRetry && labelsToRetry.length === 0) {
       this.mtfBootstrapRetryAtMs.delete(symbol);
@@ -2886,9 +2912,9 @@ export class MonkeyKernel extends EventEmitter {
     // regimeConfidence instead of operator env knobs (now removed).
     const cellAction: CellAction | null = (cellPhase !== null && cellDirection !== null)
       ? evaluateCell(cellPhase, cellDirection, {
-          phi,
-          regimeConfidence: regimeReading.confidence,
-        })
+        phi,
+        regimeConfidence: regimeReading.confidence,
+      })
       : null;
     const cellLive = process.env.REGIME_COMPOSITIONAL_LIVE === 'true';
 
@@ -3050,9 +3076,16 @@ export class MonkeyKernel extends EventEmitter {
     const entryThr = btcEntryMul === 1.0
       ? entryThrBase
       : {
-          value: entryThrBase.value * btcEntryMul,
-          derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
-        };
+        value: entryThrBase.value * btcEntryMul,
+        derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
+      };
+    const entryConviction = hasEntrySignalConviction({
+      basinDir,
+      tapeTrend,
+      entryThreshold: entryThr.value,
+    });
+    const entrySignalStrength = entryConviction.strength;
+    const entryHasConviction = entryConviction.hasConviction;
     // Leverage ceiling. Exchange max-lev (typically 75× on BTC/ETH perps)
     // 2026-05-25 — operator autonomy doctrine: code-side leverage caps
     // removed. The kernel's own learning loop (push_reward → chemistry →
@@ -3245,13 +3278,13 @@ export class MonkeyKernel extends EventEmitter {
       sense2: btcBeacon === null
         ? null
         : {
-            correlation: btcBeacon.correlation,
-            btcDirection: btcBeacon.btcDirection,
-            suppressionMagnitude: btcBeacon.suppressionMagnitude,
-            entryMultiplier: btcEntryMul,
-            n: btcBeacon.n,
-            warmup: btcBeacon.warmup,
-          },
+          correlation: btcBeacon.correlation,
+          btcDirection: btcBeacon.btcDirection,
+          suppressionMagnitude: btcBeacon.suppressionMagnitude,
+          entryMultiplier: btcEntryMul,
+          n: btcBeacon.n,
+          warmup: btcBeacon.warmup,
+        },
       // SENSE-2c Phase 2 (#787 follow-up): per-lane time-of-day-weighted
       // winrate observed across this kernel's session. Folded into
       // chooseLane via priorShift = rate - 0.5 inside the softmax exp().
@@ -3271,14 +3304,14 @@ export class MonkeyKernel extends EventEmitter {
       regime1_cell: cellAction === null
         ? null
         : {
-            phase: cellAction.phase,
-            direction: cellAction.direction,
-            laneBias: cellAction.laneBias,
-            sizeMultiplier: cellAction.sizeMultiplier,
-            harvestTightness: cellAction.harvestTightness,
-            label: cellAction.label,
-            live: cellLive,
-          },
+          phase: cellAction.phase,
+          direction: cellAction.direction,
+          laneBias: cellAction.laneBias,
+          sizeMultiplier: cellAction.sizeMultiplier,
+          harvestTightness: cellAction.harvestTightness,
+          label: cellAction.label,
+          live: cellLive,
+        },
     };
 
     // Phase E — market-intel telemetry. The cache is kept fresh by the
@@ -3551,45 +3584,45 @@ export class MonkeyKernel extends EventEmitter {
           ownOpenRow?.reason.includes('|adopted|') ? 'adopted' : 'own';
         const rejustResult = !exitFired
           ? evaluateRejustification({
-              regimeAtOpen,
-              phiAtOpen,
-              regimeNow: mode,
-              phiNow: phi,
-              emotions,
-              regimeConfidence: regimeReading.confidence,
-              regimeChangeStreak,
-              regimeStabilityTicksRequired,
-              convictionFailedStreak,
-              convictionFailedTicksRequired,
-              directionalDisagreementStreak,
-              directionalDisagreementTicksRequired,
-              basinNow: basin,
-              basinAtOpen,
-              heldDurationS,
-              currentRoi,
-              origin: heldOrigin,
-              // Hold-time floor (2026-05-28, CC1 operator-selected fix):
-              // Now observer-derived from the lane's empirical decision
-              // change interval (substrate_observer). Cold-start: 0
-              // (no extra hold-time floor until the kernel has observed
-              // its own decision cadence). Suppresses regime/phi/
-              // conviction exits before the position has been held
-              // long enough; TP, SL, directional_disagreement,
-              // stale_bleed remain unaffected.
-              // See held_position_rejustification.ts:holdTimeFloorS docs.
-              holdTimeFloorS: getObservedLaneDecisionPeriodMs(heldLane) / 1000,
-            })
+            regimeAtOpen,
+            phiAtOpen,
+            regimeNow: mode,
+            phiNow: phi,
+            emotions,
+            regimeConfidence: regimeReading.confidence,
+            regimeChangeStreak,
+            regimeStabilityTicksRequired,
+            convictionFailedStreak,
+            convictionFailedTicksRequired,
+            directionalDisagreementStreak,
+            directionalDisagreementTicksRequired,
+            basinNow: basin,
+            basinAtOpen,
+            heldDurationS,
+            currentRoi,
+            origin: heldOrigin,
+            // Hold-time floor (2026-05-28, CC1 operator-selected fix):
+            // Now observer-derived from the lane's empirical decision
+            // change interval (substrate_observer). Cold-start: 0
+            // (no extra hold-time floor until the kernel has observed
+            // its own decision cadence). Suppresses regime/phi/
+            // conviction exits before the position has been held
+            // long enough; TP, SL, directional_disagreement,
+            // stale_bleed remain unaffected.
+            // See held_position_rejustification.ts:holdTimeFloorS docs.
+            holdTimeFloorS: getObservedLaneDecisionPeriodMs(heldLane) / 1000,
+          })
           : {
-              checked: false, fired: null, reason: '', phiFloor: null,
-              frDistance: null,
-              frThreshold: 1 / Math.PI,
-              regimeChangeStreak,
-              regimeStabilityTicksRequired,
-              convictionFailedStreak,
-              convictionFailedTicksRequired,
-              directionalDisagreementStreak,
-              directionalDisagreementTicksRequired,
-            };
+            checked: false, fired: null, reason: '', phiFloor: null,
+            frDistance: null,
+            frThreshold: 1 / Math.PI,
+            regimeChangeStreak,
+            regimeStabilityTicksRequired,
+            convictionFailedStreak,
+            convictionFailedTicksRequired,
+            directionalDisagreementStreak,
+            directionalDisagreementTicksRequired,
+          };
         const rejust: Record<string, unknown> = {
           checked: rejustResult.checked,
         };
@@ -3752,11 +3785,11 @@ export class MonkeyKernel extends EventEmitter {
             currentRoi: currentRoi ?? null,
             reason:
               process.env.REGIME_HELD_EXIT_LIVE !== 'true' ? 'flag_off'
-              : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
-              : currentRoi === undefined ? 'roi_unknown'
-              : currentRoi <= 0 ? 'not_profitable'
-              : !profitClearsFees ? 'below_fee_floor'
-              : 'unknown',
+                : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
+                  : currentRoi === undefined ? 'roi_unknown'
+                    : currentRoi <= 0 ? 'not_profitable'
+                      : !profitClearsFees ? 'below_fee_floor'
+                        : 'unknown',
           };
         }
 
@@ -4199,12 +4232,13 @@ export class MonkeyKernel extends EventEmitter {
     } else if (
       MODE_PROFILES[mode].canEnter &&
       direction !== 'flat' &&
+      entryHasConviction &&
       size.value > 0 &&
       !sideShortRefused
     ) {
       // v4 over-gating fix (QIG-FR v4 Problem 5): the chop regime is a
       // FILTER, not a mandatory veto. The base geometric prediction
-      // fires the entry whenever mode/direction/size/short allow it;
+      // fires the entry whenever mode/direction/threshold/size/short allow it;
       // a chop regime no longer BLOCKS it — it only sizes it down.
       // The reduction is observer-derived from the regime classifier's
       // own confidence (P1: no hardcoded knob) — deeper chop → smaller
@@ -4222,8 +4256,8 @@ export class MonkeyKernel extends EventEmitter {
         chop_size_factor: chopSizeFactor,
       };
       // sideCandidate from geometricDirection (pure geometry, post #ml-separation).
-      // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
-      // != 0). The Layer 2B emotion conviction gate (confidence < anxiety) is
+      // Entry gate is geometric AND thresholded: direction != flat plus
+      // |basinDir + 0.5*tapeTrend| >= currentEntryThreshold(). The Layer 2B emotion conviction gate (confidence < anxiety) is
       // Python-only — it would block ALL entries in normal operation because
       // transcendence = |κ−64| > 1 drives confidence negative most ticks.
       //
@@ -4378,13 +4412,15 @@ export class MonkeyKernel extends EventEmitter {
         ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
         : direction === 'flat'
           ? `[${mode}] direction=flat (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
-          : chopSuppressed
-            ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${chopThresholdForLane.toFixed(2)} — suspend new entries (lane=${positionLane})`
-            : size.value <= 0
-              ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
-              : sideShortRefused
-                ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
-                : 'no qualifying signal';
+          : !entryHasConviction
+            ? `[${mode}] geometric signal ${entrySignalStrength.toFixed(3)} below entry threshold ${entryThr.value.toFixed(3)} (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
+            : chopSuppressed
+              ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${chopThresholdForLane.toFixed(2)} — suspend new entries (lane=${positionLane})`
+              : size.value <= 0
+                ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+                : sideShortRefused
+                  ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
+                  : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
     }
@@ -4549,14 +4585,14 @@ export class MonkeyKernel extends EventEmitter {
     const mtfStatus = this.mtfBootstrapStatus.get(symbol);
     derivation.mtfBootstrap = mtfStatus
       ? {
-          allSucceeded: mtfStatus.allSucceeded,
-          perTimeframe: mtfStatus.perTimeframe.map((p) => ({
-            label: p.label,
-            status: p.status,
-            basins: p.basinsPopulated,
-          })),
-          retryAtMs: this.mtfBootstrapRetryAtMs.get(symbol) ?? null,
-        }
+        allSucceeded: mtfStatus.allSucceeded,
+        perTimeframe: mtfStatus.perTimeframe.map((p) => ({
+          label: p.label,
+          status: p.status,
+          basins: p.basinsPopulated,
+        })),
+        retryAtMs: this.mtfBootstrapRetryAtMs.get(symbol) ?? null,
+      }
       : { allSucceeded: false, perTimeframe: [], retryAtMs: null };
 
     let executed = false;
@@ -4599,8 +4635,8 @@ export class MonkeyKernel extends EventEmitter {
       const { publishProposal: _publishProposal } = await import('./proposal_bus.js');
       const _proposalSide: 'long' | 'short' | null =
         (action === 'enter_long' || action === 'pyramid_long') ? 'long'
-        : (action === 'enter_short' || action === 'pyramid_short') ? 'short'
-        : null;
+          : (action === 'enter_short' || action === 'pyramid_short') ? 'short'
+            : null;
       void _publishProposal({
         instance_id: this.instanceId,
         symbol,
@@ -4608,7 +4644,7 @@ export class MonkeyKernel extends EventEmitter {
         proposed_action: (action === 'enter_long' || action === 'enter_short'
           || action === 'pyramid_long' || action === 'pyramid_short') ? 'enter_long'
           : action === 'enter_short' ? 'enter_short'
-          : (action.startsWith('exit') ? 'exit' : 'hold'),
+            : (action.startsWith('exit') ? 'exit' : 'hold'),
         side: _proposalSide,
         lane: 'swing',  // K-kernel default; CONSENSUS-3 wires per-lane attribution
         size_usdt: Number(size.value ?? 0),
@@ -4687,7 +4723,7 @@ export class MonkeyKernel extends EventEmitter {
           tick_id: `${symbol}|${state.sessionTicks}`,
           proposed_action: (action === 'enter_long' || action === 'pyramid_long') ? 'enter_long' as const
             : action === 'enter_short' ? 'enter_short' as const
-            : (action.startsWith('exit') ? 'exit' as const : 'hold' as const),
+              : (action.startsWith('exit') ? 'exit' as const : 'hold' as const),
           side: (action === 'enter_long' || action === 'pyramid_long') ? 'long' as const
             : (action === 'enter_short' || action === 'pyramid_short') ? 'short' as const : null,
           lane: 'swing',
@@ -4796,104 +4832,104 @@ export class MonkeyKernel extends EventEmitter {
           });
         } else {
           const isDCA = Boolean(derivation.isDCAAdd);
-        // Cap K's margin to its arbiter share. Without this, the existing
-        // size formula could exceed K's allocation when M has been
-        // accumulating and K's share has shrunk.
-        // v4 over-gating fix: chopSizeFactor (< 1 only when a chop regime
-        // was active at decision time) sizes the entry down instead of
-        // the chop gate vetoing it outright.
-        cappedMargin =
-          Math.min(size.value, arbiterAllocation.k) * chopSizeFactor;
-        if (cappedMargin <= 0) {
-          reason += ` | k_capped_to_zero (kShare=${arbiterSnapshot.kShare.toFixed(2)})`;
-        }
-        const execResult = cappedMargin > 0 ? await this.executeEntry({
-          symbol,
-          side: action === 'enter_long' ? 'long' : 'short',
-          marginUsdt: cappedMargin,
-          leverage: leverage.value,
-          entryPrice: lastPrice,
-          minNotional,
-          phi,
-          kappa: state.kappa,
-          sovereignty,
-          // Phase 9 — kernel-derived contract cap observables.
-          availableEquityUsdt: availableEquity,
-          dopamine: nc.dopamine,
-          gaba: nc.gaba,
-          trajectoryId: null,
-          isDCAAdd: isDCA,
-          dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
-          agent: 'K',
-          // Proposal #10 — when adding to an existing held position,
-          // route the entry into THAT lane so DCA stacks under one
-          // (agent, symbol, lane) row group. Otherwise use the lane
-          // chosen by chooseLane this tick.
-          lane: isDCA && heldSide
-            ? (ownOpenRow?.lane ?? positionLane)
-            : positionLane,
-          cellDirection,
-        }) : { executed: false, orderId: null, reason: 'k_arbiter_zero' };
-        executed = execResult.executed;
-        monkeyOrderId = execResult.orderId;
-        if (!executed) {
-          reason += ` | execute: ${execResult.reason}`;
-          kEntryRejectCode = execResult.reason;
-        } else {
-          if (execResult.reason.startsWith('monkey_paper_mode:')) {
-            reason += ` | ${execResult.reason}`;
+          // Cap K's margin to its arbiter share. Without this, the existing
+          // size formula could exceed K's allocation when M has been
+          // accumulating and K's share has shrunk.
+          // v4 over-gating fix: chopSizeFactor (< 1 only when a chop regime
+          // was active at decision time) sizes the entry down instead of
+          // the chop gate vetoing it outright.
+          cappedMargin =
+            Math.min(size.value, arbiterAllocation.k) * chopSizeFactor;
+          if (cappedMargin <= 0) {
+            reason += ` | k_capped_to_zero (kShare=${arbiterSnapshot.kShare.toFixed(2)})`;
           }
-          // v0.6.2 bookkeeping
-          state.lastEntryAtMs = Date.now();
-          // Matrix tier-3 (2026-05-26): fresh entry → reset coherence
-          // streak. The new position has no prior coherent-tick history,
-          // so the trail starts at the tightest Fibonacci tier (3%) and
-          // widens as the kernel proves sustained coherence on the trade.
-          state.coherenceStreak = 0;
-          if (isDCA) {
-            state.dcaAddCount += 1;
-          } else {
-            state.dcaAddCount = 0;  // fresh position
-            state.peakPnlUsdt = null;
-            state.peakTrackedTradeId = null;
-          }
-          // Held-position re-justification — snapshot (regime, Φ) at the
-          // moment of entry on this lane. Subsequent ticks compare against
-          // these anchors via the three internal exit checks (regime
-          // change / Φ collapse / conviction failure). DCA adds keep the
-          // original anchors (first-open justification is canonical).
-          if (!isDCA) {
-            const entryLane = (isDCA && heldSide
-              ? (ownOpenRow?.lane ?? positionLane)
-              : positionLane) as 'scalp' | 'swing' | 'trend';
-            state.regimeAtOpenByLane[entryLane] = mode;
-            state.phiAtOpenByLane[entryLane] = phi;
-            state.basinAtOpenByLane[entryLane] = Float64Array.from(basin) as Basin;
-            state.regimeChangeStreakByLane[entryLane] = 0;
-            state.convictionFailedStreakByLane[entryLane] = 0;
-            state.directionalDisagreementStreakByLane[entryLane] = 0;
-            state.heldSideByLane[entryLane] = sideCandidate;
-            state.entryTimeMsByLane[entryLane] = Date.now();
-          }
-          this.recordPredictionSnapshot({
-            state,
-            tradeId: execResult.tradeId ?? null,
-            basin,
-            strategyForecast: state.identityBasin,
-            basinVelocity: bv,
+          const execResult = cappedMargin > 0 ? await this.executeEntry({
+            symbol,
+            side: action === 'enter_long' ? 'long' : 'short',
+            marginUsdt: cappedMargin,
+            leverage: leverage.value,
+            entryPrice: lastPrice,
+            minNotional,
             phi,
             kappa: state.kappa,
-            nc,
-            regimeWeights,
-            mode,
-            lane: isDCA && heldSide ? (ownOpenRow?.lane ?? positionLane) : positionLane,
-            reason: 'entry',
-            predictedSide: action === 'enter_long' ? 'long' : 'short',
-            sizeUsdt: cappedMargin,
-            leverage: leverage.value,
-            entryThreshold: entryThr.value,
-          });
-        }
+            sovereignty,
+            // Phase 9 — kernel-derived contract cap observables.
+            availableEquityUsdt: availableEquity,
+            dopamine: nc.dopamine,
+            gaba: nc.gaba,
+            trajectoryId: null,
+            isDCAAdd: isDCA,
+            dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
+            agent: 'K',
+            // Proposal #10 — when adding to an existing held position,
+            // route the entry into THAT lane so DCA stacks under one
+            // (agent, symbol, lane) row group. Otherwise use the lane
+            // chosen by chooseLane this tick.
+            lane: isDCA && heldSide
+              ? (ownOpenRow?.lane ?? positionLane)
+              : positionLane,
+            cellDirection,
+          }) : { executed: false, orderId: null, reason: 'k_arbiter_zero' };
+          executed = execResult.executed;
+          monkeyOrderId = execResult.orderId;
+          if (!executed) {
+            reason += ` | execute: ${execResult.reason}`;
+            kEntryRejectCode = execResult.reason;
+          } else {
+            if (execResult.reason.startsWith('monkey_paper_mode:')) {
+              reason += ` | ${execResult.reason}`;
+            }
+            // v0.6.2 bookkeeping
+            state.lastEntryAtMs = Date.now();
+            // Matrix tier-3 (2026-05-26): fresh entry → reset coherence
+            // streak. The new position has no prior coherent-tick history,
+            // so the trail starts at the tightest Fibonacci tier (3%) and
+            // widens as the kernel proves sustained coherence on the trade.
+            state.coherenceStreak = 0;
+            if (isDCA) {
+              state.dcaAddCount += 1;
+            } else {
+              state.dcaAddCount = 0;  // fresh position
+              state.peakPnlUsdt = null;
+              state.peakTrackedTradeId = null;
+            }
+            // Held-position re-justification — snapshot (regime, Φ) at the
+            // moment of entry on this lane. Subsequent ticks compare against
+            // these anchors via the three internal exit checks (regime
+            // change / Φ collapse / conviction failure). DCA adds keep the
+            // original anchors (first-open justification is canonical).
+            if (!isDCA) {
+              const entryLane = (isDCA && heldSide
+                ? (ownOpenRow?.lane ?? positionLane)
+                : positionLane) as 'scalp' | 'swing' | 'trend';
+              state.regimeAtOpenByLane[entryLane] = mode;
+              state.phiAtOpenByLane[entryLane] = phi;
+              state.basinAtOpenByLane[entryLane] = Float64Array.from(basin) as Basin;
+              state.regimeChangeStreakByLane[entryLane] = 0;
+              state.convictionFailedStreakByLane[entryLane] = 0;
+              state.directionalDisagreementStreakByLane[entryLane] = 0;
+              state.heldSideByLane[entryLane] = sideCandidate;
+              state.entryTimeMsByLane[entryLane] = Date.now();
+            }
+            this.recordPredictionSnapshot({
+              state,
+              tradeId: execResult.tradeId ?? null,
+              basin,
+              strategyForecast: state.identityBasin,
+              basinVelocity: bv,
+              phi,
+              kappa: state.kappa,
+              nc,
+              regimeWeights,
+              mode,
+              lane: isDCA && heldSide ? (ownOpenRow?.lane ?? positionLane) : positionLane,
+              reason: 'entry',
+              predictedSide: action === 'enter_long' ? 'long' : 'short',
+              sizeUsdt: cappedMargin,
+              leverage: leverage.value,
+              entryThreshold: entryThr.value,
+            });
+          }
         }  // close v0.8.7 trading-paused else branch
       } else if (action === 'scalp_exit' && heldSide) {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
@@ -4901,10 +4937,10 @@ export class MonkeyKernel extends EventEmitter {
         const exitTypeBit = Number(scalpDeriv?.exitTypeBit ?? 0);
         const exitType =
           exitTypeBit === 1 ? 'take_profit' :
-          exitTypeBit === -1 ? 'stop_loss' :
-          exitTypeBit === 2 ? 'trailing_harvest' :
-          exitTypeBit === 3 ? 'trend_flip_harvest' :
-          'scalp_exit';
+            exitTypeBit === -1 ? 'stop_loss' :
+              exitTypeBit === 2 ? 'trailing_harvest' :
+                exitTypeBit === 3 ? 'trend_flip_harvest' :
+                  'scalp_exit';
         // #931 exit-attribution: extract the inner gate name from the reason
         // string prefix (e.g. "conviction_failed: conf=...", "bracket_sl: mark...",
         // "stale_held: position open ..."). The 12+ inner gates that all surface
@@ -5096,72 +5132,72 @@ export class MonkeyKernel extends EventEmitter {
                 leg: 'reverse_reopen',
               });
             } else {
-            // Settle delay — observer-derived per #1009.
-            // Previously hardcoded `setTimeout(resolve, 500)`; now the
-            // cooldown_composer reads the three rolling rings in safety_floor.ts
-            // (settlement p99 + 21002 incident bound + rate-limit headroom) and
-            // returns the binding floor. 2026-05-29 cascading-knob-strip
-            // eliminated the cold-start sentinel — during warmup the
-            // composer returns 0 and the kernel re-enters at substrate
-            // cadence (no synthetic delay).
-            const reverseReopenCooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
-            logger.debug(`[Monkey] ${symbol} reverse-reopen ${formatCooldownTelemetry(reverseReopenCooldown)}`);
-            if (reverseReopenCooldown.finalMs > 0) {
-              await new Promise((resolve) => setTimeout(resolve, reverseReopenCooldown.finalMs));
-            }
-            const execResult = await this.executeEntry({
-              symbol,
-              side: newSide,
-              marginUsdt: size.value,
-              leverage: leverage.value,
-              entryPrice: lastPrice,
-              minNotional,
-              phi,
-              kappa: state.kappa,
-              sovereignty,
-              trajectoryId: null,
-              isDCAAdd: false,
-              dcaAddIndex: 0,
-              // Reversal lands in the same lane the previous position
-              // occupied — REVERSION mode flips side, not lane.
-              lane: reversalLane,
-              cellDirection,
-            });
-            executed = execResult.executed;
-            monkeyOrderId = execResult.orderId;
-            if (executed) {
-              state.lastEntryAtMs = Date.now();
-              // Re-snapshot rejustification anchors for the new direction.
-              state.regimeAtOpenByLane[reversalLane] = mode;
-              state.phiAtOpenByLane[reversalLane] = phi;
-              state.basinAtOpenByLane[reversalLane] = Float64Array.from(basin) as Basin;
-              state.regimeChangeStreakByLane[reversalLane] = 0;
-              state.convictionFailedStreakByLane[reversalLane] = 0;
-              state.directionalDisagreementStreakByLane[reversalLane] = 0;
-              state.heldSideByLane[reversalLane] = newSide;
-              state.entryTimeMsByLane[reversalLane] = Date.now();
-              this.recordPredictionSnapshot({
-                state,
-                tradeId: execResult.tradeId ?? null,
-                basin,
-                strategyForecast: state.identityBasin,
-                basinVelocity: bv,
+              // Settle delay — observer-derived per #1009.
+              // Previously hardcoded `setTimeout(resolve, 500)`; now the
+              // cooldown_composer reads the three rolling rings in safety_floor.ts
+              // (settlement p99 + 21002 incident bound + rate-limit headroom) and
+              // returns the binding floor. 2026-05-29 cascading-knob-strip
+              // eliminated the cold-start sentinel — during warmup the
+              // composer returns 0 and the kernel re-enters at substrate
+              // cadence (no synthetic delay).
+              const reverseReopenCooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
+              logger.debug(`[Monkey] ${symbol} reverse-reopen ${formatCooldownTelemetry(reverseReopenCooldown)}`);
+              if (reverseReopenCooldown.finalMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, reverseReopenCooldown.finalMs));
+              }
+              const execResult = await this.executeEntry({
+                symbol,
+                side: newSide,
+                marginUsdt: size.value,
+                leverage: leverage.value,
+                entryPrice: lastPrice,
+                minNotional,
                 phi,
                 kappa: state.kappa,
-                nc,
-                regimeWeights,
-                mode,
+                sovereignty,
+                trajectoryId: null,
+                isDCAAdd: false,
+                dcaAddIndex: 0,
+                // Reversal lands in the same lane the previous position
+                // occupied — REVERSION mode flips side, not lane.
                 lane: reversalLane,
-                reason: 'entry',
-                predictedSide: newSide,
-                sizeUsdt: size.value,
-                leverage: leverage.value,
-                entryThreshold: entryThr.value,
+                cellDirection,
               });
-              reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
-            } else {
-              reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
-            }
+              executed = execResult.executed;
+              monkeyOrderId = execResult.orderId;
+              if (executed) {
+                state.lastEntryAtMs = Date.now();
+                // Re-snapshot rejustification anchors for the new direction.
+                state.regimeAtOpenByLane[reversalLane] = mode;
+                state.phiAtOpenByLane[reversalLane] = phi;
+                state.basinAtOpenByLane[reversalLane] = Float64Array.from(basin) as Basin;
+                state.regimeChangeStreakByLane[reversalLane] = 0;
+                state.convictionFailedStreakByLane[reversalLane] = 0;
+                state.directionalDisagreementStreakByLane[reversalLane] = 0;
+                state.heldSideByLane[reversalLane] = newSide;
+                state.entryTimeMsByLane[reversalLane] = Date.now();
+                this.recordPredictionSnapshot({
+                  state,
+                  tradeId: execResult.tradeId ?? null,
+                  basin,
+                  strategyForecast: state.identityBasin,
+                  basinVelocity: bv,
+                  phi,
+                  kappa: state.kappa,
+                  nc,
+                  regimeWeights,
+                  mode,
+                  lane: reversalLane,
+                  reason: 'entry',
+                  predictedSide: newSide,
+                  sizeUsdt: size.value,
+                  leverage: leverage.value,
+                  entryThreshold: entryThr.value,
+                });
+                reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
+              } else {
+                reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
+              }
             }  // close v0.8.7 trading-paused else branch
           } else {
             reason += ` | flatten failed: ${closeResult.reason}; reverse aborted`;
@@ -5231,135 +5267,135 @@ export class MonkeyKernel extends EventEmitter {
           allocation: Number(arbiterAllocation.m.toFixed(2)),
         };
       } else {
-      const mInputs: MLAgentInputs = {
-        symbol,
-        ohlcv: ohlcv.map((c) => ({
-          timestamp: Number(c.timestamp ?? 0),
-          open: Number(c.open),
-          high: Number(c.high),
-          low: Number(c.low),
-          close: Number(c.close),
-          volume: Number(c.volume),
-        })),
-        mlSignal: (mlSignal === 'BUY' || mlSignal === 'SELL' || mlSignal === 'HOLD')
-          ? mlSignal : 'HOLD',
-        mlStrength,
-        account: {
-          equityFraction,
-          marginFraction,
-          openPositions,
-          availableEquity,
-        },
-        allocatedCapitalUsdt: arbiterAllocation.m,
-      };
-      const mDecision = mlAgentDecide(mInputs);
-      // v0.8.8 — apply cross-agent dampener + risk modulator + foresight.
-      const mProposedSide: 'long' | 'short' | null =
-        mDecision.action === 'enter_long' ? 'long'
-          : mDecision.action === 'enter_short' ? 'short' : null;
-      // 2026-05-13 — agreement gate. Observed 5/13: ML signal stuck
-      // at BUY@0.4 on ETH while ETH was bouncing weakly off a 2.7%
-      // downtrend → M kept entering longs at local highs and getting
-      // chopped out. Require tape AND basin to both agree with the
-      // ML signal direction at minimum strengths. The thresholds are
-      // intentionally conservative — M is the riskiest agent because
-      // its only signal is the external ML pipeline, no geometric
-      // self-check. K (geometric) and T (turtle pyramid) have their
-      // own discipline; L uses FR-KNN similarity. M needed agreement.
-      const M_MIN_TAPE_ABS =
-        Number(process.env.MONKEY_AGENT_M_MIN_TAPE_STRENGTH) || 0.4;
-      const M_MIN_BASIN_ABS =
-        Number(process.env.MONKEY_AGENT_M_MIN_BASIN_STRENGTH) || 0.10;
-      let mAgreementVeto = false;
-      let mAgreementReason = '';
-      if (mProposedSide === 'long') {
-        if (!(tapeTrend > M_MIN_TAPE_ABS && basinDir > M_MIN_BASIN_ABS)) {
-          mAgreementVeto = true;
-          mAgreementReason = `agreement_below_threshold: tape=${tapeTrend.toFixed(3)} (need >${M_MIN_TAPE_ABS}) basin=${basinDir.toFixed(3)} (need >${M_MIN_BASIN_ABS})`;
-        }
-      } else if (mProposedSide === 'short') {
-        if (!(tapeTrend < -M_MIN_TAPE_ABS && basinDir < -M_MIN_BASIN_ABS)) {
-          mAgreementVeto = true;
-          mAgreementReason = `agreement_below_threshold: tape=${tapeTrend.toFixed(3)} (need <-${M_MIN_TAPE_ABS}) basin=${basinDir.toFixed(3)} (need <-${M_MIN_BASIN_ABS})`;
-        }
-      }
-      const mDampener = mProposedSide
-        ? convictionDampenerFromBus(mCrossAgentCtx, mProposedSide)
-        : 1.0;
-      const mForesight = mProposedSide
-        ? foresightVeto(state.basinHistory, mProposedSide)
-        : { veto: false, reason: 'hold', predictedDirection: 0, confidence: 0 };
-      const mModulatedSize = mDecision.sizeUsdt * mDampener * mRiskMod;
-      const clampedSize = (mForesight.veto || mAgreementVeto)
-        ? 0
-        : clampSizeToHeadroom(mModulatedSize, mHeadroom);
-      derivation.agentM = {
-        action: mDecision.action,
-        sizeUsdt: clampedSize,
-        requestedSize: mDecision.sizeUsdt,
-        modulatedSize: mModulatedSize,
-        crossAgentDampener: mDampener,
-        riskModulator: mRiskMod,
-        foresightVeto: mForesight.veto,
-        foresightReason: mForesight.reason,
-        agreementVeto: mAgreementVeto,
-        agreementReason: mAgreementVeto ? mAgreementReason : 'aligned',
-        emotions: state.agentStates.M.emotions,
-        headroom: Number(mHeadroom.toFixed(2)),
-        openMargin: Number(mOpenMargin.toFixed(2)),
-        allocation: Number(arbiterAllocation.m.toFixed(2)),
-        leverage: mDecision.leverage,
-        reason: mDecision.reason,
-        mlSignal: mInputs.mlSignal,
-        mlStrength: mInputs.mlStrength,
-      };
-      if (mAgreementVeto) {
-        logger.info('[AgentM] entry vetoed by agreement gate', {
-          symbol, side: mProposedSide,
-          tape: tapeTrend.toFixed(3),
-          basin: basinDir.toFixed(3),
-          mlStrength: mInputs.mlStrength,
-        });
-      }
-      if (
-        (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
-        && clampedSize > 0
-      ) {
-        // v0.8.7 kill switch — pause new entries from Agent M.
-        if (isTradingPaused()) {
-          logger.info('[AgentM] entry suppressed by MONKEY_TRADING_PAUSED', {
-            symbol, side: mDecision.action,
-          });
-          (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
-        } else {
-        const mResult = await this.executeEntry({
+        const mInputs: MLAgentInputs = {
           symbol,
-          side: mDecision.action === 'enter_long' ? 'long' : 'short',
-          marginUsdt: clampedSize,
+          ohlcv: ohlcv.map((c) => ({
+            timestamp: Number(c.timestamp ?? 0),
+            open: Number(c.open),
+            high: Number(c.high),
+            low: Number(c.low),
+            close: Number(c.close),
+            volume: Number(c.volume),
+          })),
+          mlSignal: (mlSignal === 'BUY' || mlSignal === 'SELL' || mlSignal === 'HOLD')
+            ? mlSignal : 'HOLD',
+          mlStrength,
+          account: {
+            equityFraction,
+            marginFraction,
+            openPositions,
+            availableEquity,
+          },
+          allocatedCapitalUsdt: arbiterAllocation.m,
+        };
+        const mDecision = mlAgentDecide(mInputs);
+        // v0.8.8 — apply cross-agent dampener + risk modulator + foresight.
+        const mProposedSide: 'long' | 'short' | null =
+          mDecision.action === 'enter_long' ? 'long'
+            : mDecision.action === 'enter_short' ? 'short' : null;
+        // 2026-05-13 — agreement gate. Observed 5/13: ML signal stuck
+        // at BUY@0.4 on ETH while ETH was bouncing weakly off a 2.7%
+        // downtrend → M kept entering longs at local highs and getting
+        // chopped out. Require tape AND basin to both agree with the
+        // ML signal direction at minimum strengths. The thresholds are
+        // intentionally conservative — M is the riskiest agent because
+        // its only signal is the external ML pipeline, no geometric
+        // self-check. K (geometric) and T (turtle pyramid) have their
+        // own discipline; L uses FR-KNN similarity. M needed agreement.
+        const M_MIN_TAPE_ABS =
+          Number(process.env.MONKEY_AGENT_M_MIN_TAPE_STRENGTH) || 0.4;
+        const M_MIN_BASIN_ABS =
+          Number(process.env.MONKEY_AGENT_M_MIN_BASIN_STRENGTH) || 0.10;
+        let mAgreementVeto = false;
+        let mAgreementReason = '';
+        if (mProposedSide === 'long') {
+          if (!(tapeTrend > M_MIN_TAPE_ABS && basinDir > M_MIN_BASIN_ABS)) {
+            mAgreementVeto = true;
+            mAgreementReason = `agreement_below_threshold: tape=${tapeTrend.toFixed(3)} (need >${M_MIN_TAPE_ABS}) basin=${basinDir.toFixed(3)} (need >${M_MIN_BASIN_ABS})`;
+          }
+        } else if (mProposedSide === 'short') {
+          if (!(tapeTrend < -M_MIN_TAPE_ABS && basinDir < -M_MIN_BASIN_ABS)) {
+            mAgreementVeto = true;
+            mAgreementReason = `agreement_below_threshold: tape=${tapeTrend.toFixed(3)} (need <-${M_MIN_TAPE_ABS}) basin=${basinDir.toFixed(3)} (need <-${M_MIN_BASIN_ABS})`;
+          }
+        }
+        const mDampener = mProposedSide
+          ? convictionDampenerFromBus(mCrossAgentCtx, mProposedSide)
+          : 1.0;
+        const mForesight = mProposedSide
+          ? foresightVeto(state.basinHistory, mProposedSide)
+          : { veto: false, reason: 'hold', predictedDirection: 0, confidence: 0 };
+        const mModulatedSize = mDecision.sizeUsdt * mDampener * mRiskMod;
+        const clampedSize = (mForesight.veto || mAgreementVeto)
+          ? 0
+          : clampSizeToHeadroom(mModulatedSize, mHeadroom);
+        derivation.agentM = {
+          action: mDecision.action,
+          sizeUsdt: clampedSize,
+          requestedSize: mDecision.sizeUsdt,
+          modulatedSize: mModulatedSize,
+          crossAgentDampener: mDampener,
+          riskModulator: mRiskMod,
+          foresightVeto: mForesight.veto,
+          foresightReason: mForesight.reason,
+          agreementVeto: mAgreementVeto,
+          agreementReason: mAgreementVeto ? mAgreementReason : 'aligned',
+          emotions: state.agentStates.M.emotions,
+          headroom: Number(mHeadroom.toFixed(2)),
+          openMargin: Number(mOpenMargin.toFixed(2)),
+          allocation: Number(arbiterAllocation.m.toFixed(2)),
           leverage: mDecision.leverage,
-          entryPrice: lastPrice,
-          minNotional,
-          phi,
-          kappa: state.kappa,
-          sovereignty,
-          trajectoryId: null,
-          isDCAAdd: false,
-          dcaAddIndex: 0,
-          agent: 'M',
-          cellDirection,
-        });
-        derivation.agentMExecuted = mResult.executed;
-        if (!mResult.executed) {
-          logger.info('[AgentM] entry rejected', {
-            symbol, side: mDecision.action, reason: mResult.reason,
-          });
-        } else {
-          logger.info('[AgentM] entry placed', {
-            symbol, side: mDecision.action, orderId: mResult.orderId,
-            margin: clampedSize.toFixed(2), leverage: mDecision.leverage,
-            headroom: mHeadroom.toFixed(2),
+          reason: mDecision.reason,
+          mlSignal: mInputs.mlSignal,
+          mlStrength: mInputs.mlStrength,
+        };
+        if (mAgreementVeto) {
+          logger.info('[AgentM] entry vetoed by agreement gate', {
+            symbol, side: mProposedSide,
+            tape: tapeTrend.toFixed(3),
+            basin: basinDir.toFixed(3),
+            mlStrength: mInputs.mlStrength,
           });
         }
+        if (
+          (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
+          && clampedSize > 0
+        ) {
+          // v0.8.7 kill switch — pause new entries from Agent M.
+          if (isTradingPaused()) {
+            logger.info('[AgentM] entry suppressed by MONKEY_TRADING_PAUSED', {
+              symbol, side: mDecision.action,
+            });
+            (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
+          } else {
+            const mResult = await this.executeEntry({
+              symbol,
+              side: mDecision.action === 'enter_long' ? 'long' : 'short',
+              marginUsdt: clampedSize,
+              leverage: mDecision.leverage,
+              entryPrice: lastPrice,
+              minNotional,
+              phi,
+              kappa: state.kappa,
+              sovereignty,
+              trajectoryId: null,
+              isDCAAdd: false,
+              dcaAddIndex: 0,
+              agent: 'M',
+              cellDirection,
+            });
+            derivation.agentMExecuted = mResult.executed;
+            if (!mResult.executed) {
+              logger.info('[AgentM] entry rejected', {
+                symbol, side: mDecision.action, reason: mResult.reason,
+              });
+            } else {
+              logger.info('[AgentM] entry placed', {
+                symbol, side: mDecision.action, orderId: mResult.orderId,
+                margin: clampedSize.toFixed(2), leverage: mDecision.leverage,
+                headroom: mHeadroom.toFixed(2),
+              });
+            }
           }
         }  // close v0.8.7 trading-paused else branch
       }  // close mHeadroom > 0 else branch
@@ -7184,18 +7220,18 @@ export class MonkeyKernel extends EventEmitter {
         // don't accidentally close LiveSignal rows.
         const openRows = closeLane
           ? await pool.query(
-              `SELECT id, quantity, agent, order_id FROM autonomous_trades
+            `SELECT id, quantity, agent, order_id FROM autonomous_trades
                 WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
                   AND (lane = $3 OR lane IS NULL)
                 ORDER BY entry_time ASC`,
-              [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
-            )
+            [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
+          )
           : await pool.query(
-              `SELECT id, quantity, agent, order_id FROM autonomous_trades
+            `SELECT id, quantity, agent, order_id FROM autonomous_trades
                 WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
                 ORDER BY entry_time ASC`,
-              [`monkey|kernel=${this.instanceId}|%`, symbol],
-            );
+            [`monkey|kernel=${this.instanceId}|%`, symbol],
+          );
         const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null; order_id: string | null }>;
         // 2026-05-16 per-agent NC — same pattern as the live close
         // branch below. Accumulate per-agent totals so M/T/L close
@@ -7349,786 +7385,786 @@ export class MonkeyKernel extends EventEmitter {
     let closeSucceeded = false;
     try {
 
-    // Load credentials + position to know size to close.
-    let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
-    try {
-      const userRow = await pool.query(
-        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
-      );
-      const userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
-      if (!userId) return { executed: false, orderId: null, reason: 'no_credentials' };
-      const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
-      if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
-      credentials = c;
-    } catch (err) {
-      return {
-        executed: false, orderId: null,
-        reason: `close_credentials_failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-
-    // Read exchange position size (tradeId's quantity may diverge from
-    // actual exchange state if partial fills or reconciler updates).
-    // Proposal #10 — in HEDGE mode + lane scoped close, the exchange
-    // qty for *this side* must be used (the symbol may have an opposite
-    // side too); in ONE_WAY mode there's only one net position so the
-    // whole-symbol qty applies.
-    let exchangeQty = 0;
-    try {
-      const positions = await poloniexFuturesService.getPositions(credentials);
-      _feedFlatObserverFromPositions(positions);
-      const forSymbol = (Array.isArray(positions) ? positions : []).filter(
-        (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
-      );
-      if (this.positionDirectionMode === 'HEDGE' && closeLane) {
-        // Match by side — under HEDGE Poloniex returns one position per side.
-        const target = forSymbol.find((p: Record<string, unknown>) => {
-          const s = String(p.side ?? p.posSide ?? '').toUpperCase();
-          const want = heldSide === 'long' ? 'LONG' : 'SHORT';
-          return s === want;
-        }) ?? forSymbol[0];
-        exchangeQty = Math.abs(Number(target?.qty ?? target?.size ?? 0));
-      } else {
-        const target = forSymbol[0];
-        exchangeQty = Math.abs(Number(target?.qty ?? target?.size ?? 0));
+      // Load credentials + position to know size to close.
+      let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
+      try {
+        const userRow = await pool.query(
+          `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+        );
+        const userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
+        if (!userId) return { executed: false, orderId: null, reason: 'no_credentials' };
+        const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
+        if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
+        credentials = c;
+      } catch (err) {
+        return {
+          executed: false, orderId: null,
+          reason: `close_credentials_failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
       }
-    } catch (err) {
-      return {
-        executed: false, orderId: null,
-        reason: `position_read_failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-    if (exchangeQty <= 0) {
-      // Most often: a sibling kernel/agent's close just settled and the
-      // exchange-side aggregate is already 0. The coordinator lock should
-      // catch most of these via `recently_closed` BEFORE we reach the
-      // getPositions call, but the call can still slip through when the
-      // sibling's close settled between our acquire and our position read.
-      const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
-      const dbExitReason = race.raced ? 'race_lost_to_sibling' : 'vanished_before_close';
-      const reason = race.raced
-        ? `race_lost_to_sibling: exchange position already 0 (sibling=${race.siblingId} ${race.ageMs}ms ago)`
-        : 'exchange_position_vanished';
-      // #931 safe-pnl — see comment at race_lost_to_sibling above.
-      await pool.query(
-        `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason=$2, exit_gate=$2, ${SAFE_PNL_FROM_ROW} WHERE id=$3`,
-        [markPrice, dbExitReason, tradeId],
-      ).catch(() => { /* non-fatal */ });
-      return { executed: false, orderId: null, reason };
-    }
 
-    // SIDE-MISMATCH RESOLUTION — close OWN size, not exchange aggregate.
-    //
-    // Bug observed 2026-05-19 19:00:13: kernel-position closed BTC short
-    // (its tracked row = 4 contracts) but the exchange position was 52
-    // contracts (aggregate across monkey-position + monkey-swing + agents
-    // K/T + scalp/trend lanes). The current logic used `exchangeQty=52`
-    // as the close size → exchange close fired for the FULL aggregate,
-    // leaving 0 on exchange. Other kernels/lanes' DB rows (48 contracts'
-    // worth) stayed status='open' until the reconciler later marked them
-    // 'reconciliation: side mismatch with exchange'.
-    //
-    // Effects:
-    //   - Per-row PnL attribution wrong (this kernel's row gets ALL the
-    //     close PnL; others get NULL from reconciler).
-    //   - Phantom open positions on the bot's view until reconciler sweeps.
-    //   - Per-agent NC feedback mis-attributed.
-    //   - Risk of stale-state decisions on phantom rows (re-entry via
-    //     postclose_cooldown could be inverted if cooldown tracks the
-    //     phantom-closed row).
-    //
-    // Fix: sum OWN tracked rows (by reason filter + lane), clamp to
-    // exchange aggregate as upper bound. reduceOnly+specific size lets
-    // the exchange close only OUR share; other kernels' positions remain
-    // intact for them to close on their own decision cycle.
-    //
-    // The reason filter (`monkey|kernel=this.instanceId|%`) scopes to
-    // THIS kernel instance; the same SELECT pattern as the post-close
-    // PnL distribution at line ~5673. If the lane is scoped, only count
-    // that lane's rows; otherwise count all of this kernel's rows.
-    //
-    // Defensive `lane IS NULL` matches #829 — picks up legacy rows.
-    let ownTrackedQty = 0;
-    try {
-      const ownRowsQuery = closeLane
-        ? await pool.query(
+      // Read exchange position size (tradeId's quantity may diverge from
+      // actual exchange state if partial fills or reconciler updates).
+      // Proposal #10 — in HEDGE mode + lane scoped close, the exchange
+      // qty for *this side* must be used (the symbol may have an opposite
+      // side too); in ONE_WAY mode there's only one net position so the
+      // whole-symbol qty applies.
+      let exchangeQty = 0;
+      try {
+        const positions = await poloniexFuturesService.getPositions(credentials);
+        _feedFlatObserverFromPositions(positions);
+        const forSymbol = (Array.isArray(positions) ? positions : []).filter(
+          (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
+        );
+        if (this.positionDirectionMode === 'HEDGE' && closeLane) {
+          // Match by side — under HEDGE Poloniex returns one position per side.
+          const target = forSymbol.find((p: Record<string, unknown>) => {
+            const s = String(p.side ?? p.posSide ?? '').toUpperCase();
+            const want = heldSide === 'long' ? 'LONG' : 'SHORT';
+            return s === want;
+          }) ?? forSymbol[0];
+          exchangeQty = Math.abs(Number(target?.qty ?? target?.size ?? 0));
+        } else {
+          const target = forSymbol[0];
+          exchangeQty = Math.abs(Number(target?.qty ?? target?.size ?? 0));
+        }
+      } catch (err) {
+        return {
+          executed: false, orderId: null,
+          reason: `position_read_failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+      if (exchangeQty <= 0) {
+        // Most often: a sibling kernel/agent's close just settled and the
+        // exchange-side aggregate is already 0. The coordinator lock should
+        // catch most of these via `recently_closed` BEFORE we reach the
+        // getPositions call, but the call can still slip through when the
+        // sibling's close settled between our acquire and our position read.
+        const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
+        const dbExitReason = race.raced ? 'race_lost_to_sibling' : 'vanished_before_close';
+        const reason = race.raced
+          ? `race_lost_to_sibling: exchange position already 0 (sibling=${race.siblingId} ${race.ageMs}ms ago)`
+          : 'exchange_position_vanished';
+        // #931 safe-pnl — see comment at race_lost_to_sibling above.
+        await pool.query(
+          `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
+                exit_reason=$2, exit_gate=$2, ${SAFE_PNL_FROM_ROW} WHERE id=$3`,
+          [markPrice, dbExitReason, tradeId],
+        ).catch(() => { /* non-fatal */ });
+        return { executed: false, orderId: null, reason };
+      }
+
+      // SIDE-MISMATCH RESOLUTION — close OWN size, not exchange aggregate.
+      //
+      // Bug observed 2026-05-19 19:00:13: kernel-position closed BTC short
+      // (its tracked row = 4 contracts) but the exchange position was 52
+      // contracts (aggregate across monkey-position + monkey-swing + agents
+      // K/T + scalp/trend lanes). The current logic used `exchangeQty=52`
+      // as the close size → exchange close fired for the FULL aggregate,
+      // leaving 0 on exchange. Other kernels/lanes' DB rows (48 contracts'
+      // worth) stayed status='open' until the reconciler later marked them
+      // 'reconciliation: side mismatch with exchange'.
+      //
+      // Effects:
+      //   - Per-row PnL attribution wrong (this kernel's row gets ALL the
+      //     close PnL; others get NULL from reconciler).
+      //   - Phantom open positions on the bot's view until reconciler sweeps.
+      //   - Per-agent NC feedback mis-attributed.
+      //   - Risk of stale-state decisions on phantom rows (re-entry via
+      //     postclose_cooldown could be inverted if cooldown tracks the
+      //     phantom-closed row).
+      //
+      // Fix: sum OWN tracked rows (by reason filter + lane), clamp to
+      // exchange aggregate as upper bound. reduceOnly+specific size lets
+      // the exchange close only OUR share; other kernels' positions remain
+      // intact for them to close on their own decision cycle.
+      //
+      // The reason filter (`monkey|kernel=this.instanceId|%`) scopes to
+      // THIS kernel instance; the same SELECT pattern as the post-close
+      // PnL distribution at line ~5673. If the lane is scoped, only count
+      // that lane's rows; otherwise count all of this kernel's rows.
+      //
+      // Defensive `lane IS NULL` matches #829 — picks up legacy rows.
+      let ownTrackedQty = 0;
+      try {
+        const ownRowsQuery = closeLane
+          ? await pool.query(
             `SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
                FROM autonomous_trades
               WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
                 AND (lane = $3 OR lane IS NULL)
                 AND side = $4`,
             [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane,
-              heldSide === 'long' ? 'buy' : 'sell'],
+            heldSide === 'long' ? 'buy' : 'sell'],
           )
-        : await pool.query(
+          : await pool.query(
             `SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
                FROM autonomous_trades
               WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
                 AND side = $3`,
             [`monkey|kernel=${this.instanceId}|%`, symbol,
-              heldSide === 'long' ? 'buy' : 'sell'],
+            heldSide === 'long' ? 'buy' : 'sell'],
           );
-      ownTrackedQty = Number(ownRowsQuery.rows[0]?.qty ?? 0);
-    } catch (qErr) {
-      // Fail-soft: fall back to exchangeQty (legacy behavior) if DB read
-      // fails — better to over-close than to fail entirely on a hot exit.
-      logger.warn('[Monkey] close own-size SUM(quantity) read failed, falling back to exchangeQty', {
-        symbol, err: qErr instanceof Error ? qErr.message : String(qErr),
-      });
-      ownTrackedQty = exchangeQty;
-    }
-
-    // Use min(ownTrackedQty, exchangeQty). If ownTracked > exchange,
-    // exchange has been partially closed by something else — only close
-    // what's actually there. If ownTracked < exchange, other kernels
-    // hold the rest — only close OUR share, leave theirs intact.
-    //
-    // If ownTracked is 0 (stale row?), fall back to closing tradeId's
-    // own quantity as a last resort — at least close *something* rather
-    // than 0 and leave the position open.
-    const own_or_fallback = ownTrackedQty > 0 ? ownTrackedQty : exchangeQty;
-    const closeSize = Math.min(own_or_fallback, exchangeQty);
-    if (closeSize < exchangeQty) {
-      logger.info('[Monkey] close sized to OWN share, not exchange aggregate', {
-        symbol, heldSide, exchangeQty, ownTrackedQty, closeSize,
-        message: 'leaving sibling kernels their positions',
-      });
-    }
-
-    // Lot-size round.
-    let formattedSize = closeSize;
-    let symbolLotSize = 0;
-    try {
-      const precisions = await getPrecisions(symbol);
-      if (precisions.lotSize && precisions.lotSize > 0) {
-        symbolLotSize = precisions.lotSize;
-        formattedSize = Math.floor(closeSize / precisions.lotSize) * precisions.lotSize;
+        ownTrackedQty = Number(ownRowsQuery.rows[0]?.qty ?? 0);
+      } catch (qErr) {
+        // Fail-soft: fall back to exchangeQty (legacy behavior) if DB read
+        // fails — better to over-close than to fail entirely on a hot exit.
+        logger.warn('[Monkey] close own-size SUM(quantity) read failed, falling back to exchangeQty', {
+          symbol, err: qErr instanceof Error ? qErr.message : String(qErr),
+        });
+        ownTrackedQty = exchangeQty;
       }
-    } catch { /* use raw */ }
-    if (formattedSize <= 0) {
-      return { executed: false, orderId: null, reason: 'lot_rounding_zero_on_close' };
-    }
 
-    const closeSide: 'buy' | 'sell' = heldSide === 'long' ? 'sell' : 'buy';
-
-    // Poloniex v3 rejects single orders > 10,000 contracts with code 21010.
-    // Live tape 2026-05-05 02:08 — and again 2026-05-06 00:20: BTC stale_bleed
-    // retried every tick because the position had grown beyond the cap and
-    // the close was permanently rejected.
-    //
-    // CRITICAL: Poloniex's 10,000 cap is in CONTRACTS, while ``formattedSize``
-    // and ``symbolLotSize`` are in BASE ASSET (BTC, ETH) units. The
-    // poloniexFuturesService.placeOrder converts ``size / lotSize → contracts``
-    // internally before sending. So the chunker must reason in CONTRACTS, not
-    // base asset — passing 1.5 BTC unchunked converts to 15,000 contracts and
-    // hits 21010 even though "1.5" is far below the 9,999 base-asset threshold.
-    //
-    // Chunk in contracts space (lot=1), then convert each chunk back to base
-    // asset for placeOrder by multiplying by symbolLotSize.
-    //
-    // Math.floor (not Math.round) for the conversion: if float precision
-    // noise pushes formattedSize/symbolLotSize slightly above the true
-    // integer (e.g., 15000.0000000001), rounding up would claim 15001
-    // contracts the exchange doesn't actually have on the position, and
-    // the reconciler's "exchange has positions not tracked in DB" branch
-    // would have to clean up. Flooring under-closes by ≤ 1 contract worst
-    // case — that residual is picked up by the reconciler's standard
-    // ghost-close path on the next tick.
-    const sizeInContracts = symbolLotSize > 0
-      ? Math.floor(formattedSize / symbolLotSize)
-      : Math.floor(formattedSize);
-    const plan = planCloseChunks(sizeInContracts, 1);  // contracts, no lot rounding
-    const chunkContracts = plan.chunks;
-    if (plan.residual > 0) {
-      const residualBaseAsset = symbolLotSize > 0
-        ? plan.residual * symbolLotSize
-        : plan.residual;
-      logger.warn('[Monkey] close chunk residual stranded', {
-        symbol,
-        formattedSize,                  // base-asset (input from lot-rounding)
-        symbolLotSize,
-        sizeInContracts,                // contracts (post-conversion)
-        residualContracts: plan.residual,
-        residualBaseAsset,              // ditto, in base-asset for quick eyeballing
-      });
-    }
-    if (chunkContracts.length === 0) {
-      return { executed: false, orderId: null, reason: 'chunk_planning_zero' };
-    }
-    // Convert chunks back to base asset for placeOrder. lotSize=0 (legacy
-    // path) keeps base-asset == contracts, preserving prior behavior.
-    const chunkSizes = symbolLotSize > 0
-      ? chunkContracts.map((c) => c * symbolLotSize)
-      : chunkContracts;
-
-    let orderId: string | null = null;
-    // Proposal #10 — in HEDGE mode the close must specify which side
-    // of the hedge book it's reducing, otherwise the exchange may
-    // route against the wrong leg.
-    //
-    // HEDGE close: posSide=LONG|SHORT, NO reduceOnly — Poloniex v3
-    // rejects reduceOnly in HEDGE with "Param error reduceOnly cannot
-    // be set to true in hedge" (prod incident 2026-04-30). The
-    // poloniexFuturesService strips reduceOnly for HEDGE mode, but we
-    // also pass `positionMode` explicitly so the contract is obvious
-    // at the call site.
-    //
-    // Hoisted above the try so the 21002 retry handler in `catch` can
-    // re-place the close with the same position-mode contract.
-    const isHedge = this.positionDirectionMode === 'HEDGE';
-    const closePosSide: 'LONG' | 'SHORT' | undefined =
-      isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
-    // #1009: timestamp at the start of the close attempt — declared above
-    // the try/catch so both the success observer (recordCloseAck) and the
-    // 21002 catch observer (record21002Incident) can read it.
-    const tCloseAttemptStart = Date.now();
-    try {
-
-      // MAKER-CLOSE for preservation-mandate exits (REGIME-2, trailing_harvest,
-      // trend_flip_harvest, stale_held). These are "we have time" exits — the
-      // doctrine that justifies them ("preservation-mandate cell + profitable
-      // position → take profit now") explicitly contemplates patience. Posting
-      // a LIMIT_MAKER close at best-ask (close long) or best-bid (close short)
-      // earns the maker rebate instead of paying taker on every exit. On a
-      // round-trip with maker entry (#820+chain), this completes the rebate
-      // chain — currently maker entries / taker exits leaves us paying half
-      // the fee burden the rebate strategy was meant to avoid.
+      // Use min(ownTrackedQty, exchangeQty). If ownTracked > exchange,
+      // exchange has been partially closed by something else — only close
+      // what's actually there. If ownTracked < exchange, other kernels
+      // hold the rest — only close OUR share, leave theirs intact.
       //
-      // Conservative gating:
-      //   1. Env flag MONKEY_MAKER_CLOSE_LIVE=true (default OFF, safe rollout)
-      //   2. Single-chunk only (chunkSizes.length === 1) — multi-chunk maker
-      //      close has unhandled partial-fill complexity, defer to follow-up
-      //   3. Exit reason matches preservation pattern (regime_held_exit,
-      //      trailing_harvest, trend_flip_harvest, stale_held). Stop-loss,
-      //      vanished, race, scalp_exit-from-anchor-rejustification all use
-      //      MARKET (urgent or already mid-flow).
-      //
-      // Fallback: if MAKER place fails or fills 0, this attempt logs the
-      // failure and the close goes through MARKET as the chunked loop normally
-      // would. We do NOT track stale-maker-close in pendingLimitMakerOrders
-      // (different lifecycle — close-side stale needs to retry-as-MARKET, not
-      // close-orphan-row); that retry path is handled by the outer tick loop's
-      // next decision firing the same exit signal again.
-      const makerCloseLive = process.env.MONKEY_MAKER_CLOSE_LIVE === 'true';
-      const isPreservationExit =
-        exitReason.startsWith('regime_held_exit')
-        || exitReason.startsWith('trailing_harvest')
-        || exitReason.startsWith('trend_flip_harvest')
-        || exitReason.startsWith('stale_held');
-      const useMakerClose =
-        makerCloseLive
-        && chunkSizes.length === 1
-        && isPreservationExit;
+      // If ownTracked is 0 (stale row?), fall back to closing tradeId's
+      // own quantity as a last resort — at least close *something* rather
+      // than 0 and leave the position open.
+      const own_or_fallback = ownTrackedQty > 0 ? ownTrackedQty : exchangeQty;
+      const closeSize = Math.min(own_or_fallback, exchangeQty);
+      if (closeSize < exchangeQty) {
+        logger.info('[Monkey] close sized to OWN share, not exchange aggregate', {
+          symbol, heldSide, exchangeQty, ownTrackedQty, closeSize,
+          message: 'leaving sibling kernels their positions',
+        });
+      }
 
-      const orderIds: string[] = [];
-      if (useMakerClose) {
-        // Fetch orderbook for post-only price computation. Same shape as
-        // entry-side maker (#820 fix — makePublicRequest unwraps `data`
-        // already, so ob.asks / ob.bids is direct).
-        let bestBid: number | null = null;
-        let bestAsk: number | null = null;
-        try {
-          const ob = await poloniexFuturesService.getOrderBook(symbol, 5);
-          const rec = ob as Record<string, unknown>;
-          const asks = Array.isArray(rec.asks) ? rec.asks as Array<Array<unknown>> : null;
-          const bids = Array.isArray(rec.bids) ? rec.bids as Array<Array<unknown>> : null;
-          if (asks && asks.length > 0 && Number.isFinite(Number(asks[0]?.[0]))) {
-            bestAsk = Number(asks[0]![0]);
-          }
-          if (bids && bids.length > 0 && Number.isFinite(Number(bids[0]?.[0]))) {
-            bestBid = Number(bids[0]![0]);
-          }
-        } catch (obErr) {
-          logger.warn('[Monkey] maker-close orderbook fetch failed — falling back to MARKET', {
-            symbol, err: obErr instanceof Error ? obErr.message : String(obErr),
-          });
+      // Lot-size round.
+      let formattedSize = closeSize;
+      let symbolLotSize = 0;
+      try {
+        const precisions = await getPrecisions(symbol);
+        if (precisions.lotSize && precisions.lotSize > 0) {
+          symbolLotSize = precisions.lotSize;
+          formattedSize = Math.floor(closeSize / precisions.lotSize) * precisions.lotSize;
         }
-        // Maker side mirroring of entry semantics:
-        //   close-LONG (sell): post at best-ASK (above mid; won't immediately match)
-        //   close-SHORT (buy): post at best-BID (below mid; won't immediately match)
-        if (bestBid !== null && bestAsk !== null && bestAsk > bestBid) {
-          const makerPrice = closeSide === 'sell' ? bestAsk : bestBid;
+      } catch { /* use raw */ }
+      if (formattedSize <= 0) {
+        return { executed: false, orderId: null, reason: 'lot_rounding_zero_on_close' };
+      }
+
+      const closeSide: 'buy' | 'sell' = heldSide === 'long' ? 'sell' : 'buy';
+
+      // Poloniex v3 rejects single orders > 10,000 contracts with code 21010.
+      // Live tape 2026-05-05 02:08 — and again 2026-05-06 00:20: BTC stale_bleed
+      // retried every tick because the position had grown beyond the cap and
+      // the close was permanently rejected.
+      //
+      // CRITICAL: Poloniex's 10,000 cap is in CONTRACTS, while ``formattedSize``
+      // and ``symbolLotSize`` are in BASE ASSET (BTC, ETH) units. The
+      // poloniexFuturesService.placeOrder converts ``size / lotSize → contracts``
+      // internally before sending. So the chunker must reason in CONTRACTS, not
+      // base asset — passing 1.5 BTC unchunked converts to 15,000 contracts and
+      // hits 21010 even though "1.5" is far below the 9,999 base-asset threshold.
+      //
+      // Chunk in contracts space (lot=1), then convert each chunk back to base
+      // asset for placeOrder by multiplying by symbolLotSize.
+      //
+      // Math.floor (not Math.round) for the conversion: if float precision
+      // noise pushes formattedSize/symbolLotSize slightly above the true
+      // integer (e.g., 15000.0000000001), rounding up would claim 15001
+      // contracts the exchange doesn't actually have on the position, and
+      // the reconciler's "exchange has positions not tracked in DB" branch
+      // would have to clean up. Flooring under-closes by ≤ 1 contract worst
+      // case — that residual is picked up by the reconciler's standard
+      // ghost-close path on the next tick.
+      const sizeInContracts = symbolLotSize > 0
+        ? Math.floor(formattedSize / symbolLotSize)
+        : Math.floor(formattedSize);
+      const plan = planCloseChunks(sizeInContracts, 1);  // contracts, no lot rounding
+      const chunkContracts = plan.chunks;
+      if (plan.residual > 0) {
+        const residualBaseAsset = symbolLotSize > 0
+          ? plan.residual * symbolLotSize
+          : plan.residual;
+        logger.warn('[Monkey] close chunk residual stranded', {
+          symbol,
+          formattedSize,                  // base-asset (input from lot-rounding)
+          symbolLotSize,
+          sizeInContracts,                // contracts (post-conversion)
+          residualContracts: plan.residual,
+          residualBaseAsset,              // ditto, in base-asset for quick eyeballing
+        });
+      }
+      if (chunkContracts.length === 0) {
+        return { executed: false, orderId: null, reason: 'chunk_planning_zero' };
+      }
+      // Convert chunks back to base asset for placeOrder. lotSize=0 (legacy
+      // path) keeps base-asset == contracts, preserving prior behavior.
+      const chunkSizes = symbolLotSize > 0
+        ? chunkContracts.map((c) => c * symbolLotSize)
+        : chunkContracts;
+
+      let orderId: string | null = null;
+      // Proposal #10 — in HEDGE mode the close must specify which side
+      // of the hedge book it's reducing, otherwise the exchange may
+      // route against the wrong leg.
+      //
+      // HEDGE close: posSide=LONG|SHORT, NO reduceOnly — Poloniex v3
+      // rejects reduceOnly in HEDGE with "Param error reduceOnly cannot
+      // be set to true in hedge" (prod incident 2026-04-30). The
+      // poloniexFuturesService strips reduceOnly for HEDGE mode, but we
+      // also pass `positionMode` explicitly so the contract is obvious
+      // at the call site.
+      //
+      // Hoisted above the try so the 21002 retry handler in `catch` can
+      // re-place the close with the same position-mode contract.
+      const isHedge = this.positionDirectionMode === 'HEDGE';
+      const closePosSide: 'LONG' | 'SHORT' | undefined =
+        isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
+      // #1009: timestamp at the start of the close attempt — declared above
+      // the try/catch so both the success observer (recordCloseAck) and the
+      // 21002 catch observer (record21002Incident) can read it.
+      const tCloseAttemptStart = Date.now();
+      try {
+
+        // MAKER-CLOSE for preservation-mandate exits (REGIME-2, trailing_harvest,
+        // trend_flip_harvest, stale_held). These are "we have time" exits — the
+        // doctrine that justifies them ("preservation-mandate cell + profitable
+        // position → take profit now") explicitly contemplates patience. Posting
+        // a LIMIT_MAKER close at best-ask (close long) or best-bid (close short)
+        // earns the maker rebate instead of paying taker on every exit. On a
+        // round-trip with maker entry (#820+chain), this completes the rebate
+        // chain — currently maker entries / taker exits leaves us paying half
+        // the fee burden the rebate strategy was meant to avoid.
+        //
+        // Conservative gating:
+        //   1. Env flag MONKEY_MAKER_CLOSE_LIVE=true (default OFF, safe rollout)
+        //   2. Single-chunk only (chunkSizes.length === 1) — multi-chunk maker
+        //      close has unhandled partial-fill complexity, defer to follow-up
+        //   3. Exit reason matches preservation pattern (regime_held_exit,
+        //      trailing_harvest, trend_flip_harvest, stale_held). Stop-loss,
+        //      vanished, race, scalp_exit-from-anchor-rejustification all use
+        //      MARKET (urgent or already mid-flow).
+        //
+        // Fallback: if MAKER place fails or fills 0, this attempt logs the
+        // failure and the close goes through MARKET as the chunked loop normally
+        // would. We do NOT track stale-maker-close in pendingLimitMakerOrders
+        // (different lifecycle — close-side stale needs to retry-as-MARKET, not
+        // close-orphan-row); that retry path is handled by the outer tick loop's
+        // next decision firing the same exit signal again.
+        const makerCloseLive = process.env.MONKEY_MAKER_CLOSE_LIVE === 'true';
+        const isPreservationExit =
+          exitReason.startsWith('regime_held_exit')
+          || exitReason.startsWith('trailing_harvest')
+          || exitReason.startsWith('trend_flip_harvest')
+          || exitReason.startsWith('stale_held');
+        const useMakerClose =
+          makerCloseLive
+          && chunkSizes.length === 1
+          && isPreservationExit;
+
+        const orderIds: string[] = [];
+        if (useMakerClose) {
+          // Fetch orderbook for post-only price computation. Same shape as
+          // entry-side maker (#820 fix — makePublicRequest unwraps `data`
+          // already, so ob.asks / ob.bids is direct).
+          let bestBid: number | null = null;
+          let bestAsk: number | null = null;
           try {
-            const makerOrder = await poloniexFuturesService.placeOrder(credentials, {
-              symbol, side: closeSide, type: 'limit_maker',
-              size: chunkSizes[0]!, lotSize: symbolLotSize,
-              price: makerPrice, timeInForce: 'GTC',
+            const ob = await poloniexFuturesService.getOrderBook(symbol, 5);
+            const rec = ob as Record<string, unknown>;
+            const asks = Array.isArray(rec.asks) ? rec.asks as Array<Array<unknown>> : null;
+            const bids = Array.isArray(rec.bids) ? rec.bids as Array<Array<unknown>> : null;
+            if (asks && asks.length > 0 && Number.isFinite(Number(asks[0]?.[0]))) {
+              bestAsk = Number(asks[0]![0]);
+            }
+            if (bids && bids.length > 0 && Number.isFinite(Number(bids[0]?.[0]))) {
+              bestBid = Number(bids[0]![0]);
+            }
+          } catch (obErr) {
+            logger.warn('[Monkey] maker-close orderbook fetch failed — falling back to MARKET', {
+              symbol, err: obErr instanceof Error ? obErr.message : String(obErr),
+            });
+          }
+          // Maker side mirroring of entry semantics:
+          //   close-LONG (sell): post at best-ASK (above mid; won't immediately match)
+          //   close-SHORT (buy): post at best-BID (below mid; won't immediately match)
+          if (bestBid !== null && bestAsk !== null && bestAsk > bestBid) {
+            const makerPrice = closeSide === 'sell' ? bestAsk : bestBid;
+            try {
+              const makerOrder = await poloniexFuturesService.placeOrder(credentials, {
+                symbol, side: closeSide, type: 'limit_maker',
+                size: chunkSizes[0]!, lotSize: symbolLotSize,
+                price: makerPrice, timeInForce: 'GTC',
+                reduceOnly: true,
+              }, {
+                positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+                ...(closePosSide ? { posSide: closePosSide } : {}),
+              });
+              const makerId =
+                makerOrder?.ordId ?? makerOrder?.orderId ??
+                makerOrder?.id ?? makerOrder?.clientOid ?? null;
+              if (makerId) {
+                orderIds.push(String(makerId));
+                logger.info('[Monkey] MAKER_CLOSE placed', {
+                  symbol, side: closeSide, heldSide, makerPrice,
+                  bestBid, bestAsk, exitReason,
+                  orderId: makerId,
+                });
+              }
+            } catch (makerErr) {
+              logger.warn('[Monkey] MAKER_CLOSE place failed — falling back to MARKET', {
+                symbol, side: closeSide,
+                err: makerErr instanceof Error ? makerErr.message : String(makerErr),
+              });
+            }
+          }
+        }
+
+        // MARKET path: original chunked close. Runs when maker-close is
+        // disabled OR maker-close place above failed (no orderId yet).
+        if (orderIds.length === 0) {
+          for (let i = 0; i < chunkSizes.length; i++) {
+            const chunkSize = chunkSizes[i]!;
+            const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+              symbol, side: closeSide, type: 'market', size: chunkSize, lotSize: symbolLotSize,
               reduceOnly: true,
             }, {
               positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
               ...(closePosSide ? { posSide: closePosSide } : {}),
             });
-            const makerId =
-              makerOrder?.ordId ?? makerOrder?.orderId ??
-              makerOrder?.id ?? makerOrder?.clientOid ?? null;
-            if (makerId) {
-              orderIds.push(String(makerId));
-              logger.info('[Monkey] MAKER_CLOSE placed', {
-                symbol, side: closeSide, heldSide, makerPrice,
-                bestBid, bestAsk, exitReason,
-                orderId: makerId,
+            const id =
+              exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+              exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+            if (id) orderIds.push(String(id));
+            if (chunkSizes.length > 1) {
+              logger.info('[Monkey] close chunk placed', {
+                symbol, chunk: i + 1, total: chunkSizes.length, size: chunkSize, orderId: id,
               });
             }
-          } catch (makerErr) {
-            logger.warn('[Monkey] MAKER_CLOSE place failed — falling back to MARKET', {
-              symbol, side: closeSide,
-              err: makerErr instanceof Error ? makerErr.message : String(makerErr),
-            });
           }
         }
-      }
-
-      // MARKET path: original chunked close. Runs when maker-close is
-      // disabled OR maker-close place above failed (no orderId yet).
-      if (orderIds.length === 0) {
-        for (let i = 0; i < chunkSizes.length; i++) {
-          const chunkSize = chunkSizes[i]!;
-          const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-            symbol, side: closeSide, type: 'market', size: chunkSize, lotSize: symbolLotSize,
-            reduceOnly: true,
-          }, {
-            positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
-            ...(closePosSide ? { posSide: closePosSide } : {}),
-          });
-          const id =
-            exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
-            exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
-          if (id) orderIds.push(String(id));
-          if (chunkSizes.length > 1) {
-            logger.info('[Monkey] close chunk placed', {
-              symbol, chunk: i + 1, total: chunkSizes.length, size: chunkSize, orderId: id,
-            });
-          }
+        if (orderIds.length === 0) {
+          return { executed: false, orderId: null, reason: 'no_chunk_returned_orderId' };
         }
-      }
-      if (orderIds.length === 0) {
-        return { executed: false, orderId: null, reason: 'no_chunk_returned_orderId' };
-      }
-      // Audit: when chunks > 1, expose the full chain so the close row's
-      // exit_order_id reflects every leg. Single-order legacy keeps a single id.
-      orderId = orderIds.length === 1 ? orderIds[0]! : orderIds.join(',');
-      // #1009 safety_floor observer 1: record the close-ack timestamp so
-      // subsequent flat-observation calls can compute the settlement-
-      // latency delta. Best-effort; no behaviour change if the ring's
-      // pending state was already set by a previous in-flight close.
-      recordCloseAck(symbol, Date.now());
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      // 21002 "Position not enough" with a sibling close in the cooldown
-      // window is a benign race-loss, not a real error. Mark the local
-      // row closed and surface a clear reason; don't spam ERROR.
-      const is21002 = message.includes('21002') || message.toLowerCase().includes('position not enough');
-      if (is21002) {
-        const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
-        // #1009 safety_floor observer 2: 21002 incidents are empirical
-        // evidence Polo's state was still propagating from a recent close.
-        // The MEANINGFUL window is (sibling-close-ack → 21002), not (our
-        // failed-attempt-start → 21002). When `race.raced` is true the
-        // race tracker already knows when the sibling closed: synthesise
-        // a tCloseAck = now - race.ageMs so the recorded delta is the
-        // actual settlement window. When not raced, the 21002 is on OUR
-        // own close (orphan/qty-drift) so the original tCloseAttemptStart
-        // is correct.
-        const tNow = Date.now();
-        const tCloseAckForIncident = race.raced
-          ? tNow - race.ageMs
-          : tCloseAttemptStart;
-        record21002Incident(symbol, tCloseAckForIncident, tNow);
-        if (race.raced) {
-          // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
-          await pool.query(
-            `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                    exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
-                    ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
-            [markPrice, tradeId],
-          ).catch(() => { /* non-fatal */ });
-          return {
-            executed: false, orderId: null,
-            reason: `race_lost_to_sibling: 21002 after sibling close (${race.siblingId} ${race.ageMs}ms ago)`,
-          };
-        }
-        // Not a sibling race — the close order exceeded the live exchange
-        // position. Common on adopted operator rows whose DB `quantity`
-        // has drifted above the exchange net position, or after a partial
-        // fill. Poloniex v3 has no close-all/percentage param and rejects
-        // an oversize reduceOnly order rather than clamping it, so the
-        // reliable "close 100%" is: re-read the live position and retry
-        // the close at exactly what is there. One retry only — no loop.
-        try {
-          const freshPositions = await poloniexFuturesService.getPositions(credentials);
-          _feedFlatObserverFromPositions(freshPositions);
-          const freshForSymbol = (Array.isArray(freshPositions) ? freshPositions : []).filter(
-            (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
-          );
-          const freshTarget = (isHedge && closePosSide)
-            ? (freshForSymbol.find((p: Record<string, unknown>) =>
-                String(p.side ?? p.posSide ?? '').toUpperCase() ===
-                (heldSide === 'long' ? 'LONG' : 'SHORT')) ?? freshForSymbol[0])
-            : freshForSymbol[0];
-          const retryPlan = plan21002RetryClose(
-            freshTarget?.qty ?? freshTarget?.size ?? 0,
-            symbolLotSize,
-          );
-          if (retryPlan.ok === false && retryPlan.reason === '21002_retry_invalid_live_qty') {
-            logger.warn('[Monkey] 21002 retry skipped invalid live quantity', {
-              symbol, heldSide, liveQty: freshTarget?.qty ?? freshTarget?.size ?? null,
-            });
-            return { executed: false, orderId: null, reason: retryPlan.reason };
-          }
-          if (retryPlan.ok === false && retryPlan.reason === '21002_position_already_flat') {
-            // Position is already flat — nothing to close. Mark the row.
+        // Audit: when chunks > 1, expose the full chain so the close row's
+        // exit_order_id reflects every leg. Single-order legacy keeps a single id.
+        orderId = orderIds.length === 1 ? orderIds[0]! : orderIds.join(',');
+        // #1009 safety_floor observer 1: record the close-ack timestamp so
+        // subsequent flat-observation calls can compute the settlement-
+        // latency delta. Best-effort; no behaviour change if the ring's
+        // pending state was already set by a previous in-flight close.
+        recordCloseAck(symbol, Date.now());
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // 21002 "Position not enough" with a sibling close in the cooldown
+        // window is a benign race-loss, not a real error. Mark the local
+        // row closed and surface a clear reason; don't spam ERROR.
+        const is21002 = message.includes('21002') || message.toLowerCase().includes('position not enough');
+        if (is21002) {
+          const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
+          // #1009 safety_floor observer 2: 21002 incidents are empirical
+          // evidence Polo's state was still propagating from a recent close.
+          // The MEANINGFUL window is (sibling-close-ack → 21002), not (our
+          // failed-attempt-start → 21002). When `race.raced` is true the
+          // race tracker already knows when the sibling closed: synthesise
+          // a tCloseAck = now - race.ageMs so the recorded delta is the
+          // actual settlement window. When not raced, the 21002 is on OUR
+          // own close (orphan/qty-drift) so the original tCloseAttemptStart
+          // is correct.
+          const tNow = Date.now();
+          const tCloseAckForIncident = race.raced
+            ? tNow - race.ageMs
+            : tCloseAttemptStart;
+          record21002Incident(symbol, tCloseAckForIncident, tNow);
+          if (race.raced) {
             // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
             await pool.query(
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                      exit_reason='exchange_position_vanished',
-                      exit_gate='exchange_position_vanished',
-                      ${SAFE_PNL_FROM_ROW},
-                      gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_EXPR}) WHERE id=$2`,
+                    exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
+                    ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
               [markPrice, tradeId],
             ).catch(() => { /* non-fatal */ });
             return {
               executed: false, orderId: null,
-              reason: retryPlan.reason,
+              reason: `race_lost_to_sibling: 21002 after sibling close (${race.siblingId} ${race.ageMs}ms ago)`,
             };
           }
-          if (retryPlan.ok === false) {
-            return { executed: false, orderId: null, reason: retryPlan.reason };
-          }
-          const retryOrderIds: string[] = [];
-          for (const retrySize of retryPlan.chunkSizes) {
-            const retryOrder = await poloniexFuturesService.placeOrder(credentials, {
-              symbol, side: closeSide, type: 'market', size: retrySize, lotSize: symbolLotSize,
-              reduceOnly: true,
-            }, {
-              positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
-              ...(closePosSide ? { posSide: closePosSide } : {}),
+          // Not a sibling race — the close order exceeded the live exchange
+          // position. Common on adopted operator rows whose DB `quantity`
+          // has drifted above the exchange net position, or after a partial
+          // fill. Poloniex v3 has no close-all/percentage param and rejects
+          // an oversize reduceOnly order rather than clamping it, so the
+          // reliable "close 100%" is: re-read the live position and retry
+          // the close at exactly what is there. One retry only — no loop.
+          try {
+            const freshPositions = await poloniexFuturesService.getPositions(credentials);
+            _feedFlatObserverFromPositions(freshPositions);
+            const freshForSymbol = (Array.isArray(freshPositions) ? freshPositions : []).filter(
+              (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
+            );
+            const freshTarget = (isHedge && closePosSide)
+              ? (freshForSymbol.find((p: Record<string, unknown>) =>
+                String(p.side ?? p.posSide ?? '').toUpperCase() ===
+                (heldSide === 'long' ? 'LONG' : 'SHORT')) ?? freshForSymbol[0])
+              : freshForSymbol[0];
+            const retryPlan = plan21002RetryClose(
+              freshTarget?.qty ?? freshTarget?.size ?? 0,
+              symbolLotSize,
+            );
+            if (retryPlan.ok === false && retryPlan.reason === '21002_retry_invalid_live_qty') {
+              logger.warn('[Monkey] 21002 retry skipped invalid live quantity', {
+                symbol, heldSide, liveQty: freshTarget?.qty ?? freshTarget?.size ?? null,
+              });
+              return { executed: false, orderId: null, reason: retryPlan.reason };
+            }
+            if (retryPlan.ok === false && retryPlan.reason === '21002_position_already_flat') {
+              // Position is already flat — nothing to close. Mark the row.
+              // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
+              await pool.query(
+                `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
+                      exit_reason='exchange_position_vanished',
+                      exit_gate='exchange_position_vanished',
+                      ${SAFE_PNL_FROM_ROW},
+                      gross_pnl = COALESCE(gross_pnl, ${SAFE_PNL_EXPR}) WHERE id=$2`,
+                [markPrice, tradeId],
+              ).catch(() => { /* non-fatal */ });
+              return {
+                executed: false, orderId: null,
+                reason: retryPlan.reason,
+              };
+            }
+            if (retryPlan.ok === false) {
+              return { executed: false, orderId: null, reason: retryPlan.reason };
+            }
+            const retryOrderIds: string[] = [];
+            for (const retrySize of retryPlan.chunkSizes) {
+              const retryOrder = await poloniexFuturesService.placeOrder(credentials, {
+                symbol, side: closeSide, type: 'market', size: retrySize, lotSize: symbolLotSize,
+                reduceOnly: true,
+              }, {
+                positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+                ...(closePosSide ? { posSide: closePosSide } : {}),
+              });
+              const retryId =
+                retryOrder?.ordId ?? retryOrder?.orderId ??
+                retryOrder?.id ?? retryOrder?.clientOid ?? null;
+              if (retryId) retryOrderIds.push(String(retryId));
+            }
+            if (retryOrderIds.length === 0) {
+              return { executed: false, orderId: null, reason: '21002_retry_no_orderId' };
+            }
+            logger.info('[Monkey] close retried at live qty after 21002', {
+              symbol, heldSide, freshQty: retryPlan.freshQty, chunks: retryPlan.chunkSizes.length, orderIds: retryOrderIds,
             });
-            const retryId =
-              retryOrder?.ordId ?? retryOrder?.orderId ??
-              retryOrder?.id ?? retryOrder?.clientOid ?? null;
-            if (retryId) retryOrderIds.push(String(retryId));
+            // Success — set orderId and fall through to the settle/accounting
+            // block below (closes all open rows for this kernel+symbol).
+            orderId = retryOrderIds.length === 1 ? (retryOrderIds[0] ?? null) : retryOrderIds.join(',');
+          } catch (retryErr) {
+            return {
+              executed: false, orderId: null,
+              reason: `21002_retry_failed: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+            };
           }
-          if (retryOrderIds.length === 0) {
-            return { executed: false, orderId: null, reason: '21002_retry_no_orderId' };
-          }
-          logger.info('[Monkey] close retried at live qty after 21002', {
-            symbol, heldSide, freshQty: retryPlan.freshQty, chunks: retryPlan.chunkSizes.length, orderIds: retryOrderIds,
-          });
-          // Success — set orderId and fall through to the settle/accounting
-          // block below (closes all open rows for this kernel+symbol).
-          orderId = retryOrderIds.length === 1 ? (retryOrderIds[0] ?? null) : retryOrderIds.join(',');
-        } catch (retryErr) {
+        } else {
           return {
             executed: false, orderId: null,
-            reason: `21002_retry_failed: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+            reason: `close_exchange_rejected: ${message}`,
           };
         }
-      } else {
-        return {
-          executed: false, orderId: null,
-          reason: `close_exchange_rejected: ${message}`,
-        };
       }
-    }
 
-    // v0.6.2: close ALL open monkey rows for this (kernel, symbol). DCA
-    // adds created multiple rows for one logical position; the exchange
-    // flattened them all in one market close above (size = total exchange
-    // qty). Each row shares the realized pnl proportionally by quantity.
-    //
-    // Arbiter feedback: each row carries an agent tag (K|M); the PnL
-    // share for that row goes back to the arbiter under that agent so
-    // the rolling allocation reflects per-agent performance.
-    try {
-      // Proposal #10 — when a lane is scoped, only close that lane's
-      // open rows. Other lanes (e.g. swing-long while we're closing a
-      // scalp-short) keep their bookkeeping intact.
+      // v0.6.2: close ALL open monkey rows for this (kernel, symbol). DCA
+      // adds created multiple rows for one logical position; the exchange
+      // flattened them all in one market close above (size = total exchange
+      // qty). Each row shares the realized pnl proportionally by quantity.
       //
-      // Defensive `lane IS NULL` — same reasoning as paper-mode SELECT
-      // above. Without it, NULL-lane Monkey rows get silently skipped
-      // by `AND lane = X`, stay status='open', and the next decision
-      // tick re-fires close → 21002 retry storm.
-      const openRows = closeLane
-        ? await pool.query(
+      // Arbiter feedback: each row carries an agent tag (K|M); the PnL
+      // share for that row goes back to the arbiter under that agent so
+      // the rolling allocation reflects per-agent performance.
+      try {
+        // Proposal #10 — when a lane is scoped, only close that lane's
+        // open rows. Other lanes (e.g. swing-long while we're closing a
+        // scalp-short) keep their bookkeeping intact.
+        //
+        // Defensive `lane IS NULL` — same reasoning as paper-mode SELECT
+        // above. Without it, NULL-lane Monkey rows get silently skipped
+        // by `AND lane = X`, stay status='open', and the next decision
+        // tick re-fires close → 21002 retry storm.
+        const openRows = closeLane
+          ? await pool.query(
             `SELECT id, quantity, agent FROM autonomous_trades
               WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
                 AND (lane = $3 OR lane IS NULL)
               ORDER BY entry_time ASC`,
             [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
           )
-        : await pool.query(
+          : await pool.query(
             `SELECT id, quantity, agent FROM autonomous_trades
               WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
               ORDER BY entry_time ASC`,
             [`monkey|kernel=${this.instanceId}|%`, symbol],
           );
-      const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null }>;
-      const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
-      // Accumulate per-agent (pnl, qty) inside the row loop so we can
-      // push ONE reward event per agent at the end. Per-row pushes would
-      // flood the bounded reward queue (REWARD_QUEUE_MAX=50) on DCA
-      // closes; per-agent aggregation keeps the queue stable while still
-      // attributing chemistry to the agent that actually generated each
-      // win. Each agent gets its own margin estimate from its own qty
-      // share so pnlFraction = pnl / margin is meaningful per agent.
-      // Extended for canonical Polo surface (gross_pnl + IDs for later Polo history write)
-      const perAgentTotals: Record<AgentLabel, { pnl: number; qty: number; ids?: string[]; grossById?: Record<string, number> }> = {
-        K: { pnl: 0, qty: 0, ids: [], grossById: {} },
-        M: { pnl: 0, qty: 0, ids: [], grossById: {} },
-        T: { pnl: 0, qty: 0, ids: [], grossById: {} },
-        L: { pnl: 0, qty: 0, ids: [], grossById: {} },
-      };
-      if (rows.length === 0 || totalQty === 0) {
-        // #931 safe-pnl: compute pnl from row's own entry/qty/side via SAFE_PNL_FROM_ROW,
-        // RETURNING the value so chemistry receives the actual row pnl (not the
-        // caller-aggregate that could be a phantom across multiple rows).
-        const updated = await pool.query<{ pnl: string }>(
-          `UPDATE autonomous_trades
+        const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null }>;
+        const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
+        // Accumulate per-agent (pnl, qty) inside the row loop so we can
+        // push ONE reward event per agent at the end. Per-row pushes would
+        // flood the bounded reward queue (REWARD_QUEUE_MAX=50) on DCA
+        // closes; per-agent aggregation keeps the queue stable while still
+        // attributing chemistry to the agent that actually generated each
+        // win. Each agent gets its own margin estimate from its own qty
+        // share so pnlFraction = pnl / margin is meaningful per agent.
+        // Extended for canonical Polo surface (gross_pnl + IDs for later Polo history write)
+        const perAgentTotals: Record<AgentLabel, { pnl: number; qty: number; ids?: string[]; grossById?: Record<string, number> }> = {
+          K: { pnl: 0, qty: 0, ids: [], grossById: {} },
+          M: { pnl: 0, qty: 0, ids: [], grossById: {} },
+          T: { pnl: 0, qty: 0, ids: [], grossById: {} },
+          L: { pnl: 0, qty: 0, ids: [], grossById: {} },
+        };
+        if (rows.length === 0 || totalQty === 0) {
+          // #931 safe-pnl: compute pnl from row's own entry/qty/side via SAFE_PNL_FROM_ROW,
+          // RETURNING the value so chemistry receives the actual row pnl (not the
+          // caller-aggregate that could be a phantom across multiple rows).
+          const updated = await pool.query<{ pnl: string }>(
+            `UPDATE autonomous_trades
               SET status = 'closed', exit_price = $1, exit_time = NOW(),
                   exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
             WHERE id = $4
             RETURNING pnl`,
-          [markPrice, exitReason, orderId, tradeId, exitGate],
-        );
-        const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
-        // Single-row fallback: assume Agent K (the established default).
-        this.arbiter.recordSettled('K', safePnl);
-        // v0.8.8 per-agent reactive cognition: feed outcome to K's
-        // emotion + neurochemistry stack (dopamine on win, frustration
-        // on loss). See per_agent_state.ts.
-        const fallbackQty = exchangeQty || 0.01;
-        this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl, (markPrice * fallbackQty) / 16);
-        perAgentTotals.K.pnl += safePnl;
-        perAgentTotals.K.qty += fallbackQty;
-      } else {
-        // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty +
-        // side via SAFE_PNL_FROM_ROW, returning the computed value so chemistry +
-        // arbiter feedback see the true per-row pnl. Pre-fix used
-        // `rowPnl = pnlAtDecision * qtyShare` which assumed all rows shared
-        // the kernel's weightedEntry — wrong when DCA adds had different entries,
-        // and structurally vulnerable to caller-aggregate phantoms.
-        for (const row of rows) {
-          const updated = await pool.query<{ pnl: string; entry_price: string; side: string; quantity: string }>(
-            `UPDATE autonomous_trades
+            [markPrice, exitReason, orderId, tradeId, exitGate],
+          );
+          const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
+          // Single-row fallback: assume Agent K (the established default).
+          this.arbiter.recordSettled('K', safePnl);
+          // v0.8.8 per-agent reactive cognition: feed outcome to K's
+          // emotion + neurochemistry stack (dopamine on win, frustration
+          // on loss). See per_agent_state.ts.
+          const fallbackQty = exchangeQty || 0.01;
+          this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl, (markPrice * fallbackQty) / 16);
+          perAgentTotals.K.pnl += safePnl;
+          perAgentTotals.K.qty += fallbackQty;
+        } else {
+          // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty +
+          // side via SAFE_PNL_FROM_ROW, returning the computed value so chemistry +
+          // arbiter feedback see the true per-row pnl. Pre-fix used
+          // `rowPnl = pnlAtDecision * qtyShare` which assumed all rows shared
+          // the kernel's weightedEntry — wrong when DCA adds had different entries,
+          // and structurally vulnerable to caller-aggregate phantoms.
+          for (const row of rows) {
+            const updated = await pool.query<{ pnl: string; entry_price: string; side: string; quantity: string }>(
+              `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
                     exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
               WHERE id = $4
               RETURNING pnl, entry_price, side, quantity`,
-            [markPrice, exitReason, orderId, row.id, exitGate],
-          );
-          const returned = updated.rows[0];
-          if (!returned) {
-            logger.warn('[Monkey] close row update returned no row; skipping row reward accounting', {
-              tradeId: row.id,
-              symbol,
-              exitReason,
-            });
-            continue;
-          }
-          const rowQty = Math.abs(Number(returned.quantity) || 0);
-          const sideStr = String(returned.side ?? '');
-          if (sideStr !== 'buy' && sideStr !== 'sell' && sideStr !== 'long' && sideStr !== 'short') {
-            logger.warn('[Monkey] close row returned invalid side; skipping row reward accounting', {
-              tradeId: row.id,
-              symbol,
-              side: returned.side,
-              exitReason,
-            });
-            continue;
-          }
-          const entryPrice = Number(returned.entry_price);
-          const sideSign = sideStr === 'buy' || sideStr === 'long' ? 1 : -1;
-          const rowPnlRaw = returned.pnl
-            ? Number(returned.pnl)
-            : Number.isFinite(entryPrice)
-              ? rowQty * (markPrice - entryPrice) * sideSign
-              : pnlAtDecision * (rowQty / totalQty);
-
-          // Bridge for canonical Polo surface: always record the synthetic
-          // as gross_pnl for divergence audit. The authoritative `pnl`
-          // will be overwritten (or initially written) by the Polo history
-          // fetch in applyPoloRealizedPnlAfterClose.
-          const syntheticGross = rowPnlRaw;
-          // Phantom-PnL guard (2026-05-26): verify the row's computed pnl
-          // against an independent client-side computation. Detects mixed-
-          // unit phantoms (the reconciler-stored-contracts bug fixed in
-          // PR after #951). On divergence > $5, log + clamp to the
-          // computed value so chemistry isn't fed a phantom. This wires
-          // verifyPnl into the close path — it was exported in #936 but
-          // never called.
-          let rowPnl = rowPnlRaw;
-          if (returned) {
-            const verification = verifyPnl(
-              rowPnlRaw,
-              entryPrice,
-              markPrice,
-              rowQty,
-              sideStr,
+              [markPrice, exitReason, orderId, row.id, exitGate],
             );
-            if (verification.isPhantomCandidate) {
-              logger.warn('[Monkey] phantom-pnl candidate detected — chemistry feed clamped', {
+            const returned = updated.rows[0];
+            if (!returned) {
+              logger.warn('[Monkey] close row update returned no row; skipping row reward accounting', {
                 tradeId: row.id,
                 symbol,
-                provided: verification.provided,
-                calculated: verification.calculated,
-                divergenceAbs: verification.divergenceAbs,
-                rowQty,
-                entryPrice: returned.entry_price,
-                exitPrice: markPrice,
-                side: sideStr,
+                exitReason,
               });
-              rowPnl = verification.calculated;
+              continue;
             }
+            const rowQty = Math.abs(Number(returned.quantity) || 0);
+            const sideStr = String(returned.side ?? '');
+            if (sideStr !== 'buy' && sideStr !== 'sell' && sideStr !== 'long' && sideStr !== 'short') {
+              logger.warn('[Monkey] close row returned invalid side; skipping row reward accounting', {
+                tradeId: row.id,
+                symbol,
+                side: returned.side,
+                exitReason,
+              });
+              continue;
+            }
+            const entryPrice = Number(returned.entry_price);
+            const sideSign = sideStr === 'buy' || sideStr === 'long' ? 1 : -1;
+            const rowPnlRaw = returned.pnl
+              ? Number(returned.pnl)
+              : Number.isFinite(entryPrice)
+                ? rowQty * (markPrice - entryPrice) * sideSign
+                : pnlAtDecision * (rowQty / totalQty);
+
+            // Bridge for canonical Polo surface: always record the synthetic
+            // as gross_pnl for divergence audit. The authoritative `pnl`
+            // will be overwritten (or initially written) by the Polo history
+            // fetch in applyPoloRealizedPnlAfterClose.
+            const syntheticGross = rowPnlRaw;
+            // Phantom-PnL guard (2026-05-26): verify the row's computed pnl
+            // against an independent client-side computation. Detects mixed-
+            // unit phantoms (the reconciler-stored-contracts bug fixed in
+            // PR after #951). On divergence > $5, log + clamp to the
+            // computed value so chemistry isn't fed a phantom. This wires
+            // verifyPnl into the close path — it was exported in #936 but
+            // never called.
+            let rowPnl = rowPnlRaw;
+            if (returned) {
+              const verification = verifyPnl(
+                rowPnlRaw,
+                entryPrice,
+                markPrice,
+                rowQty,
+                sideStr,
+              );
+              if (verification.isPhantomCandidate) {
+                logger.warn('[Monkey] phantom-pnl candidate detected — chemistry feed clamped', {
+                  tradeId: row.id,
+                  symbol,
+                  provided: verification.provided,
+                  calculated: verification.calculated,
+                  divergenceAbs: verification.divergenceAbs,
+                  rowQty,
+                  entryPrice: returned.entry_price,
+                  exitPrice: markPrice,
+                  side: sideStr,
+                });
+                rowPnl = verification.calculated;
+              }
+            }
+            // Tag-aware arbiter feedback. Pre-separation rows have
+            // agent=NULL or 'K' (default from migration 039); those
+            // attribute to K. T (Turtle classical TA) was added in the
+            // three-agent decomposition; ``recordSettled`` accepts any
+            // uppercase label so T's PnL share goes back to T's window.
+            // v0.8.8 — Agent L (FR-KNN classifier) joins the race.
+            const agentLabel: AgentLabel =
+              row.agent === 'M' ? 'M'
+                : row.agent === 'T' ? 'T'
+                  : row.agent === 'L' ? 'L'
+                    : 'K';
+            this.arbiter.recordSettled(agentLabel, rowPnl);
+            this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl, (markPrice * rowQty) / 16);
+            perAgentTotals[agentLabel].pnl += rowPnl;
+            perAgentTotals[agentLabel].qty += rowQty;
+
+            // For canonical Polo surface: collect the actual row IDs and the
+            // synthetic gross_pnl so we can pass them to the Polo history fetch
+            // and write gross_pnl + authoritative Polo net later.
+            if (!perAgentTotals[agentLabel].ids) perAgentTotals[agentLabel].ids = [];
+            if (!perAgentTotals[agentLabel].grossById) perAgentTotals[agentLabel].grossById = {};
+            perAgentTotals[agentLabel].ids.push(row.id);
+            perAgentTotals[agentLabel].grossById[row.id] = rowPnl;  // synthetic gross at this moment
           }
-          // Tag-aware arbiter feedback. Pre-separation rows have
-          // agent=NULL or 'K' (default from migration 039); those
-          // attribute to K. T (Turtle classical TA) was added in the
-          // three-agent decomposition; ``recordSettled`` accepts any
-          // uppercase label so T's PnL share goes back to T's window.
-          // v0.8.8 — Agent L (FR-KNN classifier) joins the race.
-          const agentLabel: AgentLabel =
-            row.agent === 'M' ? 'M'
-              : row.agent === 'T' ? 'T'
-                : row.agent === 'L' ? 'L'
-                  : 'K';
-          this.arbiter.recordSettled(agentLabel, rowPnl);
-          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl, (markPrice * rowQty) / 16);
-          perAgentTotals[agentLabel].pnl += rowPnl;
-          perAgentTotals[agentLabel].qty += rowQty;
-
-          // For canonical Polo surface: collect the actual row IDs and the
-          // synthetic gross_pnl so we can pass them to the Polo history fetch
-          // and write gross_pnl + authoritative Polo net later.
-          if (!perAgentTotals[agentLabel].ids) perAgentTotals[agentLabel].ids = [];
-          if (!perAgentTotals[agentLabel].grossById) perAgentTotals[agentLabel].grossById = {};
-          perAgentTotals[agentLabel].ids.push(row.id);
-          perAgentTotals[agentLabel].grossById[row.id] = rowPnl;  // synthetic gross at this moment
         }
-      }
 
-      // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
-      // Hoist the collection so the reward path can pass a representative
-      // tradeId for authoritative DB pnl preference when the Polo history
-      // helper has updated the row (LIVED ONLY 5: reward ledger driven by
-      // the real net).
-      const allTradeIds: string[] = [];
-      const grossById: Record<string, number> = {};
-      if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
-        for (const agentKey of ['K', 'M', 'T', 'L'] as const) {
-          const t = perAgentTotals[agentKey];
-          if (t.ids) allTradeIds.push(...t.ids);
-          if (t.grossById) Object.assign(grossById, t.grossById);
+        // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
+        // Hoist the collection so the reward path can pass a representative
+        // tradeId for authoritative DB pnl preference when the Polo history
+        // helper has updated the row (LIVED ONLY 5: reward ledger driven by
+        // the real net).
+        const allTradeIds: string[] = [];
+        const grossById: Record<string, number> = {};
+        if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
+          for (const agentKey of ['K', 'M', 'T', 'L'] as const) {
+            const t = perAgentTotals[agentKey];
+            if (t.ids) allTradeIds.push(...t.ids);
+            if (t.grossById) Object.assign(grossById, t.grossById);
+          }
         }
-      }
 
-      // v0.6.7 + 2026-05-16 per-agent NC: push one reward event per
-      // agent that contributed to this close. See
-      // pushPerAgentCloseRewards for margin derivation + rationale.
-      const representativeTradeIdForReward = allTradeIds.length > 0 ? allTradeIds[0] : undefined;
-      this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals, representativeTradeIdForReward);
+        // v0.6.7 + 2026-05-16 per-agent NC: push one reward event per
+        // agent that contributed to this close. See
+        // pushPerAgentCloseRewards for margin derivation + rationale.
+        const representativeTradeIdForReward = allTradeIds.length > 0 ? allTradeIds[0] : undefined;
+        this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals, representativeTradeIdForReward);
 
-      // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
-      // The helper will fetch Polo history, match, write Polo realized to .pnl and
-      // preserve the synthetic as .gross_pnl. LIVED ONLY 5: reward ledger will
-      // eventually be driven by the Polo net value (via the tradeId now threaded).
-      if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
-        // closeOrderIds: parse the joined orderId string from the close
-        // flow and drop paper-close-* prefixes (paper orders have no Polo
-        // execution detail). This is what unlocks the per-fill fee
-        // lookup — `applyPoloRealizedPnlAfterClose` will use these to
-        // pull authoritative close fees from /v3/trade/order/trades and
-        // subtract them from gross.
-        const closeOrderIds = String(orderId ?? '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0 && !s.startsWith('paper-close-'));
-        void this.applyPoloRealizedPnlAfterClose({
-          tradeIds: allTradeIds,
-          closeOrderIds,
-          symbol,
-          closeTimeMs: Date.now(),
-          side: heldSide,
-          grossPnlByRow: grossById,
-          credentials: (this as any).credentials ?? null,
+        // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
+        // The helper will fetch Polo history, match, write Polo realized to .pnl and
+        // preserve the synthetic as .gross_pnl. LIVED ONLY 5: reward ledger will
+        // eventually be driven by the Polo net value (via the tradeId now threaded).
+        if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
+          // closeOrderIds: parse the joined orderId string from the close
+          // flow and drop paper-close-* prefixes (paper orders have no Polo
+          // execution detail). This is what unlocks the per-fill fee
+          // lookup — `applyPoloRealizedPnlAfterClose` will use these to
+          // pull authoritative close fees from /v3/trade/order/trades and
+          // subtract them from gross.
+          const closeOrderIds = String(orderId ?? '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0 && !s.startsWith('paper-close-'));
+          void this.applyPoloRealizedPnlAfterClose({
+            tradeIds: allTradeIds,
+            closeOrderIds,
+            symbol,
+            closeTimeMs: Date.now(),
+            side: heldSide,
+            grossPnlByRow: grossById,
+            credentials: (this as any).credentials ?? null,
+          });
+        }
+      } catch (err) {
+        logger.error('[Monkey] close DB update failed — ORPHAN RISK (reconciler will catch)', {
+          tradeId, err: err instanceof Error ? err.message : String(err),
         });
-      }
-    } catch (err) {
-      logger.error('[Monkey] close DB update failed — ORPHAN RISK (reconciler will catch)', {
-        tradeId, err: err instanceof Error ? err.message : String(err),
-      });
-      // Defensive single-row close so subsequent ticks don't re-decide
-      // on this position. The bulk per-row UPDATE above failed; this
-      // pins at least the primary tradeId row to closed, breaking the
-      // 21002-retry loop. Reconciler still picks up any siblings.
-      try {
-        // #931 safe-pnl: compute from row's own data; the bulk per-row UPDATE
-        // failed and we don't know which rows are still open, so the simplest
-        // safe path is to use the row's own arithmetic.
-        await pool.query(
-          `UPDATE autonomous_trades
+        // Defensive single-row close so subsequent ticks don't re-decide
+        // on this position. The bulk per-row UPDATE above failed; this
+        // pins at least the primary tradeId row to closed, breaking the
+        // 21002-retry loop. Reconciler still picks up any siblings.
+        try {
+          // #931 safe-pnl: compute from row's own data; the bulk per-row UPDATE
+          // failed and we don't know which rows are still open, so the simplest
+          // safe path is to use the row's own arithmetic.
+          await pool.query(
+            `UPDATE autonomous_trades
               SET status='closed', exit_price=$1, exit_time=NOW(),
                   exit_reason=$2, exit_order_id=$3, exit_gate='db_recovery',
                   ${SAFE_PNL_FROM_ROW}
             WHERE id=$4 AND status='open'`,
-          [markPrice, `${exitReason}__db_recovery`, orderId, tradeId],
-        );
-      } catch (recoveryErr) {
-        logger.error('[Monkey] close DB recovery also failed — full reconciler dependency', {
-          tradeId,
-          recoveryErr: recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr),
-        });
+            [markPrice, `${exitReason}__db_recovery`, orderId, tradeId],
+          );
+        } catch (recoveryErr) {
+          logger.error('[Monkey] close DB recovery also failed — full reconciler dependency', {
+            tradeId,
+            recoveryErr: recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr),
+          });
+        }
       }
-    }
 
-    logger.info('[Monkey] POSITION CLOSED', {
-      instanceId: this.instanceId,
-      symbol, heldSide, markPrice, orderId, tradeId,
-      pnl: pnlAtDecision.toFixed(4), exitReason,
-    });
-    // REGIME-3 — post-close tilt cooldown. Records timestamp on EVERY
-    // close (any PnL). The entry path's cooldown check at the
-    // postclose_cooldown gate rejects same-side re-entry within
-    // `composeCooldown(...).finalMs`, which is observer-derived from
-    // `safety_floor.ts` (settlement / 21002 / rate-limit) and
-    // `heart_arbitrator.ts` (consecutive-loss chain gap). No env gate;
-    // the threshold is 0 when no observer asks for a veto.
-    //
-    // Diagnosed in 2026-05-19 CSV post-mortems:
-    //   #806: +$0.20 BTC win at 08:21 → -$0.52 BTC loss at 08:29 (win-then-loss)
-    //   #819: BTC short→short re-open at 62s (slipped past 60s default)
-    //   THIS: 13:11:54 BTC long close -$0.0036 (TINY LOSS) → 13:13:55 BTC
-    //         long re-open (2 min later) → 13:14:31 close -$0.2247.
-    //         Post-win-only gate didn't fire because the prior close was
-    //         a tiny loss, not a win. Same structural failure mode.
-    //
-    // Side-aware: key by (symbol, side). Same-symbol SAME-SIDE re-entry
-    // is the gated case. Opposite-side (reversal) isn't gated by THIS
-    // check — it has its own gates (REGIME-2, directional_disagreement).
-    this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
-    // #1009 PR2: HEART tilt-chain observer is fed from the SAME canonical
-    // surface as the reward chemistry — `pushPerAgentCloseRewards` for
-    // the synthetic path (gated by CANONICAL_POLO_PNL_LIVE !== 'true'),
-    // and `applyPoloRealizedPnlAfterClose` for the polo-authoritative
-    // path. Wiring HEART here would feed the chain detector with the
-    // mark-based gross `pnlAtDecision` even when the polo-authoritative
-    // net pnl (post-fees, the truth the kernel learns from) is about to
-    // arrive async. Cascade 2026-05-29 explicitly flagged that risk:
-    // HEART must learn tilt from the same surface the reward ledger uses.
-    // #1009 safety_floor observer 1 (settlement-latency p99) is fed by
-    // `observePositionSnapshot` at every kernel `getPositions` site
-    // (loop.ts:7316, 7696, 8363, 10061). When the snapshot returns
-    // without `symbol`, the settlement ring receives `tNow - tCloseAck`
-    // — the empirical Polo-side flat-observation latency, NOT the DB
-    // commit time (which would falsely push p99 to ~10ms).
-    this.bus.publish({
-      type: BusEventType.EXIT_TRIGGERED,
-      source: this.instanceId,
-      symbol,
-      payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
-    });
-    closeSucceeded = true;
-    return { executed: true, orderId, reason: 'closed' };
+      logger.info('[Monkey] POSITION CLOSED', {
+        instanceId: this.instanceId,
+        symbol, heldSide, markPrice, orderId, tradeId,
+        pnl: pnlAtDecision.toFixed(4), exitReason,
+      });
+      // REGIME-3 — post-close tilt cooldown. Records timestamp on EVERY
+      // close (any PnL). The entry path's cooldown check at the
+      // postclose_cooldown gate rejects same-side re-entry within
+      // `composeCooldown(...).finalMs`, which is observer-derived from
+      // `safety_floor.ts` (settlement / 21002 / rate-limit) and
+      // `heart_arbitrator.ts` (consecutive-loss chain gap). No env gate;
+      // the threshold is 0 when no observer asks for a veto.
+      //
+      // Diagnosed in 2026-05-19 CSV post-mortems:
+      //   #806: +$0.20 BTC win at 08:21 → -$0.52 BTC loss at 08:29 (win-then-loss)
+      //   #819: BTC short→short re-open at 62s (slipped past 60s default)
+      //   THIS: 13:11:54 BTC long close -$0.0036 (TINY LOSS) → 13:13:55 BTC
+      //         long re-open (2 min later) → 13:14:31 close -$0.2247.
+      //         Post-win-only gate didn't fire because the prior close was
+      //         a tiny loss, not a win. Same structural failure mode.
+      //
+      // Side-aware: key by (symbol, side). Same-symbol SAME-SIDE re-entry
+      // is the gated case. Opposite-side (reversal) isn't gated by THIS
+      // check — it has its own gates (REGIME-2, directional_disagreement).
+      this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
+      // #1009 PR2: HEART tilt-chain observer is fed from the SAME canonical
+      // surface as the reward chemistry — `pushPerAgentCloseRewards` for
+      // the synthetic path (gated by CANONICAL_POLO_PNL_LIVE !== 'true'),
+      // and `applyPoloRealizedPnlAfterClose` for the polo-authoritative
+      // path. Wiring HEART here would feed the chain detector with the
+      // mark-based gross `pnlAtDecision` even when the polo-authoritative
+      // net pnl (post-fees, the truth the kernel learns from) is about to
+      // arrive async. Cascade 2026-05-29 explicitly flagged that risk:
+      // HEART must learn tilt from the same surface the reward ledger uses.
+      // #1009 safety_floor observer 1 (settlement-latency p99) is fed by
+      // `observePositionSnapshot` at every kernel `getPositions` site
+      // (loop.ts:7316, 7696, 8363, 10061). When the snapshot returns
+      // without `symbol`, the settlement ring receives `tNow - tCloseAck`
+      // — the empirical Polo-side flat-observation latency, NOT the DB
+      // commit time (which would falsely push p99 to ~10ms).
+      this.bus.publish({
+        type: BusEventType.EXIT_TRIGGERED,
+        source: this.instanceId,
+        symbol,
+        payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
+      });
+      closeSucceeded = true;
+      return { executed: true, orderId, reason: 'closed' };
     } finally {
       releaseClose(symbol, heldSide, this.instanceId, closeSucceeded);
     }
@@ -8224,13 +8260,13 @@ export class MonkeyKernel extends EventEmitter {
     const frBracket = symStateForLev?.lastFrBracket ?? null;
     const tpPrice = frBracket
       ? (side === 'long'
-          ? entryPrice + frBracket.tpDistance
-          : entryPrice - frBracket.tpDistance)
+        ? entryPrice + frBracket.tpDistance
+        : entryPrice - frBracket.tpDistance)
       : null;
     const slPrice = frBracket
       ? (side === 'long'
-          ? entryPrice - frBracket.slDistance
-          : entryPrice + frBracket.slDistance)
+        ? entryPrice - frBracket.slDistance
+        : entryPrice + frBracket.slDistance)
       : null;
 
     // 2026-05-13 — CROSS-AGENT tape-disagreement veto.
@@ -8443,38 +8479,38 @@ export class MonkeyKernel extends EventEmitter {
           usedMarginUsdt: 0,
         };
       } else {
-      const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
-      if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
-      credentials = c;
-      const [balance, positions] = await Promise.all([
-        poloniexFuturesService.getAccountBalance(credentials),
-        poloniexFuturesService.getPositions(credentials),
-      ]);
-      _feedFlatObserverFromPositions(positions);
-      const equityUsdt = Number(balance?.totalBalance ?? balance?.eq ?? 0);
-      const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
-      const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
-        symbol: String(p.symbol ?? ''),
-        // v3 HEDGE positions carry side in `posSide` (not the Binance-style
-        // `p.side`) and have no `notional`/`size` field — derive both via
-        // the shared resolvers (posSide-first; notional = im x lever).
-        // The old `p.side`/`p.notional ?? p.size` reads blinded the kernel's
-        // exposure/stacking vetoes on the HEDGE account. Re-applies the
-        // loop_execution.ts intent of fa301f9 + c822499 at this call site
-        // (loop_execution.ts is a post-cutover modularization file, not on
-        // this branch).
-        side: resolveExchangePositionSide(p),
-        notional: resolveExchangePositionNotional(p),
-      })).filter((p) => p.symbol.length > 0);
-      // v0.8.8: thread used-margin telemetry to the kernel for the
-      // headroom veto. Cross-margin: usedMargin = equity - availableBalance.
-      // Falls back to 0 (kernel-side veto stays no-op) when the balance
-      // feed doesn't expose availableBalance.
-      const availableBalance = Number(
-        balance?.availableBalance ?? balance?.availMgn ?? balance?.am ?? equityUsdt,
-      );
-      const usedMarginUsdt = Math.max(0, equityUsdt - availableBalance);
-      kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [], usedMarginUsdt };
+        const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
+        if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
+        credentials = c;
+        const [balance, positions] = await Promise.all([
+          poloniexFuturesService.getAccountBalance(credentials),
+          poloniexFuturesService.getPositions(credentials),
+        ]);
+        _feedFlatObserverFromPositions(positions);
+        const equityUsdt = Number(balance?.totalBalance ?? balance?.eq ?? 0);
+        const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
+        const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
+          symbol: String(p.symbol ?? ''),
+          // v3 HEDGE positions carry side in `posSide` (not the Binance-style
+          // `p.side`) and have no `notional`/`size` field — derive both via
+          // the shared resolvers (posSide-first; notional = im x lever).
+          // The old `p.side`/`p.notional ?? p.size` reads blinded the kernel's
+          // exposure/stacking vetoes on the HEDGE account. Re-applies the
+          // loop_execution.ts intent of fa301f9 + c822499 at this call site
+          // (loop_execution.ts is a post-cutover modularization file, not on
+          // this branch).
+          side: resolveExchangePositionSide(p),
+          notional: resolveExchangePositionNotional(p),
+        })).filter((p) => p.symbol.length > 0);
+        // v0.8.8: thread used-margin telemetry to the kernel for the
+        // headroom veto. Cross-margin: usedMargin = equity - availableBalance.
+        // Falls back to 0 (kernel-side veto stays no-op) when the balance
+        // feed doesn't expose availableBalance.
+        const availableBalance = Number(
+          balance?.availableBalance ?? balance?.availMgn ?? balance?.am ?? equityUsdt,
+        );
+        const usedMarginUsdt = Math.max(0, equityUsdt - availableBalance);
+        kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [], usedMarginUsdt };
       }
     } catch (err) {
       return {
@@ -8565,24 +8601,24 @@ export class MonkeyKernel extends EventEmitter {
       const chemMod = chemistryBoundedModulator(req.dopamine ?? 0.5, req.gaba ?? 0.5);
       const kellyCap = (req.availableEquityUsdt && req.availableEquityUsdt > 0 && kellyFraction > 0)
         ? kellyPrimaryContractCap({
-            availableEquityUsdt: req.availableEquityUsdt,
-            markPrice: req.entryPrice,
-            contractSize: symbolLotSize,
-            leverage: req.leverage,
-            kellyFraction,
-            chemistryModulator: chemMod,
-          })
+          availableEquityUsdt: req.availableEquityUsdt,
+          markPrice: req.entryPrice,
+          contractSize: symbolLotSize,
+          leverage: req.leverage,
+          kellyFraction,
+          chemistryModulator: chemMod,
+        })
         : 0;
       const chemistryCap = req.availableEquityUsdt && req.availableEquityUsdt > 0
         ? kernelDerivedContractCap({
-            availableEquityUsdt: req.availableEquityUsdt,
-            markPrice: req.entryPrice,
-            contractSize: symbolLotSize,
-            leverage: req.leverage,
-            dopamine: req.dopamine ?? 0.5,
-            phi: req.phi,
-            gaba: req.gaba ?? 0.5,
-          })
+          availableEquityUsdt: req.availableEquityUsdt,
+          markPrice: req.entryPrice,
+          contractSize: symbolLotSize,
+          leverage: req.leverage,
+          dopamine: req.dopamine ?? 0.5,
+          phi: req.phi,
+          gaba: req.gaba ?? 0.5,
+        })
         : VENUE_CONTRACTS_CEILING;
       // Take the LARGER of Kelly-derived and chemistry-derived caps.
       // Kelly = "what I've earned"; chemistry = "what I'm feeling".
@@ -9829,7 +9865,7 @@ export class MonkeyKernel extends EventEmitter {
     // every subsequent normal-magnitude close (the kernel couldn't
     // "feel" -$5 losses as bad because they looked small relative to
     // the outlier-inflated stddev). MAD is bounded by the median's
-    // breakdown point (50%) — a single outlier can't move it.
+    // 50% contamination tolerance — a single outlier can't move it.
     //
     // MAD × 1.4826 ≈ stddev under Gaussian assumption; using raw MAD
     // is fine here because the multiplier would cancel in the
@@ -10228,12 +10264,12 @@ export class MonkeyKernel extends EventEmitter {
         .catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
       const tripleRow = triple.rows[0] as
         | {
-            sovereignty_score?: number | null;
-            convergence_type?: string | null;
-            created_at?: Date | null;
-            exit_time?: Date | null;
-            lane?: string | null;
-          }
+          sovereignty_score?: number | null;
+          convergence_type?: string | null;
+          created_at?: Date | null;
+          exit_time?: Date | null;
+          lane?: string | null;
+        }
         | undefined;
       // SENSE-2c Phase 2 (#787 follow-up) — record (lane, win) into the
       // time-of-day-weighted accumulator. Win = realizedPnl > 0. The
