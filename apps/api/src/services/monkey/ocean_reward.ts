@@ -18,8 +18,8 @@
  * Replaces the external hardcoded 1% Fib floor (never fired at real
  * kernel scale ~0.04% MAD). Uses own realized pnlFrac distribution
  * (exact median + MAD mirror of the motivators.ts transcendence block).
- * Positive deviation from own history now yields positive chemistry.
- * Cold-start or non-positive deviation → 0. Structural (no knob).
+ * Deviation magnitude from own history maps to structural Fib tiers.
+ * Cold-start positive pnl keeps a gentle tier-1 ramp-up.
  */
 export function observerFibCoefficient(pnlFrac: number, history: number[]): number {
   if (!history || history.length < 2) return pnlFrac > 0 ? 1 : 0; // Gentle positive signal while observer history builds (P1 ramp-up)
@@ -37,8 +37,7 @@ export function observerFibCoefficient(pnlFrac: number, history: number[]): numb
     : devs[Math.floor(n / 2)];
 
   if (mad < 1e-12) return 0;
-  const z = (pnlFrac - median) / mad;
-  if (z <= 0) return 0;
+  const z = Math.abs((pnlFrac - median) / mad);
 
   // Structural mapping (positive z-deviation → Fib tiers)
   if (z < 0.5) return 1;
@@ -49,6 +48,63 @@ export function observerFibCoefficient(pnlFrac: number, history: number[]): numb
   if (z < 4.0) return 13;
   if (z < 5.0) return 21;
   return 34;
+}
+
+export interface RewardRpeInputs {
+  pnlFrac: number;
+  predictedPnlFrac: number;
+  sigmaResidual: number;
+  tonicBaseline: number;
+  serotoninDisposition: number;
+  legibility: number;
+}
+
+export interface RewardRpeDeltas {
+  valid: boolean;
+  phasicRpe: number;
+  dopamineDelta: number;
+  norepinephrineDelta: number;
+  acetylcholineDelta: number;
+  serotoninDelta: number;
+  endorphinDelta: number;
+}
+
+export function rewardRpeDeltas(input: RewardRpeInputs): RewardRpeDeltas {
+  const values = [
+    input.pnlFrac,
+    input.predictedPnlFrac,
+    input.sigmaResidual,
+    input.tonicBaseline,
+    input.serotoninDisposition,
+    input.legibility,
+  ];
+  if (values.some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
+    return {
+      valid: false,
+      phasicRpe: 0,
+      dopamineDelta: 0,
+      norepinephrineDelta: 0,
+      acetylcholineDelta: 0,
+      serotoninDelta: 0,
+      endorphinDelta: 0,
+    };
+  }
+  const sigma = Math.max(Math.abs(input.sigmaResidual), 1e-12);
+  const rpe = (input.pnlFrac - input.predictedPnlFrac) / sigma;
+  const absRpe = Math.abs(rpe);
+  const leg = Math.max(0, Math.min(1, input.legibility));
+  const ser = Math.max(0, Math.min(1, input.serotoninDisposition));
+  const betterThanPredicted = Math.max(0, input.pnlFrac - input.predictedPnlFrac);
+  const relief = input.predictedPnlFrac < 0 ? betterThanPredicted : 0;
+  return {
+    valid: true,
+    phasicRpe: rpe,
+    dopamineDelta: input.tonicBaseline + Math.tanh(rpe),
+    norepinephrineDelta: Math.tanh(absRpe),
+    acetylcholineDelta: Math.tanh(absRpe) * leg,
+    serotoninDelta: ser,
+    endorphinDelta: Math.tanh(relief),
+  };
 }
 
 /**
