@@ -1826,8 +1826,8 @@ export class MonkeyKernel extends EventEmitter {
 
   /**
    * 2026-05-16 — L-veto-over-K telemetry accessor. Returns the running
-  * total of K entries suppressed by L's high-conviction disagreeing
-  * vote, plus per-symbol counts. Used by the /monkey/snapshot
+   * total of K entries suppressed by L's high-conviction disagreeing
+   * vote, plus per-symbol counts. Used by the /monkey/snapshot
    * endpoint and the operator dashboard to confirm the veto fires
    * after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
