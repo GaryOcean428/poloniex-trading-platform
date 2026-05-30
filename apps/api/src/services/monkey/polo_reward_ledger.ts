@@ -309,7 +309,6 @@ export type ExternalCloseRewardEligibility =
       eligible: false;
       /** Why the reward was declined (telemetry/debugging only). */
       reason:
-        | 'flag_off'
         | 'not_external_close'
         | 'no_agent'
         | 'no_bills_pnl'
@@ -318,8 +317,6 @@ export type ExternalCloseRewardEligibility =
     };
 
 export function decideExternalCloseReward(input: {
-  /** `MONKEY_REWARD_EXTERNAL_CLOSES_LIVE === 'true'`. */
-  enabled: boolean;
   /** The reconciler's ghost reason for this row. */
   ghostReason: string;
   /** The owning agent, or null if unattributed. */
@@ -336,7 +333,6 @@ export function decideExternalCloseReward(input: {
    */
   marginUsdt: number | null;
 }): ExternalCloseRewardEligibility {
-  if (!input.enabled) return { eligible: false, reason: 'flag_off' };
   // Guard 1: ONLY operator/CC external closes. `reconciled_post_close_race`
   // (kernel's own late-landing close) and any other reason are excluded so a
   // kernel-own close can never be double-rewarded here.

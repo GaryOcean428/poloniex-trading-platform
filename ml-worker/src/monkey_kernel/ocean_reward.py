@@ -83,9 +83,10 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
 
     if mad < _EPS:
         return 0
-    z = abs((pnl_frac - median) / mad)
+    z = max(0.0, (pnl_frac - median) / mad)
 
-    # Structural mapping (positive z-deviation → Fib tiers)
+    # Structural mapping (positive z-deviation → Fib tiers; one-sided so
+    # below-median wins get min tier-1, not magnitude-scaled same as above)
     if z < 0.5: return 1
     if z < 1.0: return 2
     if z < 1.5: return 3

@@ -103,17 +103,22 @@ describe('rollingExpectancy', () => {
   });
 });
 
-describe('expectancyLiveEnabled — flag gate', () => {
-  it('is OFF when the env var is unset', () => {
-    expect(expectancyLiveEnabled({})).toBe(false);
-  });
-  it('is OFF for any value other than exactly "true"', () => {
-    expect(expectancyLiveEnabled({ MONKEY_ROTATION_EXPECTANCY_LIVE: 'TRUE' })).toBe(false);
-    expect(expectancyLiveEnabled({ MONKEY_ROTATION_EXPECTANCY_LIVE: '1' })).toBe(false);
-    expect(expectancyLiveEnabled({ MONKEY_ROTATION_EXPECTANCY_LIVE: 'false' })).toBe(false);
-  });
-  it('is ON only for exactly "true"', () => {
-    expect(expectancyLiveEnabled({ MONKEY_ROTATION_EXPECTANCY_LIVE: 'true' })).toBe(true);
+describe('expectancyLiveEnabled — canonical (no gate)', () => {
+  it('is always on, regardless of env', () => {
+    expect(expectancyLiveEnabled()).toBe(true);
+    const _orig = process.env.MONKEY_ROTATION_EXPECTANCY_LIVE;
+    try {
+      process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = '******';
+      expect(expectancyLiveEnabled()).toBe(true);
+      process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = 'true';
+      expect(expectancyLiveEnabled()).toBe(true);
+    } finally {
+      if (_orig !== undefined) {
+        process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = _orig;
+      } else {
+        delete process.env.MONKEY_ROTATION_EXPECTANCY_LIVE;
+      }
+    }
   });
 });
 
