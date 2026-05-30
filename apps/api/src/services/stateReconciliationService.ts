@@ -567,12 +567,12 @@ class StateReconciliationService {
         // events is starved because the conservative LIVED ONLY guard nulls
         // `pnlForLedger` and gates the publish on it being non-null.
         //
-        // Behind MONKEY_REWARD_EXTERNAL_CLOSES_LIVE (default OFF), for external
-        // (`manual_close_user`) closes we recover the authoritative realized
-        // PnL from /v3/account/bills (type=PNL sum, #1028 — the SAME surface
-        // the kernel's own close path consumes) and publish the OUTCOME event
-        // so the kernel learns from these exemplar closes. The lossy ±90s
-        // position-history match above is NOT used for the reward magnitude.
+        // CANONICAL: for external (`manual_close_user`) closes we recover the
+        // authoritative realized PnL from /v3/account/bills (type=PNL sum,
+        // #1028 — the SAME surface the kernel's own close path consumes) and
+        // publish the OUTCOME event so the kernel learns from these exemplar
+        // closes. The lossy ±90s position-history match above is NOT used for
+        // the reward magnitude. No env gate — always on.
         //
         // Best-effort: any failure here is swallowed and never blocks
         // reconciliation. CANONICAL — external (CC/operator) closes always feed

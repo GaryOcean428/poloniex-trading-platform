@@ -251,11 +251,20 @@ describe('deriveMagnitude + medianAndMad', () => {
 
 describe('hindsight is canonical (no gate)', () => {
   it('always live — not env-gated', () => {
-    expect(isHindsightRegretLive()).toBe(true);
-    process.env.MONKEY_HINDSIGHT_REGRET_LIVE = 'false';
-    expect(isHindsightRegretLive()).toBe(true);
-    delete process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
-    expect(isHindsightRegretLive()).toBe(true);
+    const _original = process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
+    try {
+      expect(isHindsightRegretLive()).toBe(true);
+      process.env.MONKEY_HINDSIGHT_REGRET_LIVE = 'false';
+      expect(isHindsightRegretLive()).toBe(true);
+      delete process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
+      expect(isHindsightRegretLive()).toBe(true);
+    } finally {
+      if (_original !== undefined) {
+        process.env.MONKEY_HINDSIGHT_REGRET_LIVE = _original;
+      } else {
+        delete process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
+      }
+    }
   });
 });
 

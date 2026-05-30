@@ -138,14 +138,10 @@ export const ROTATION_EXPECTANCY_BAND = 0.10;
 export const ROTATION_TARGET_LOSS_WIN_RATIO = 1 / 8;
 
 /**
- * Env-flag name for the chronic-expectancy membership criterion.
- * DEFAULT OFF: when unset / not exactly 'true', rotation behaves
- * EXACTLY as it did before issue #1032 (5-consecutive-loss demote +
- * WR-only promotion). When 'true', the expectancy-based chronic demote
- * and the expectancy+ratio promotion gate are layered on.
- *
- * Read at the loop boundary (not in this pure module) and passed in as
- * a boolean so the math stays env-free and unit-testable.
+ * Historical env-flag name for the chronic-expectancy membership criterion.
+ * The expectancy firewall is now CANONICAL (always on); this constant is
+ * retained for reference/telemetry only. `expectancyLiveEnabled()` ignores
+ * this env var and always returns `true`.
  */
 export const ROTATION_EXPECTANCY_FLAG = 'MONKEY_ROTATION_EXPECTANCY_LIVE';
 
