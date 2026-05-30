@@ -716,8 +716,11 @@ class AutonomicKernel:
         pred = self._cached_prediction_chemistry
         # 2026-05-29 hindsight (flag-gated; all-zero when OFF → byte-identical).
         # dop/ser/endo fold into the reward channel exactly like prediction
-        # chemistry; ACh/NE/GABA are applied additively to the derived NC after
+        # chemistry; ACh/NE are applied additively to the derived NC after
         # _compute_nc (parity with neurochemistry.ts reward*Delta inputs).
+        # GABA is intentionally NOT applied globally: hindsight GABA is
+        # targeted by pattern on the TS side and remains telemetry-only here
+        # until an equivalent targeted executive consumer exists.
         hs = self._decayed_hindsight_chemistry(inputs.now_ms)
         reward_sums_combined = {
             "dopamine": reward_sums["dopamine"] + pred["dopamine_delta"] + hs["dopamine_delta"],
@@ -725,15 +728,15 @@ class AutonomicKernel:
             "endorphin": reward_sums["endorphin"] + hs["endorphin_delta"],
         }
         nc = self._compute_nc(inputs, reward_sums_combined, inputs.is_awake)
-        # Fold ACh / NE / GABA hindsight deltas additively onto the derived
-        # levels (mirror neurochemistry.ts achOut/neOut/gabaOut). Zero when OFF.
-        if hs["acetylcholine_delta"] or hs["norepinephrine_delta"] or hs["gaba_delta"]:
+        # Fold ACh / NE hindsight deltas additively onto the derived levels
+        # (mirror neurochemistry.ts achOut/neOut). Zero when OFF.
+        if hs["acetylcholine_delta"] or hs["norepinephrine_delta"]:
             nc = NeurochemicalState(
                 acetylcholine=_clip(nc.acetylcholine + hs["acetylcholine_delta"], 0.0, 1.0),
                 dopamine=nc.dopamine,
                 serotonin=nc.serotonin,
                 norepinephrine=_clip(nc.norepinephrine + hs["norepinephrine_delta"], 0.0, 1.0),
-                gaba=_clip(nc.gaba + hs["gaba_delta"], 0.0, 1.0),
+                gaba=nc.gaba,
                 endorphins=nc.endorphins,
             )
 

@@ -23,6 +23,7 @@ import {
   resolveHindsight,
   isContinuationLegible,
   isEligibleForRegret,
+  legibilityStrength,
   deriveMagnitude,
   gabaTargetKey,
   medianAndMad,
@@ -96,6 +97,16 @@ describe('legibility gate (PURITY KEYSTONE)', () => {
     expect(isEligibleForRegret(legibleShortBundle({ kernelOwnedClose: false }), true).reason).toBe('not_owned');
     expect(isEligibleForRegret(legibleShortBundle({ warpExpectationSign: 1 }), true).reason).toBe('not_legible');
     expect(isEligibleForRegret(legibleShortBundle(), false).reason).toBe('regime_changed');
+  });
+  it('weak legibility scales regret instead of opening a full-strength gate', () => {
+    const strong = legibilityStrength(legibleShortBundle());
+    const weak = legibilityStrength(legibleShortBundle({
+      warpExpectationConfidence: 0.001,
+      basinDirAtClose: -0.000001,
+      coherenceStreak: 1,
+    }));
+    expect(weak).toBeGreaterThan(0);
+    expect(weak).toBeLessThan(strong);
   });
 });
 
@@ -261,17 +272,18 @@ describe('gabaTargetKey', () => {
 
 describe('TS↔Py fixture-level parity (exact magnitudes)', () => {
   // These exact values are mirrored in test_hindsight_regret.py
-  // (test_parity_*). salience = tanh(|frac| / MAD), MAD = 0.01.
+  // (test_parity_*). regret = tanh(|frac| / MAD) × legibility, MAD = 0.01.
   const margin = 100;
   const salience = (frac: number, mad: number): number => Math.tanh(Math.abs(frac) / mad);
+  const legibility = legibilityStrength(legibleShortBundle());
 
-  it('regret: dop = -tanh(0.30/0.01); ACh = NE = +salience', () => {
+  it('regret: dop = -tanh(0.30/0.01) × legibility; ACh = NE = +scaled salience', () => {
     const res = resolveHindsight(
       legibleShortBundle(),
       { realizedPnlUsdt: 0, horizonEndPnlUsdt: 30, marginUsdt: margin, regimePersisted: true },
       PNL_FRAC_HISTORY,
     );
-    const s = salience(0.30, 0.01);
+    const s = salience(0.30, 0.01) * legibility;
     expect(res.nt.dopamineDelta).toBeCloseTo(-s, 9);
     expect(res.nt.acetylcholineDelta).toBeCloseTo(s, 9);
     expect(res.nt.norepinephrineDelta).toBeCloseTo(s, 9);
@@ -293,6 +305,6 @@ describe('TS↔Py fixture-level parity (exact magnitudes)', () => {
       PNL_FRAC_HISTORY,
     );
     expect(res.predictionErrorZ).toBeCloseTo(1.0, 9);
-    expect(res.nt.dopamineDelta).toBeCloseTo(-salience(0.01, 0.01), 9);
+    expect(res.nt.dopamineDelta).toBeCloseTo(-salience(0.01, 0.01) * legibility, 9);
   });
 });

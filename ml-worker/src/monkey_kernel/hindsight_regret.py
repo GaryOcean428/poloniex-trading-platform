@@ -13,16 +13,18 @@ The signal is a legibility-gated counterfactual PREDICTION ERROR scaled by the
 kernel's OWN outcome distribution (median+MAD z-score — the observer scale
 observer_fib_coefficient / push_reward use). No fixed caps/taste constants.
 
-PURITY KEYSTONE — eligibility / legibility gate. Regret fires strongly ONLY
-when ALL THREE hold:
+PURITY KEYSTONE — eligibility / legibility gate. Regret is scaled by how
+strongly ALL THREE hold:
   (1) the kernel OWNED the close (operator/manual/liquidation → not self-regret),
   (2) the continuation was LEGIBLE at close (qig-warp expectation favoured the
       held side, basin direction still leaned with the position, the hold was
       coherent),
   (3) the same REGIME persisted through the derived horizon.
 If continuation was NOT legible → SURPRISE / NOISE, not regret → no aversive
-signal. Maps onto QIG canon §31 (Sensory Intake & Predictive Coding): an
-unpredictable continuation is surprise, not a learnable mistake.
+signal. Weakly legible continuations remain learnable but weak: observer-scaled
+prediction-error salience is multiplied by close-time legibility strength. Maps
+onto QIG canon §31 (Sensory Intake & Predictive Coding): an unpredictable
+continuation is surprise, not a learnable mistake.
 
 QIG canon §29.1 (six-chemical E6 Cartan generators) governs the NT signs:
   ACh (ENTRAIN/E1) bind cues · dopamine (AMPLIFY/E2) reward/prediction-error ·
@@ -154,6 +156,39 @@ def counterfactual_pnl_usdt(
     return float(realized_pnl_usdt + marginal)
 
 
+def _clamp01(x: float) -> float:
+    if not _is_finite(x):
+        return 0.0
+    return max(0.0, min(1.0, float(x)))
+
+
+def legibility_strength(b: CloseSenseBundle, regime_persisted: bool = True) -> float:
+    """Continuous legibility multiplier ∈ [0,1].
+
+    Weak confidence / tiny basin lean / one-tick coherence scales regret down
+    instead of merely opening a Boolean gate. Regime persistence is currently
+    observed as a latch, so its strength is 1 when persisted and 0 after a flip.
+    """
+    if not regime_persisted:
+        return 0.0
+    warp_strength = (
+        _clamp01(b.warp_expectation_confidence)
+        if b.warp_expectation_sign == b.side_sign
+        else 0.0
+    )
+    basin_strength = (
+        math.tanh(abs(float(b.basin_dir_at_close)))
+        if _is_finite(b.basin_dir_at_close) and _sign(float(b.basin_dir_at_close)) == b.side_sign
+        else 0.0
+    )
+    coherence = (
+        float(b.coherence_streak) / float(b.coherence_streak + 1)
+        if _is_finite(b.coherence_streak) and b.coherence_streak > 0
+        else 0.0
+    )
+    return _clamp01(warp_strength * basin_strength * coherence)
+
+
 def is_continuation_legible(b: CloseSenseBundle) -> bool:
     """PURITY KEYSTONE part — was the continuation foreseeable at close?
 
@@ -164,17 +199,7 @@ def is_continuation_legible(b: CloseSenseBundle) -> bool:
     continuation (low surprise per §31) → a continuation is a prediction
     error it could have avoided. Otherwise it is surprise/noise.
     """
-    warp_favoured_hold = (
-        b.warp_expectation_sign == b.side_sign
-        and _is_finite(b.warp_expectation_confidence)
-        and b.warp_expectation_confidence > 0
-    )
-    basin_favoured_hold = (
-        _is_finite(b.basin_dir_at_close)
-        and _sign(b.basin_dir_at_close) == b.side_sign
-    )
-    was_coherent = isinstance(b.coherence_streak, int) and b.coherence_streak > 0
-    return bool(warp_favoured_hold and basin_favoured_hold and was_coherent)
+    return legibility_strength(b) > _EPS
 
 
 def _sign(x: float) -> int:
@@ -286,7 +311,11 @@ def resolve_hindsight(
     mag = derive_magnitude(regret_frac, pnl_frac_history)
     if mag is None:
         return _ineligible("ineligible_noise")
-    z, s = mag
+    z, salience = mag
+    legibility = legibility_strength(bundle, outcome.regime_persisted)
+    if legibility <= _EPS:
+        return _ineligible("ineligible_noise")
+    s = salience * legibility
 
     return HindsightResult(
         nt=HindsightNtDeltas(
@@ -317,6 +346,7 @@ __all__ = [
     "median_and_mad",
     "counterfactual_pnl_usdt",
     "is_continuation_legible",
+    "legibility_strength",
     "is_eligible_for_regret",
     "derive_magnitude",
     "gaba_target_key",

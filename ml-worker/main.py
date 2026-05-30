@@ -1491,8 +1491,9 @@ async def monkey_autonomic_hindsight(request: Request):
     DESIGN HYPOTHESIS). The legibility-gated counterfactual-regret signal is
     resolved TS-side (loop.ts owns the watches); this fans the decayed E6 NT
     deltas to the Py chemistry surface so it stays in parity. REPLACES (does
-    not append); folded additively into chemistry on each tick(); cleared on
-    wake. P14: separate channel. Fail-closed: non-finite → 0.
+    not append); non-GABA channels fold additively into chemistry on each
+    tick(); GABA remains targeted telemetry until a Py-side pattern consumer
+    exists; cleared on wake. P14: separate channel. Fail-closed: non-finite → 0.
 
     Request body:
       { instance_id, dopamine_delta, serotonin_delta, acetylcholine_delta,

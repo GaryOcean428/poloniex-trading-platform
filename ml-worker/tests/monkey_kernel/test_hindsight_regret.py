@@ -39,6 +39,7 @@ from monkey_kernel.hindsight_regret import (  # noqa: E402
     is_continuation_legible,
     is_eligible_for_regret,
     is_hindsight_regret_live,
+    legibility_strength,
     median_and_mad,
     resolve_hindsight,
 )
@@ -124,6 +125,19 @@ def test_eligibility_requires_all_three():
     assert is_eligible_for_regret(legible_short_bundle(kernel_owned_close=False), True)[1] == "not_owned"
     assert is_eligible_for_regret(legible_short_bundle(warp_expectation_sign=1), True)[1] == "not_legible"
     assert is_eligible_for_regret(legible_short_bundle(), False)[1] == "regime_changed"
+
+
+def test_weak_legibility_scales_regret_instead_of_full_gate():
+    strong = legibility_strength(legible_short_bundle())
+    weak = legibility_strength(
+        legible_short_bundle(
+            warp_expectation_confidence=0.001,
+            basin_dir_at_close=-0.000001,
+            coherence_streak=1,
+        )
+    )
+    assert weak > 0.0
+    assert weak < strong
 
 
 # ───────────────────────── resolve_hindsight ─────────────────────────
@@ -245,14 +259,19 @@ def test_flag_default_off(monkeypatch):
 
 # ───────────────────────── TS↔Py fixture-level parity ─────────────────────────
 # These expected values were produced by the TS resolveHindsight() on the SAME
-# fixtures (verified in hindsightRegret.test.ts). salience = tanh(|frac|/MAD).
-#   regret:    frac = 30/100 = 0.30, MAD = 0.01 → z = 30 → salience = tanh(30) ≈ 1.0
+# fixtures (verified in hindsightRegret.test.ts). regret salience =
+# tanh(|frac|/MAD) × legibility.
+#   regret:    frac = 30/100 = 0.30, MAD = 0.01 → z = 30 → salience = tanh(30) × legibility
 #   good close: |−20|/100 = 0.20, MAD = 0.01 → z = 20 → salience = tanh(20) ≈ 1.0
 #   small:     1/100 = 0.01, MAD = 0.01 → z = 1 → salience = tanh(1) ≈ 0.7615941559
 
 
 def _salience(frac: float, mad: float) -> float:
     return math.tanh(abs(frac) / mad)
+
+
+def _regret_salience(frac: float, mad: float) -> float:
+    return _salience(frac, mad) * legibility_strength(legible_short_bundle())
 
 
 @pytest.mark.parametrize(
@@ -268,8 +287,8 @@ def test_parity_signs_and_magnitude(horizon_end, expected_source, expected_dop_s
     )
     assert res.source == expected_source
     frac = abs(horizon_end - 0.0) / 100.0
-    s = _salience(frac, 0.01)
-    # dopamine magnitude == salience (regret = -s, good close = +s).
+    s = _regret_salience(frac, 0.01) if expected_source == "hindsight_regret" else _salience(frac, 0.01)
+    # dopamine magnitude == branch salience (regret is legibility-scaled).
     assert res.nt.dopamine_delta == pytest.approx(expected_dop_sign * s, abs=1e-9)
     # ACh / NE always == +salience on both branches.
     assert res.nt.acetylcholine_delta == pytest.approx(s, abs=1e-9)
@@ -281,7 +300,7 @@ def test_parity_small_foregone_salience():
     res = resolve_hindsight(
         legible_short_bundle(), won_outcome(horizon_end_pnl_usdt=1.0), PNL_FRAC_HISTORY,
     )
-    s = _salience(0.01, 0.01)
+    s = _regret_salience(0.01, 0.01)
     assert res.nt.dopamine_delta == pytest.approx(-s, abs=1e-9)
     assert res.prediction_error_z == pytest.approx(1.0, abs=1e-9)
 
@@ -315,22 +334,23 @@ def test_autonomic_flag_off_byte_identical():
     assert base_nc.as_dict() == hs_nc.as_dict()
 
 
-def test_autonomic_hindsight_fold_moves_all_six_channels():
+def test_autonomic_hindsight_fold_keeps_gaba_targeted_not_global():
     """A pushed hindsight vector folds dop/ser/endo (reward channel) and
-    ACh/NE/GABA (post-derivation) — all six move from the flag-OFF baseline."""
+    ACh/NE (post-derivation). GABA is not applied globally; it is targeted
+    on the TS side until a Py-side targeted executive consumer exists."""
     k = AutonomicKernel(label="t-fold")
     inp = _tick_inputs()
     baseline = k.tick(inp).nc.as_dict()
-    # Aversive-style vector (regret): dop-, ser-, ACh+, NE+, GABA+, endo 0.
+    # Aversive-style vector (regret): dop-, ser-, ACh+, NE+, targeted GABA+, endo 0.
     k.push_hindsight_chemistry(
         dopamine_delta=-0.4, serotonin_delta=-0.4, acetylcholine_delta=0.4,
         norepinephrine_delta=0.4, gaba_delta=0.4, endorphin_delta=0.0,
     )
     after = k.tick(inp).nc.as_dict()
-    # ACh / NE / GABA increased; dop / ser decreased (or stayed at floor).
+    # ACh / NE increased; global GABA does not move; dop / ser decreased (or stayed at floor).
     assert after["acetylcholine"] >= baseline["acetylcholine"]
     assert after["norepinephrine"] > baseline["norepinephrine"]
-    assert after["gaba"] > baseline["gaba"]
+    assert after["gaba"] == baseline["gaba"]
     assert after["dopamine"] <= baseline["dopamine"]
 
 

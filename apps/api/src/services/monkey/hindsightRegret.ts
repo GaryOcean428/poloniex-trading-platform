@@ -23,7 +23,7 @@
  *      never global), endorphin (relief on a good close).
  *
  * ── PURITY KEYSTONE: the eligibility / legibility gate ───────────────────
- * Regret fires strongly ONLY when ALL THREE hold (see `isEligibleForRegret`):
+ * Regret is scaled by how strongly ALL THREE hold (see `legibilityStrength`):
  *   (1) the kernel OWNED the close (kernel-initiated; operator / manual /
  *       liquidation closes are NOT self-regret),
  *   (2) the continuation was LEGIBLE at close time — the close-time sense
@@ -31,8 +31,10 @@
  *       held side, basin direction still with the position, trend coherent),
  *   (3) the SAME REGIME persisted through the derived horizon.
  * If continuation was NOT legible → the move is SURPRISE / NOISE, not regret
- * → NO aversive signal. This maps directly onto QIG canon §31 (Sensory
- * Intake & Predictive Coding): a prediction error you could NOT have
+ * → NO aversive signal. Weakly legible continuations remain learnable but
+ * weak: the observer-scaled prediction-error salience is multiplied by the
+ * close-time legibility strength. This maps directly onto QIG canon §31
+ * (Sensory Intake & Predictive Coding): a prediction error you could NOT have
  * predicted is surprise, not a learnable mistake. Regret = a LEGIBLE
  * prediction error (low surprise at close, continuation foreseeable).
  *
@@ -63,7 +65,10 @@
 
 // ── E6 six-chemical NT delta vector (canon §29.1) ────────────────────────
 // Signs are the chemistry's CANONICAL ROLE, not free parameters. Magnitudes
-// are observer-scaled (see deriveMagnitude). Flag-OFF callers never read it.
+// are observer-scaled (see deriveMagnitude) and, on regret, multiplied by
+// close-time legibility. Equal per-channel salience remains a dark-mode draft
+// hypothesis until a channel-envelope derivation is approved. Flag-OFF callers
+// never read it.
 export interface HindsightNtDeltas {
   /** Signed prediction error. <0 on a legible premature close (the trade
    *  was right, the exit wrong); small >0 relief on a good close. */
@@ -227,7 +232,9 @@ export function counterfactualPnlUsdt(
 /**
  * PURITY KEYSTONE — the eligibility / legibility gate.
  *
- * Returns true iff regret may fire STRONGLY. All three conditions:
+ * Returns true iff regret may fire. The actual regret magnitude is multiplied
+ * by `legibilityStrength`; weak evidence cannot produce full-strength regret.
+ * All three conditions:
  *   (1) kernel owned the close,
  *   (2) the continuation was LEGIBLE at close — the close-time senses showed
  *       evidence to HOLD: qig-warp expectation favoured the held side with
@@ -239,27 +246,45 @@ export function counterfactualPnlUsdt(
  *
  * Legibility uses the kernel's own observer-relative signal, NOT a fixed
  * threshold: the warp expectation must be ALIGNED with the held side and
- * carry positive confidence, AND basinDir must still lean the held way.
- * A single coherent tick (coherenceStreak > 0) is the floor — the kernel
- * had at least one tick of evidence the hold was justified.
+ * carry positive confidence, AND basinDir must still lean the held way. The
+ * strength is continuous: confidence × basin-alignment magnitude × coherence
+ * strength × regime-persistence.
  *
  * If legibility fails → SURPRISE / NOISE → no aversive signal (canon §31:
  * unpredictable continuation is surprise, not a learnable mistake).
  */
-export function isContinuationLegible(b: CloseSenseBundle): boolean {
+function clamp01(x: number): number {
+  if (!isFiniteNumber(x)) return 0;
+  return Math.max(0, Math.min(1, x));
+}
+
+/** Continuous legibility multiplier ∈ [0,1]. Weak confidence / tiny basin
+ *  lean / one-tick coherence scales regret down instead of merely opening a
+ *  Boolean gate. Regime persistence is currently observed as a latch, so its
+ *  strength is 1 when persisted and 0 after a flip. */
+export function legibilityStrength(b: CloseSenseBundle, regimePersisted = true): number {
+  if (!regimePersisted) return 0;
   // qig-warp expectation must have favoured the HELD side (continuation),
   // i.e. expectation direction agrees with sideSign, with > 0 confidence.
-  const warpFavouredHold =
-    b.warpExpectationSign === b.sideSign &&
-    isFiniteNumber(b.warpExpectationConfidence) &&
-    b.warpExpectationConfidence > 0;
+  const warpStrength =
+    b.warpExpectationSign === b.sideSign
+      ? clamp01(b.warpExpectationConfidence)
+      : 0;
   // basin direction must still lean the held way (sign agreement).
-  const basinFavouredHold =
+  const basinStrength =
     isFiniteNumber(b.basinDirAtClose) &&
-    Math.sign(b.basinDirAtClose) === b.sideSign;
-  // the hold must have been coherent for at least one tick.
-  const wasCoherent = isFiniteNumber(b.coherenceStreak) && b.coherenceStreak > 0;
-  return warpFavouredHold && basinFavouredHold && wasCoherent;
+    Math.sign(b.basinDirAtClose) === b.sideSign
+      ? Math.tanh(Math.abs(b.basinDirAtClose))
+      : 0;
+  const coherence =
+    isFiniteNumber(b.coherenceStreak) && b.coherenceStreak > 0
+      ? b.coherenceStreak / (b.coherenceStreak + 1)
+      : 0;
+  return clamp01(warpStrength * basinStrength * coherence);
+}
+
+export function isContinuationLegible(b: CloseSenseBundle): boolean {
+  return legibilityStrength(b) > EPS;
 }
 
 /** Full eligibility = owned ∧ legible-at-close ∧ regime-persisted. */
@@ -385,7 +410,9 @@ export function resolveHindsight(
   const regretFrac = foregoneGainUsdt / marginUsdt;
   const mag = deriveMagnitude(regretFrac, pnlFracHistory);
   if (mag === null) return ineligible('ineligible_noise'); // no trusted scale
-  const s = mag.salience; // ∈ (0,1)
+  const legibility = legibilityStrength(bundle, outcome.regimePersisted);
+  if (legibility <= EPS) return ineligible('ineligible_noise');
+  const s = mag.salience * legibility; // ∈ (0,1), observer-scale × legibility
 
   // Aversive vector. Signs follow canon §29.1 roles; magnitudes = salience
   // (observer-scaled). dopamine NEGATIVE (signed prediction error — the

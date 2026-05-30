@@ -1113,8 +1113,8 @@ export class MonkeyKernel extends EventEmitter {
   private cachedHindsightGaba = 0;
   private cachedHindsightEndorphin = 0;
   /** Targeted-GABA bindings: pattern key (premature_close:regime:side) →
-   *  decaying weight. Read by the executive's per-pattern caution, NOT by a
-   *  global "close less" gate — this is what keeps GABA targeted. */
+   *  decaying weight. Not folded into global GABA; executive consumption is
+   *  the follow-up surface that will read this per-pattern caution. */
   private hindsightGabaTargets: Map<string, number> = new Map();
   private tickMs: number;
   private readonly baseTickMs: number;
@@ -2102,6 +2102,7 @@ export class MonkeyKernel extends EventEmitter {
     }
     this.tickInFlight = true;
     try {
+      this.decayHindsightCachesOncePerTick();
       // LIMIT_MAKER #793 — cancel any stale post-only scalp orders before
       // running the per-symbol pipeline. Stale = older than
       // LIMIT_MAKER_STALE_MS (2 min). Errors are non-fatal — the next
@@ -2120,6 +2121,33 @@ export class MonkeyKernel extends EventEmitter {
       this.tickInFlight = false;
     }
   }
+
+  private decayHindsightCachesOncePerTick(): void {
+    if (!isHindsightRegretLive()) return;
+    const HINDSIGHT_HALF_LIFE_MS = 20 * 60 * 1000;
+    const decay = Math.pow(0.5, this.tickMs / HINDSIGHT_HALF_LIFE_MS);
+    this.cachedHindsightDopamine *= decay;
+    this.cachedHindsightSerotonin *= decay;
+    this.cachedHindsightAcetylcholine *= decay;
+    this.cachedHindsightNorepinephrine *= decay;
+    this.cachedHindsightGaba *= decay;
+    this.cachedHindsightEndorphin *= decay;
+    const z = (v: number): number => (Math.abs(v) < 1e-6 ? 0 : v);
+    this.cachedHindsightDopamine = z(this.cachedHindsightDopamine);
+    this.cachedHindsightSerotonin = z(this.cachedHindsightSerotonin);
+    this.cachedHindsightAcetylcholine = z(this.cachedHindsightAcetylcholine);
+    this.cachedHindsightNorepinephrine = z(this.cachedHindsightNorepinephrine);
+    this.cachedHindsightGaba = z(this.cachedHindsightGaba);
+    this.cachedHindsightEndorphin = z(this.cachedHindsightEndorphin);
+    // Decay targeted-GABA bindings once per kernel tick, not once per symbol,
+    // so their lifetime is independent of symbol ordering / symbol count.
+    for (const [k, w] of this.hindsightGabaTargets) {
+      const nw = w * decay;
+      if (nw < 1e-6) this.hindsightGabaTargets.delete(k);
+      else this.hindsightGabaTargets.set(k, nw);
+    }
+  }
+
 
   /**
    * Resolve the user_id used for Poloniex credentials. Same query
@@ -2597,46 +2625,24 @@ export class MonkeyKernel extends EventEmitter {
 
     // Hindsight / counterfactual-regret NT vector (flag-gated, default OFF).
     // The `cachedHindsight*` caches accumulate the resolved E6 NT deltas
-    // (evaluateHindsightWatches) and decay toward 0 each tick so a resolved
-    // hindsight event is a transient mood event, not a permanent bias. Decay
-    // uses the same 20-min half-life as the reward queue. P14: own channels,
-    // not folded into pnl-frac history. The dopamine + serotonin channels are
-    // folded into rewardDopamineDelta / rewardSerotoninDelta below; ACh / NE /
-    // GABA / endorphin are folded via the dedicated reward-delta inputs.
+    // (evaluateHindsightWatches). tick() decays them ONCE before the per-symbol
+    // loop so all symbols see the same vector for a kernel tick (no symbol-order
+    // dependency). P14: own channels, not folded into pnl-frac history. The
+    // dopamine + serotonin channels are folded into rewardDopamineDelta /
+    // rewardSerotoninDelta below; ACh / NE / endorphin are folded via dedicated
+    // reward-delta inputs. GABA is not folded globally; it remains in the
+    // targeted hindsightGabaTargets map until executive consumption is wired.
     let hindsightDop = 0;
     let hindsightSer = 0;
     let hindsightAch = 0;
     let hindsightNe = 0;
-    let hindsightGaba = 0;
     let hindsightEndo = 0;
     if (isHindsightRegretLive()) {
       hindsightDop = this.cachedHindsightDopamine;
       hindsightSer = this.cachedHindsightSerotonin;
       hindsightAch = this.cachedHindsightAcetylcholine;
       hindsightNe = this.cachedHindsightNorepinephrine;
-      hindsightGaba = this.cachedHindsightGaba;
       hindsightEndo = this.cachedHindsightEndorphin;
-      const HINDSIGHT_HALF_LIFE_MS = 20 * 60 * 1000;
-      const decay = Math.pow(0.5, this.tickMs / HINDSIGHT_HALF_LIFE_MS);
-      this.cachedHindsightDopamine *= decay;
-      this.cachedHindsightSerotonin *= decay;
-      this.cachedHindsightAcetylcholine *= decay;
-      this.cachedHindsightNorepinephrine *= decay;
-      this.cachedHindsightGaba *= decay;
-      this.cachedHindsightEndorphin *= decay;
-      const z = (v: number): number => (Math.abs(v) < 1e-6 ? 0 : v);
-      this.cachedHindsightDopamine = z(this.cachedHindsightDopamine);
-      this.cachedHindsightSerotonin = z(this.cachedHindsightSerotonin);
-      this.cachedHindsightAcetylcholine = z(this.cachedHindsightAcetylcholine);
-      this.cachedHindsightNorepinephrine = z(this.cachedHindsightNorepinephrine);
-      this.cachedHindsightGaba = z(this.cachedHindsightGaba);
-      this.cachedHindsightEndorphin = z(this.cachedHindsightEndorphin);
-      // Decay the targeted-GABA bindings on the same half-life and prune.
-      for (const [k, w] of this.hindsightGabaTargets) {
-        const nw = w * decay;
-        if (nw < 1e-6) this.hindsightGabaTargets.delete(k);
-        else this.hindsightGabaTargets.set(k, nw);
-      }
     }
 
     // 2026-05-16 (#715/#716/#717 derivation refactor): build the
@@ -2663,7 +2669,7 @@ export class MonkeyKernel extends EventEmitter {
       rewardEndorphinDelta: rewardDeltas.endorphin + hindsightEndo,
       rewardAcetylcholineDelta: hindsightAch,
       rewardNorepinephrineDelta: hindsightNe,
-      rewardGabaDelta: hindsightGaba,
+      rewardGabaDelta: 0,
       observables: {
         phiHistory: state.phiHistory,
         surpriseHistory: state.surpriseHistory,
@@ -8064,6 +8070,8 @@ export class MonkeyKernel extends EventEmitter {
         this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl, (markPrice * fallbackQty) / 16);
         perAgentTotals.K.pnl += safePnl;
         perAgentTotals.K.qty += fallbackQty;
+        perAgentTotals.K.ids?.push(tradeId);
+        if (perAgentTotals.K.grossById) perAgentTotals.K.grossById[tradeId] = safePnl;
       } else {
         // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty +
         // side via SAFE_PNL_FROM_ROW, returning the computed value so chemistry +
@@ -8177,12 +8185,10 @@ export class MonkeyKernel extends EventEmitter {
       // the real net).
       const allTradeIds: string[] = [];
       const grossById: Record<string, number> = {};
-      if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
-        for (const agentKey of ['K', 'M', 'T', 'L'] as const) {
-          const t = perAgentTotals[agentKey];
-          if (t.ids) allTradeIds.push(...t.ids);
-          if (t.grossById) Object.assign(grossById, t.grossById);
-        }
+      for (const agentKey of ['K', 'M', 'T', 'L'] as const) {
+        const t = perAgentTotals[agentKey];
+        if (t.ids) allTradeIds.push(...t.ids);
+        if (t.grossById) Object.assign(grossById, t.grossById);
       }
 
       // v0.6.7 + 2026-05-16 per-agent NC: push one reward event per
@@ -8190,6 +8196,26 @@ export class MonkeyKernel extends EventEmitter {
       // pushPerAgentCloseRewards for margin derivation + rationale.
       const representativeTradeIdForReward = allTradeIds.length > 0 ? allTradeIds[0] : undefined;
       this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals, representativeTradeIdForReward);
+
+      if (process.env.CANONICAL_POLO_PNL_LIVE !== 'true') {
+        const syntheticPnl = (['K', 'M', 'T', 'L'] as const)
+          .reduce((sum, agentKey) => sum + perAgentTotals[agentKey].pnl, 0);
+        const syntheticQty = (['K', 'M', 'T', 'L'] as const)
+          .reduce((sum, agentKey) => sum + perAgentTotals[agentKey].qty, 0);
+        void this.registerHindsightWatchAfterClose({
+          tradeIds: allTradeIds.length > 0 ? allTradeIds : [tradeId],
+          symbol,
+          side: heldSide,
+          realizedPnlUsdt: syntheticPnl,
+          marginUsdt: syntheticQty > 0 ? (markPrice * syntheticQty) / 16 : undefined,
+          exitPriceFallback: markPrice,
+          qtyFallback: syntheticQty,
+          closeLane,
+          regimeAtClose: closeLane
+            ? this.symbolStates.get(symbol)?.regimeAtOpenByLane[closeLane]
+            : undefined,
+        });
+      }
 
       // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
       // The helper will fetch Polo history, match, write Polo realized to .pnl and
@@ -9474,6 +9500,140 @@ export class MonkeyKernel extends EventEmitter {
     }
   }
 
+  private async registerHindsightWatchAfterClose(params: {
+    tradeIds: string[];
+    symbol: string;
+    side: 'long' | 'short';
+    realizedPnlUsdt: number;
+    marginUsdt?: number;
+    exitPriceFallback?: number;
+    qtyFallback?: number;
+    closeLane?: 'scalp' | 'swing' | 'trend';
+    regimeAtClose?: string;
+  }): Promise<void> {
+    if (!isHindsightRegretLive()) return;
+    try {
+      const { tradeIds, symbol, side } = params;
+      const sideSign: 1 | -1 = side === 'long' ? 1 : -1;
+      let qty = Number(params.qtyFallback ?? 0);
+      let exitPrice = Number(params.exitPriceFallback ?? 0);
+      let marginUsdt = Number(params.marginUsdt ?? 0);
+      let kernelOwnedClose = true;
+      let closeLane: 'scalp' | 'swing' | 'trend' | undefined = params.closeLane;
+
+      if (tradeIds.length > 0) {
+        const qres = await pool.query<{
+          qty: string;
+          exit_price: string;
+          margin_usdt: string;
+          any_adopted: boolean;
+          close_lane: 'scalp' | 'swing' | 'trend' | null;
+        }>(
+          `SELECT COALESCE(SUM(ABS(COALESCE(quantity, 0))), 0) AS qty,
+                  COALESCE(
+                    SUM(ABS(COALESCE(quantity, 0)) * NULLIF(exit_price, 0))
+                      / NULLIF(SUM(
+                          CASE
+                            WHEN NULLIF(exit_price, 0) IS NOT NULL
+                              THEN ABS(COALESCE(quantity, 0))
+                            ELSE 0
+                          END
+                        ), 0),
+                    0
+                  ) AS exit_price,
+                  COALESCE(
+                    SUM(COALESCE(entry_price, 0) * COALESCE(quantity, 0)
+                      / GREATEST(COALESCE(leverage, 16), 1)),
+                    0
+                  ) AS margin_usdt,
+                  bool_or(COALESCE(reason, '') LIKE '%|adopted|%') AS any_adopted,
+                  (array_agg(lane ORDER BY ABS(COALESCE(quantity, 0)) DESC) FILTER (WHERE lane IS NOT NULL))[1] AS close_lane
+             FROM autonomous_trades
+            WHERE id = ANY($1)`,
+          [tradeIds],
+        );
+        qty = Number(qres.rows[0]?.qty ?? qty);
+        exitPrice = Number(qres.rows[0]?.exit_price ?? exitPrice);
+        const rowMargin = Number(qres.rows[0]?.margin_usdt ?? marginUsdt);
+        if (Number.isFinite(rowMargin) && rowMargin > 0) marginUsdt = rowMargin;
+        kernelOwnedClose = qres.rows[0]?.any_adopted !== true;
+        closeLane = params.closeLane ?? qres.rows[0]?.close_lane ?? undefined;
+      }
+
+      if (
+        !Number.isFinite(qty) || qty <= 0 ||
+        !Number.isFinite(exitPrice) || exitPrice <= 0 ||
+        !Number.isFinite(marginUsdt) || marginUsdt <= 0
+      ) {
+        return;
+      }
+
+      const symState = this.symbolStates.get(symbol);
+      const snap = symState?.latestBasinSnapshot;
+      const lastExp = symState?.lastExpectation ?? null;
+      const horizonFromWarpMs =
+        lastExp && lastExp.horizonHours !== null
+          ? lastExp.horizonHours * 60 * 60 * 1000
+          : null;
+      const coherenceTicks = Math.max(1, symState?.coherenceStreak ?? 1);
+      const horizonFallbackMs = coherenceTicks * this.tickMs;
+      const horizonMs = horizonFromWarpMs ?? horizonFallbackMs;
+
+      const warpDir = lastExp?.direction;
+      const warpExpectationSign: -1 | 0 | 1 =
+        warpDir === 'long' ? 1 : warpDir === 'short' ? -1 : 0;
+      const regimeAtClose =
+        params.regimeAtClose ??
+        (closeLane && symState?.regimeAtOpenByLane
+          ? symState.regimeAtOpenByLane[closeLane]
+          : undefined) ??
+        lastExp?.regime ??
+        'unknown';
+      const bundle: CloseSenseBundle = {
+        kernelOwnedClose,
+        sideSign,
+        warpExpectationSign,
+        warpExpectationConfidence: lastExp?.confidence ?? 0,
+        regimeAtClose: String(regimeAtClose),
+        basinDirAtClose: snap?.basinDir ?? 0,
+        tapeTrendAtClose: snap?.tapeTrend ?? 0,
+        coherenceStreak: symState?.coherenceStreak ?? 0,
+      };
+
+      const now = Date.now();
+      const watch: HindsightWatchOrch = {
+        symbol,
+        sideSign,
+        qty,
+        exitPrice,
+        realizedPnlUsdt: params.realizedPnlUsdt,
+        marginUsdt,
+        closedAtMs: now,
+        expiresAtMs: now + horizonMs,
+        bundle,
+        lastCounterfactualPnlUsdt: params.realizedPnlUsdt,
+        regimePersisted: true,
+      };
+      const list = this.hindsightWatches.get(symbol) ?? [];
+      list.push(watch);
+      this.hindsightWatches.set(symbol, list);
+      logger.info('[Monkey] hindsight watch registered', {
+        symbol, side, qty, exitPrice, realizedPnl: params.realizedPnlUsdt.toFixed(4),
+        kernelOwnedClose,
+        warpExpectationSign,
+        warpConfidence: (lastExp?.confidence ?? 0).toFixed(3),
+        regimeAtClose: String(regimeAtClose),
+        coherenceStreak: symState?.coherenceStreak ?? 0,
+        horizonSource: horizonFromWarpMs !== null ? 'qig_warp' : 'coherence_fallback',
+        horizonMs: Math.round(horizonMs),
+      });
+    } catch (err) {
+      logger.warn('[Monkey] hindsight watch registration failed (non-fatal)', {
+        symbol: params.symbol, err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   /**
    * Canonical Polo-authoritative PnL surface (user-specified 2026-05-28).
    *
@@ -9967,133 +10127,15 @@ export class MonkeyKernel extends EventEmitter {
       // post-fees are missed as chain samples.
       noteHeartClose(symbol, Date.now(), poloRealized);
 
-      // Hindsight / counterfactual-regret watch registration (flag-gated,
-      // default OFF; DESIGN HYPOTHESIS — see hindsightRegret.ts). Operator
-      // 2026-05-29: the kernel "needs to feel the pain of [cutting a
-      // winning-direction position on noise]... enough that it thinks about
-      // thinking about the trend a second time before closing" — but ONLY
-      // when the continuation was foreseeable (legible) at close. We capture
-      // the close-time SENSE BUNDLE + derive the watch HORIZON from the
-      // kernel's own forecast, then watch the symbol until the horizon
-      // elapses. resolveHindsight() applies the legibility gate. Best-effort:
-      // wrapped so a bad row never disturbs the close path.
-      if (isHindsightRegretLive()) {
-        try {
-          const sideSign: 1 | -1 = side === 'long' ? 1 : -1;
-          // qty + exit price + ownership (reason) from the closed rows.
-          const qres = await pool.query<{ qty: string; exit_price: string; any_adopted: boolean; close_lane: string | null }>(
-            `SELECT COALESCE(SUM(ABS(COALESCE(quantity, 0))), 0) AS qty,
-                    COALESCE(
-                      SUM(ABS(COALESCE(quantity, 0)) * NULLIF(exit_price, 0))
-                        / NULLIF(SUM(
-                            CASE
-                              WHEN NULLIF(exit_price, 0) IS NOT NULL
-                                THEN ABS(COALESCE(quantity, 0))
-                              ELSE 0
-                            END
-                          ), 0),
-                      0
-                    ) AS exit_price,
-                    bool_or(COALESCE(reason, '') LIKE '%|adopted|%') AS any_adopted,
-                    (array_agg(lane ORDER BY ABS(COALESCE(quantity, 0)) DESC) FILTER (WHERE lane IS NOT NULL))[1] AS close_lane
-               FROM autonomous_trades
-              WHERE id = ANY($1)`,
-            [tradeIds],
-          );
-          const qty = Number(qres.rows[0]?.qty ?? 0);
-          const exitPrice = Number(qres.rows[0]?.exit_price ?? 0);
-          // Ownership (gate condition 1): a row that was reconciler-adopted
-          // from an operator-opened position is NOT a kernel-initiated close
-          // → not self-regret. (Operator/manual/liquidation closes that never
-          // reach this kernel path are excluded by construction.)
-          const kernelOwnedClose = qres.rows[0]?.any_adopted !== true;
-          // Best-effort: skip the watch with no authoritative exit price —
-          // a wrong exit price would produce a wrong counterfactual.
-          if (Number.isFinite(qty) && qty > 0 && Number.isFinite(exitPrice) && exitPrice > 0) {
-            const symState = this.symbolStates.get(symbol);
-            const snap = symState?.latestBasinSnapshot;
-            const lastExp = symState?.lastExpectation ?? null;
-
-            // ── Derive the watch HORIZON (doctrine: window = the kernel's own
-            // forecast horizon, NOT a fixed 30 min). Priority:
-            //   (a) the qig-warp expectation horizon (observed regime-
-            //       persistence in HOURS) if the bubble surfaced it;
-            //   (b) FALLBACK — the kernel's own observed coherence horizon:
-            //       coherenceStreak ticks (how long perception+forecast
-            //       stayed coherent on the held position) × tickMs. This is
-            //       derived from lived observation, not a designer table.
-            //       Documented as a fallback per doctrine.
-            // Floored at one tick so a watch always has positive duration.
-            const horizonFromWarpMs =
-              lastExp && lastExp.horizonHours !== null
-                ? lastExp.horizonHours * 60 * 60 * 1000
-                : null;
-            const coherenceTicks = Math.max(1, symState?.coherenceStreak ?? 1);
-            const horizonFallbackMs = coherenceTicks * this.tickMs;
-            const horizonMs = horizonFromWarpMs ?? horizonFallbackMs;
-
-            // ── Close-time SENSE BUNDLE (legibility gate + GABA target). ──
-            // warp expectation direction → sign; basinDir / tapeTrend from
-            // the latest snapshot; regime from the lane's open anchor (the
-            // regime the kernel committed to); coherenceStreak as legibility.
-            const warpDir = lastExp?.direction;
-            const warpExpectationSign: -1 | 0 | 1 =
-              warpDir === 'long' ? 1 : warpDir === 'short' ? -1 : 0;
-            const closeLane = params.closeLane ?? qres.rows[0]?.close_lane ?? undefined;
-            const regimeAtClose =
-              params.regimeAtClose ??
-              (closeLane && symState?.regimeAtOpenByLane
-                ? symState.regimeAtOpenByLane[closeLane]
-                : undefined) ??
-              lastExp?.regime ??
-              'unknown';
-            const bundle: CloseSenseBundle = {
-              kernelOwnedClose,
-              sideSign,
-              warpExpectationSign,
-              warpExpectationConfidence: lastExp?.confidence ?? 0,
-              regimeAtClose: String(regimeAtClose),
-              basinDirAtClose: snap?.basinDir ?? 0,
-              tapeTrendAtClose: snap?.tapeTrend ?? 0,
-              coherenceStreak: symState?.coherenceStreak ?? 0,
-            };
-
-            const now = Date.now();
-            const watch: HindsightWatchOrch = {
-              symbol,
-              sideSign,
-              qty,
-              exitPrice,
-              realizedPnlUsdt: poloRealized,
-              marginUsdt,
-              closedAtMs: now,
-              expiresAtMs: now + horizonMs,
-              bundle,
-              lastCounterfactualPnlUsdt: poloRealized,
-              regimePersisted: true,
-            };
-            const list = this.hindsightWatches.get(symbol) ?? [];
-            list.push(watch);
-            // Bound per-symbol watch list to avoid unbounded growth.
-            if (list.length > 16) list.shift();
-            this.hindsightWatches.set(symbol, list);
-            logger.info('[Monkey] hindsight watch registered', {
-              symbol, side, qty, exitPrice, realizedPnl: poloRealized.toFixed(4),
-              kernelOwnedClose,
-              warpExpectationSign,
-              warpConfidence: (lastExp?.confidence ?? 0).toFixed(3),
-              regimeAtClose: String(regimeAtClose),
-              coherenceStreak: symState?.coherenceStreak ?? 0,
-              horizonSource: horizonFromWarpMs !== null ? 'qig_warp' : 'coherence_fallback',
-              horizonMs: Math.round(horizonMs),
-            });
-          }
-        } catch (err) {
-          logger.warn('[Monkey] hindsight watch registration failed (non-fatal)', {
-            symbol, err: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
+      void this.registerHindsightWatchAfterClose({
+        tradeIds,
+        symbol,
+        side,
+        realizedPnlUsdt: poloRealized,
+        marginUsdt,
+        closeLane: params.closeLane,
+        regimeAtClose: params.regimeAtClose,
+      });
 
       // PR #992 fan-out (completes the 2026-05-28 CC1): mirror the Polo-authoritative
       // net reward (with correct margin) into Python autonomic so BOTH chemistry
