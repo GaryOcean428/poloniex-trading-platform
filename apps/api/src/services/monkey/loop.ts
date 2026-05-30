@@ -517,7 +517,7 @@ function isMonkeyPaperMode(): boolean {
 // reverse-reopen leg). Does NOT block K exits, harvest, scalp_exit,
 // force_harvest. Does NOT block M, T, L or LiveSignal — only K.
 //
-// QIG purity: pure helper, no Adam/AdamW/LayerNorm/cosine. Reads L's
+// QIG purity: pure helper, no forbidden Euclidean/training primitives. Reads L's
 // AgentLDecision (signedScore, conviction, action) which is already
 // FR-KNN-derived, and a K side string. No new geometric operations.
 
@@ -636,6 +636,35 @@ export function applyEntryExpectationDecision(
   }
 
   return { sideAfterExpectation, sizeMultiplier, entryBlockedByExpectation };
+}
+
+export interface EntrySignalConviction {
+  signal: number;
+  strength: number;
+  hasConviction: boolean;
+}
+
+/**
+ * Pure entry-conviction gate for the TS execution path.
+ *
+ * `geometricDirection()` intentionally preserves tiny non-zero leans so
+ * direction remains purely geometric. This helper is the separate veto:
+ * only act when the absolute geometric signal clears Monkey's already-
+ * derived `currentEntryThreshold()` value. That keeps sideways chop from
+ * trading on microscopic tape/basin noise without adding a new knob.
+ */
+export function hasEntrySignalConviction(args: {
+  basinDir: number;
+  tapeTrend: number;
+  entryThreshold: number;
+}): EntrySignalConviction {
+  const signal = args.basinDir + 0.5 * args.tapeTrend;
+  const strength = Math.abs(signal);
+  return {
+    signal,
+    strength,
+    hasConviction: strength >= args.entryThreshold,
+  };
 }
 
 export async function persistExpectationDecisionBestEffort(
@@ -1343,7 +1372,7 @@ export class MonkeyKernel extends EventEmitter {
    * /monkey/snapshot dashboard so the operator can see the veto rate
    * before/after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
-   * Per-symbol breakdown lets the operator confirm the veto is
+  * Per-symbol counts let the operator confirm the veto is
    * actually firing on ETH (the over-trader) and not unintentionally
    * suppressing BTC entries where K has been profitable.
    */
@@ -1790,8 +1819,8 @@ export class MonkeyKernel extends EventEmitter {
 
   /**
    * 2026-05-16 — L-veto-over-K telemetry accessor. Returns the running
-   * total of K entries suppressed by L's high-conviction disagreeing
-   * vote, plus a per-symbol breakdown. Used by the /monkey/snapshot
+  * total of K entries suppressed by L's high-conviction disagreeing
+  * vote, plus per-symbol counts. Used by the /monkey/snapshot
    * endpoint and the operator dashboard to confirm the veto fires
    * after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
@@ -3205,6 +3234,13 @@ export class MonkeyKernel extends EventEmitter {
           value: entryThrBase.value * btcEntryMul,
           derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
         };
+    const entryConviction = hasEntrySignalConviction({
+      basinDir,
+      tapeTrend,
+      entryThreshold: entryThr.value,
+    });
+    const entrySignalStrength = entryConviction.strength;
+    const entryHasConviction = entryConviction.hasConviction;
     // Leverage ceiling. Exchange max-lev (typically 75× on BTC/ETH perps)
     // 2026-05-25 — operator autonomy doctrine: code-side leverage caps
     // removed. The kernel's own learning loop (push_reward → chemistry →
@@ -4351,12 +4387,13 @@ export class MonkeyKernel extends EventEmitter {
     } else if (
       MODE_PROFILES[mode].canEnter &&
       direction !== 'flat' &&
+      entryHasConviction &&
       size.value > 0 &&
       !sideShortRefused
     ) {
       // v4 over-gating fix (QIG-FR v4 Problem 5): the chop regime is a
       // FILTER, not a mandatory veto. The base geometric prediction
-      // fires the entry whenever mode/direction/size/short allow it;
+      // fires the entry whenever mode/direction/threshold/size/short allow it;
       // a chop regime no longer BLOCKS it — it only sizes it down.
       // The reduction is observer-derived from the regime classifier's
       // own confidence (P1: no hardcoded knob) — deeper chop → smaller
@@ -4547,13 +4584,15 @@ export class MonkeyKernel extends EventEmitter {
         ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
         : direction === 'flat'
           ? `[${mode}] direction=flat (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
-          : chopSuppressed
-            ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${chopThresholdForLane.toFixed(2)} — suspend new entries (lane=${positionLane})`
-            : size.value <= 0
-              ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
-              : sideShortRefused
-                ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
-                : 'no qualifying signal';
+          : !entryHasConviction
+            ? `[${mode}] geometric signal ${entrySignalStrength.toFixed(3)} below entry threshold ${entryThr.value.toFixed(3)} (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
+            : chopSuppressed
+              ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${chopThresholdForLane.toFixed(2)} — suspend new entries (lane=${positionLane})`
+              : size.value <= 0
+                ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+                : sideShortRefused
+                  ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
+                  : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
     }
@@ -10285,7 +10324,7 @@ export class MonkeyKernel extends EventEmitter {
     // every subsequent normal-magnitude close (the kernel couldn't
     // "feel" -$5 losses as bad because they looked small relative to
     // the outlier-inflated stddev). MAD is bounded by the median's
-    // breakdown point (50%) — a single outlier can't move it.
+    // 50% contamination tolerance — a single outlier can't move it.
     //
     // MAD × 1.4826 ≈ stddev under Gaussian assumption; using raw MAD
     // is fine here because the multiplier would cancel in the
