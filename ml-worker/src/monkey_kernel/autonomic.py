@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -296,6 +297,11 @@ class AutonomicKernel:
             "endorphin_delta": 0.0,
         }
         self._cached_hindsight_chemistry_at_ms: float = time.time() * 1000.0
+        # Reward-rate / disposition EMAs for the prediction-error reward
+        # transform (default dark-mode; live cutover is flag-gated).
+        self._reward_rate_ema: float = 0.0
+        self._serotonin_disposition_ema: float = 0.0
+        self._reward_rate_samples: int = 0
         # Restore decay-aware reward queue from Redis if available.
         # The persistence layer drops entries whose decay < 0.01 so
         # we don't restore zero-contribution rewards.
@@ -327,6 +333,10 @@ class AutonomicKernel:
         margin_usdt: float,
         symbol: Optional[str] = None,
         kappa_at_exit: Optional[float] = None,
+        predicted_pnl_frac: Optional[float] = None,
+        sigma_residual: Optional[float] = None,
+        legibility: Optional[float] = None,
+        regime_persistence: Optional[float] = None,
     ) -> ActivityReward:
         """Record a reward event. Magnitudes derived from pnl/margin.
 
@@ -345,7 +355,11 @@ class AutonomicKernel:
         # history now produces meaningful positive chemistry.
         # Cold-start now gives gentle positive ramp (see observer_fib_coefficient).
         # History < 2 samples -> tier 1 for positive pnl_frac (prevents starvation).
-        from .ocean_reward import observer_fib_coefficient, observer_fibonacci_reward_tier
+        from .ocean_reward import (
+            observer_fib_coefficient,
+            observer_fibonacci_reward_tier,
+            reward_rpe_deltas,
+        )
         from .parameters import get_registry
         # Maintain bounded rolling history on the autonomic instance
         # 2026-05-28 acting subagent (Neurotransmitter Purity + natural effects, recovered from impl-6 surfaces 17-23 / impl-1 purge / impl-7 compliance / polo-authoritative lesson / compliance-assessment / reward-source-doctrine + user "net profitable behaviour rewarded via neurotransmitters" + "all NT calculated purely"):
@@ -383,16 +397,16 @@ class AutonomicKernel:
             # Honest model coefficients for the reward→chemistry transform.
             dop_scale = get_reward_dop_scale()
             ser_scale = get_reward_ser_scale()
-            dop = float(np.tanh(pnl_frac * dop_scale) * 0.5 * ocean_coeff)
-            ser = float(np.tanh(pnl_frac) * ser_scale * ocean_coeff)
+            legacy_dop = float(np.tanh(pnl_frac * dop_scale) * 0.5 * ocean_coeff)
+            legacy_ser = float(np.tanh(pnl_frac) * ser_scale * ocean_coeff)
         else:
             # Loss-side coefficient is consumed only here; bind it on this
             # branch (72895fcb regression bound it under `pnl_frac > 0`,
             # so every losing close raised UnboundLocalError and the
             # autonomic /reward endpoint 500'd before chemistry updated).
             loss_dop_scale = get_reward_loss_dop_scale()
-            dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
-            ser = 0.0
+            legacy_dop = float(-np.tanh(-pnl_frac * loss_dop_scale) * 0.1)
+            legacy_ser = 0.0
 
         # Per 2026-04-13 two-channel doctrine (Frozen Facts v1.01F 20260527) + P1:
         # KAPPA_STAR=64 retired. Observer-derived reference from this instance's
@@ -411,11 +425,68 @@ class AutonomicKernel:
             if kappa_at_exit is not None
             else 0.5
         )
-        endo = (
+        legacy_endo = (
             float(np.tanh(pnl_frac * 2.0) * 0.3 * kappa_proxim * ocean_coeff)
             if pnl_frac > 0
             else 0.0
         )
+
+        # Prediction-error reward transform (issue #1040): default DARK (log
+        # only), flag-gated live cutover.
+        reward_rpe_live = os.getenv("MONKEY_REWARD_RPE_LIVE", "").lower() == "true"
+        reward_rpe_dark = os.getenv("MONKEY_REWARD_RPE_DARK", "true").lower() != "false"
+        self._reward_rate_samples += 1
+        ema_alpha = 2.0 / (min(self._reward_rate_samples, get_pnl_frac_history_max()) + 1.0)
+        reward_rate_sample = 1.0 if realized_pnl_usdt > 0.0 else 0.0
+        self._reward_rate_ema = ((1.0 - ema_alpha) * self._reward_rate_ema) + (ema_alpha * reward_rate_sample)
+        tonic_baseline = max(1e-9, self._reward_rate_ema)
+        if isinstance(regime_persistence, (int, float)) and math.isfinite(float(regime_persistence)):
+            rp = max(0.0, min(1.0, float(regime_persistence)))
+            self._serotonin_disposition_ema = ((1.0 - ema_alpha) * self._serotonin_disposition_ema) + (ema_alpha * rp)
+        rpe = reward_rpe_deltas(
+            pnl_frac=float(pnl_frac),
+            predicted_pnl_frac=float(predicted_pnl_frac) if predicted_pnl_frac is not None else float("nan"),
+            sigma_residual=float(sigma_residual) if sigma_residual is not None else float("nan"),
+            tonic_baseline=tonic_baseline,
+            serotonin_disposition=max(1e-9, self._serotonin_disposition_ema),
+            legibility=float(legibility) if legibility is not None else 0.0,
+        )
+        if reward_rpe_dark:
+            logger.info(
+                "[%s.autonomic] reward-rpe dark source=%s symbol=%s valid=%s live=%s legacy_dop=%.6f legacy_ser=%.6f legacy_endo=%.6f proposed_dop=%.6f proposed_ser=%.6f proposed_endo=%.6f phasic_rpe=%.6f tonic=%.6f",
+                self.label,
+                source,
+                symbol,
+                bool(rpe.get("valid", 0.0)),
+                reward_rpe_live,
+                legacy_dop,
+                legacy_ser,
+                legacy_endo,
+                float(rpe.get("dopamine_delta", 0.0)),
+                float(rpe.get("serotonin_delta", 0.0)),
+                float(rpe.get("endorphin_delta", 0.0)),
+                float(rpe.get("phasic_rpe", 0.0)),
+                tonic_baseline,
+            )
+        if reward_rpe_live:
+            if not bool(rpe.get("valid", 0.0)):
+                logger.info(
+                    "[%s.autonomic] reward-rpe live zero-delta (invalid prediction/residual), source=%s symbol=%s",
+                    self.label,
+                    source,
+                    symbol,
+                )
+                dop = 0.0
+                ser = 0.0
+                endo = 0.0
+            else:
+                dop = float(rpe["dopamine_delta"])
+                ser = float(rpe["serotonin_delta"])
+                endo = float(rpe["endorphin_delta"])
+        else:
+            dop = legacy_dop
+            ser = legacy_ser
+            endo = legacy_endo
 
         reward = ActivityReward(
             source=source,

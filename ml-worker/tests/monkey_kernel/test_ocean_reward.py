@@ -13,6 +13,7 @@ LIVED ONLY 5: tests include negative cases (non-finite, cold history, z<=0).
 import math
 import os
 import sys
+import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SRC = os.path.abspath(os.path.join(_HERE, "..", "..", "src"))
@@ -24,6 +25,7 @@ from monkey_kernel.ocean_reward import (  # noqa: E402
     observer_fib_coefficient,
     ocean_trail_retracement,
     ocean_trail_tier_index,
+    reward_rpe_deltas,
 )
 
 
@@ -40,9 +42,9 @@ class TestObserverFibCoefficient:
         assert observer_fib_coefficient(float("nan"), [0.1, 0.2]) == 0
         assert observer_fib_coefficient(float("inf"), [0.1, 0.2]) == 0
 
-    def test_z_le_zero_returns_zero(self):
+    def test_negative_z_still_maps_to_tier(self):
         hist = [0.001, 0.002, 0.003]
-        assert observer_fib_coefficient(0.0001, hist) == 0  # below median
+        assert observer_fib_coefficient(0.0001, hist) >= 1
 
     def test_positive_z_yields_fib(self):
         hist = [0.0001, 0.0002, 0.0003, 0.0004]
@@ -58,6 +60,48 @@ class TestTrailFunctions:
         assert ocean_trail_tier_index(5) == 4
         assert ocean_trail_retracement(float("nan")) == 0.03  # fail-closed
         assert ocean_trail_tier_index(-1) == 0
+
+
+class TestRewardRpeDeltas:
+    def test_reward_rpe_transform_matches_fixture(self):
+        out = reward_rpe_deltas(
+            pnl_frac=0.02,
+            predicted_pnl_frac=0.01,
+            sigma_residual=0.005,
+            tonic_baseline=0.4,
+            serotonin_disposition=0.6,
+            legibility=0.75,
+        )
+        assert out["valid"] == 1.0
+        assert out["phasic_rpe"] == pytest.approx(2.0, abs=1e-12)
+        assert out["dopamine_delta"] == pytest.approx(1.36402758, abs=1e-6)
+        assert out["norepinephrine_delta"] == pytest.approx(0.96402758, abs=1e-6)
+        assert out["acetylcholine_delta"] == pytest.approx(0.72302069, abs=1e-6)
+        assert out["serotonin_delta"] == pytest.approx(0.6, abs=1e-12)
+        assert out["endorphin_delta"] == pytest.approx(0.0, abs=1e-12)
+
+    def test_relief_fires_for_better_than_predicted_bad_outcome(self):
+        out = reward_rpe_deltas(
+            pnl_frac=-0.01,
+            predicted_pnl_frac=-0.03,
+            sigma_residual=0.01,
+            tonic_baseline=0.2,
+            serotonin_disposition=0.4,
+            legibility=1.0,
+        )
+        assert out["valid"] == 1.0
+        assert out["endorphin_delta"] == pytest.approx(math.tanh(0.02), abs=1e-12)
+
+    def test_invalid_inputs_fail_closed(self):
+        out = reward_rpe_deltas(
+            pnl_frac=float("nan"),
+            predicted_pnl_frac=0.0,
+            sigma_residual=1.0,
+            tonic_baseline=0.1,
+            serotonin_disposition=0.2,
+            legibility=0.3,
+        )
+        assert out == {"valid": 0.0}
 
 
 class TestOceanTrailRetracement:

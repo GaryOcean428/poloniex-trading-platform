@@ -1412,7 +1412,8 @@ async def monkey_autonomic_reward(request: Request):
 
     Request body:
       { instance_id, source, realized_pnl_usdt, margin_usdt,
-        symbol?, kappa_at_exit? }
+        symbol?, kappa_at_exit?, predicted_pnl_frac?,
+        sigma_residual?, legibility?, regime_persistence? }
 
     Response: the ActivityReward as a dict + queue length.
     """
@@ -1442,6 +1443,10 @@ async def monkey_autonomic_reward(request: Request):
         margin_usdt=margin_usdt,
         symbol=payload.get("symbol"),
         kappa_at_exit=payload.get("kappa_at_exit"),
+        predicted_pnl_frac=payload.get("predicted_pnl_frac"),
+        sigma_residual=payload.get("sigma_residual"),
+        legibility=payload.get("legibility"),
+        regime_persistence=payload.get("regime_persistence"),
     )
     return {
         "reward": {
