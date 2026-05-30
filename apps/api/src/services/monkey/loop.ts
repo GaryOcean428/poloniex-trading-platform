@@ -10511,9 +10511,14 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
     const useRpeDeltas = rewardRpeLive && proposed.valid;
-    const dop = useRpeDeltas ? proposed.dopamineDelta : rewardRpeLive ? 0 : legacyDop;
-    const ser = useRpeDeltas ? proposed.serotoninDelta : rewardRpeLive ? 0 : legacySer;
-    const endo = useRpeDeltas ? proposed.endorphinDelta : rewardRpeLive ? 0 : legacyEndo;
+    let dop = legacyDop;
+    let ser = legacySer;
+    let endo = legacyEndo;
+    if (rewardRpeLive) {
+      dop = useRpeDeltas ? proposed.dopamineDelta : 0;
+      ser = useRpeDeltas ? proposed.serotoninDelta : 0;
+      endo = useRpeDeltas ? proposed.endorphinDelta : 0;
+    }
 
     this.pendingRewards.push({
       source: input.source,
