@@ -62,6 +62,10 @@ export interface RewardPush {
   marginUsdt: number;
   symbol?: string;
   kappaAtExit?: number;
+  predictedPnlFrac?: number;
+  sigmaResidual?: number;
+  legibility?: number;
+  regimePersistence?: number;
 }
 
 /**
@@ -115,6 +119,10 @@ export async function callAutonomicReward(req: RewardPush): Promise<void> {
     margin_usdt: req.marginUsdt,
     symbol: req.symbol,
     kappa_at_exit: req.kappaAtExit,
+    predicted_pnl_frac: req.predictedPnlFrac,
+    sigma_residual: req.sigmaResidual,
+    legibility: req.legibility,
+    regime_persistence: req.regimePersistence,
   });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
