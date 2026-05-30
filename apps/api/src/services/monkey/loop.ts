@@ -10187,7 +10187,7 @@ export class MonkeyKernel extends EventEmitter {
             this.rewardRpeSigmaResidualUsdt = undefined;
           }
         }
-        if (Number.isFinite(sigmaUsdt) && sigmaUsdt > 0 && marginUsdt > 0) {
+        if (sigmaUsdt !== undefined && Number.isFinite(sigmaUsdt) && sigmaUsdt > 0 && marginUsdt > 0) {
           sigmaResidual = sigmaUsdt / marginUsdt;
           if (warpExpectationSign !== 0 && warpConfidence > 0) {
             predictedPnlFrac = warpExpectationSign * warpConfidence * sigmaResidual;
@@ -10510,9 +10510,10 @@ export class MonkeyKernel extends EventEmitter {
         symbol: input.symbol,
       });
     }
-    const dop = rewardRpeLive ? proposed.dopamineDelta : legacyDop;
-    const ser = rewardRpeLive ? proposed.serotoninDelta : legacySer;
-    const endo = rewardRpeLive ? proposed.endorphinDelta : legacyEndo;
+    const useRpeDeltas = rewardRpeLive && proposed.valid;
+    const dop = useRpeDeltas ? proposed.dopamineDelta : rewardRpeLive ? 0 : legacyDop;
+    const ser = useRpeDeltas ? proposed.serotoninDelta : rewardRpeLive ? 0 : legacySer;
+    const endo = useRpeDeltas ? proposed.endorphinDelta : rewardRpeLive ? 0 : legacyEndo;
 
     this.pendingRewards.push({
       source: input.source,
