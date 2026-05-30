@@ -163,6 +163,7 @@ import {
   oceanTrailRetracement,
   oceanTrailTierIndex,
   observerFibCoefficient,
+  rewardRpeDeltas,
 } from './ocean_reward.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
@@ -1141,6 +1142,9 @@ export class MonkeyKernel extends EventEmitter {
   private cachedHindsightNorepinephrine = 0;
   private cachedHindsightGaba = 0;
   private cachedHindsightEndorphin = 0;
+  private rewardRateEma = 0;
+  private serotoninDispositionEma = 0;
+  private rewardRateSamples = 0;
   /** Targeted-GABA bindings: pattern key (premature_close:regime:side) →
    *  decaying weight. Not folded into global GABA; executive consumption is
    *  the follow-up surface that will read this per-pattern caution. */
@@ -10150,12 +10154,46 @@ export class MonkeyKernel extends EventEmitter {
       // Push an authoritative reward event using the real Polo realized value.
       // This makes the reward channel consume autonomous_trades.pnl (now = Polo realized).
       // LIVED ONLY 5: this 'polo_authoritative_close' path carries explicit provenance and will receive hard asserts in pushReward.
+      let predictedPnlFrac: number | undefined;
+      let sigmaResidual: number | undefined;
+      const sideSign: -1 | 1 = side === 'buy' ? 1 : -1;
+      const symState = this.symbolStates.get(symbol);
+      const lastExp = symState?.lastExpectation ?? null;
+      const warpExpectationSign: -1 | 0 | 1 =
+        lastExp?.direction === 'long' ? 1 : lastExp?.direction === 'short' ? -1 : 0;
+      const warpConfidence = Math.max(0, Math.min(1, lastExp?.confidence ?? 0));
+      const legibility = warpExpectationSign === sideSign ? warpConfidence : 0;
+      const coherence = Math.max(0, symState?.coherenceStreak ?? 0);
+      const regimePersistence = coherence / (coherence + 1);
+      try {
+        const sigmaRes = await pool.query<{ sigma: string | number | null }>(
+          `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(residual_normalized)) AS sigma
+             FROM kernel_outcome_residuals
+            WHERE evaluated_at >= NOW() - INTERVAL '24 hours'`,
+        );
+        const sigma = Number(sigmaRes.rows[0]?.sigma ?? NaN);
+        if (Number.isFinite(sigma) && sigma > 0) {
+          sigmaResidual = sigma;
+          if (warpExpectationSign !== 0 && warpConfidence > 0) {
+            predictedPnlFrac = warpExpectationSign * warpConfidence * sigmaResidual;
+          }
+        }
+      } catch (err) {
+        logger.warn('[Monkey] reward-rpe context sigma query failed (fail-closed)', {
+          symbol,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
       this.pushReward({
         source: 'polo_authoritative_close',
         symbol,
         realizedPnlUsdt: poloRealized,
         marginUsdt, // #992: realistic scale so TS + Py observer_fib see correct pnl_frac
         kappaAtExit: undefined,
+        predictedPnlFrac,
+        sigmaResidual,
+        legibility,
+        regimePersistence,
       });
       // #1009 PR2: HEART chain observer fed from the polo-authoritative
       // close surface. Mirror of `pushReward({source: 'polo_authoritative_close'})`
@@ -10217,6 +10255,10 @@ export class MonkeyKernel extends EventEmitter {
         realizedPnlUsdt: poloRealized,
         marginUsdt, // #992: correct scale for Py autonomic observer_fib + NC
         kappaAtExit: undefined,
+        predictedPnlFrac,
+        sigmaResidual,
+        legibility,
+        regimePersistence,
       });
     } catch (err) {
       // Promoted from debug → warn 2026-05-28: silent debug suppressed the
@@ -10248,6 +10290,10 @@ export class MonkeyKernel extends EventEmitter {
     realizedPnlUsdt: number;
     marginUsdt: number;
     kappaAtExit?: number;
+    predictedPnlFrac?: number;
+    sigmaResidual?: number;
+    legibility?: number;
+    regimePersistence?: number;
     /** Which agent generated the outcome. Defaults to 'K' for
      *  back-compat with pre-2026-05-16 callsites that didn't pass it. */
     agent?: AgentLabel;
@@ -10365,10 +10411,10 @@ export class MonkeyKernel extends EventEmitter {
       if (symState.pnlFracHistory.length > 200) symState.pnlFracHistory.shift();
     }
     const oceanCoeff = observerFibCoefficient(pnlFrac, symState ? symState.pnlFracHistory : []);
-    const dop = pnlFrac > 0
+    const legacyDop = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.5 * oceanCoeff
       : -Math.tanh(-pnlFracNormalized) * 0.1;
-    const ser = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 * oceanCoeff : 0;
+    const legacySer = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 * oceanCoeff : 0;
 
     // κ-proximity width: observer-derived from the rolling distribution
     // of kappaAtExit values across recent rewards. Replaces the magic
@@ -10405,9 +10451,54 @@ export class MonkeyKernel extends EventEmitter {
         kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - KAPPA_STAR));
       }
     }
-    const endo = pnlFrac > 0
+    const legacyEndo = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim * oceanCoeff
       : 0;
+    const rewardRpeLive = process.env.MONKEY_REWARD_RPE_LIVE === 'true';
+    const rewardRpeDark = process.env.MONKEY_REWARD_RPE_DARK !== 'false';
+    this.rewardRateSamples += 1;
+    const emaAlpha = 2 / (Math.min(this.rewardRateSamples, 200) + 1);
+    const rewardRateSample = input.realizedPnlUsdt > 0 ? 1 : 0;
+    this.rewardRateEma = ((1 - emaAlpha) * this.rewardRateEma) + (emaAlpha * rewardRateSample);
+    const tonicBaseline = Math.max(1e-9, this.rewardRateEma);
+    if (typeof input.regimePersistence === 'number' && Number.isFinite(input.regimePersistence)) {
+      const rp = Math.max(0, Math.min(1, input.regimePersistence));
+      this.serotoninDispositionEma = ((1 - emaAlpha) * this.serotoninDispositionEma) + (emaAlpha * rp);
+    }
+    const proposed = rewardRpeDeltas({
+      pnlFrac,
+      predictedPnlFrac: Number(input.predictedPnlFrac),
+      sigmaResidual: Number(input.sigmaResidual),
+      tonicBaseline,
+      serotoninDisposition: Math.max(1e-9, this.serotoninDispositionEma),
+      legibility: Number(input.legibility ?? 0),
+    });
+    if (rewardRpeDark) {
+      logger.info(`[${this.label}] reward-rpe dark`, {
+        source: input.source,
+        symbol: input.symbol,
+        live: rewardRpeLive,
+        valid: proposed.valid,
+        legacyDop,
+        legacySer,
+        legacyEndo,
+        proposedDop: proposed.dopamineDelta,
+        proposedSer: proposed.serotoninDelta,
+        proposedEndo: proposed.endorphinDelta,
+        phasicRpe: proposed.phasicRpe,
+        tonicBaseline,
+      });
+    }
+    if (rewardRpeLive && !proposed.valid) {
+      logger.info(`[${this.label}] reward-rpe live skipped (invalid prediction/residual)`, {
+        source: input.source,
+        symbol: input.symbol,
+      });
+      return;
+    }
+    const dop = rewardRpeLive ? proposed.dopamineDelta : legacyDop;
+    const ser = rewardRpeLive ? proposed.serotoninDelta : legacySer;
+    const endo = rewardRpeLive ? proposed.endorphinDelta : legacyEndo;
 
     this.pendingRewards.push({
       source: input.source,
