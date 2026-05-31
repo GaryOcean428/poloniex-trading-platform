@@ -21,6 +21,7 @@ function makeRow(
     phasicRpe?: number;
     proposedDop?: number;
     tonic?: number;
+    valid?: boolean;
   } = {},
 ) {
   return {
@@ -34,8 +35,30 @@ function makeRow(
     phasic_rpe: opts.phasicRpe ?? 0,
     proposed_dop: opts.proposedDop ?? 0.5,
     tonic_baseline: opts.tonic ?? 0.5,
-    valid: true,
+    valid: opts.valid ?? true,
   };
+}
+
+function separatedRows() {
+  const rows = [];
+  let idx = 1;
+  for (let i = 0; i < 4; i += 1) {
+    const ts = `2026-05-30T00:0${i}:00.000Z`;
+    const realized = -0.8 + i * 0.05;
+    const predicted = realized + 0.01;
+    const proposedDop = 0.1 + i * 0.01;
+    rows.push(makeRow(idx++, { substrate: 'py', ts, symbol: `SUR${i}`, phasicRpe: -1.6, realized, predicted, proposedDop, tonic: 0.7 }));
+    rows.push(makeRow(idx++, { substrate: 'ts', ts, symbol: `SUR${i}`, phasicRpe: -1.6, realized, predicted, proposedDop: proposedDop + 1e-10, tonic: 0.7 }));
+  }
+  for (let i = 0; i < 4; i += 1) {
+    const ts = `2026-05-30T00:1${i}:00.000Z`;
+    const realized = -0.4 - i * 0.04;
+    const predicted = realized + 0.005;
+    const proposedDop = 0.66 + i * 0.005;
+    rows.push(makeRow(idx++, { substrate: 'py', ts, symbol: `PRE${i}`, phasicRpe: -0.2, realized, predicted, proposedDop, tonic: 0.7 }));
+    rows.push(makeRow(idx++, { substrate: 'ts', ts, symbol: `PRE${i}`, phasicRpe: -0.2, realized, predicted, proposedDop: proposedDop + 1e-10, tonic: 0.7 }));
+  }
+  return rows;
 }
 
 describe('rewardRpeReadiness', () => {
@@ -43,42 +66,60 @@ describe('rewardRpeReadiness', () => {
     queryMock.mockReset();
   });
 
-  it('computes prediction skill + dip separation + parity metrics', async () => {
+  it('computes prediction skill + significant dip separation + parity metrics', async () => {
     const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
     __resetRewardRpeReadinessStateForTests();
-    const rows = [
-      makeRow(1, { substrate: 'py', ts: '2026-05-30T00:00:00.000Z', symbol: 'BTC', phasicRpe: -1.6, realized: -0.8, predicted: -0.79, proposedDop: 0.1, tonic: 0.7 }),
-      makeRow(2, { substrate: 'ts', ts: '2026-05-30T00:00:00.000Z', symbol: 'BTC', phasicRpe: -1.6, realized: -0.8, predicted: -0.79, proposedDop: 0.1000000002, tonic: 0.7 }),
-      makeRow(3, { substrate: 'py', ts: '2026-05-30T00:01:00.000Z', symbol: 'ETH', phasicRpe: -0.2, realized: -0.6, predicted: -0.6, proposedDop: 0.64, tonic: 0.7 }),
-      makeRow(4, { substrate: 'ts', ts: '2026-05-30T00:01:00.000Z', symbol: 'ETH', phasicRpe: -0.2, realized: -0.6, predicted: -0.6, proposedDop: 0.6400000002, tonic: 0.7 }),
-      makeRow(5, { substrate: 'py', ts: '2026-05-30T00:02:00.000Z', symbol: 'SOL', phasicRpe: -1.4, realized: -0.7, predicted: -0.69, proposedDop: 0.12, tonic: 0.7 }),
-      makeRow(6, { substrate: 'ts', ts: '2026-05-30T00:02:00.000Z', symbol: 'SOL', phasicRpe: -1.4, realized: -0.7, predicted: -0.69, proposedDop: 0.1200000002, tonic: 0.7 }),
-    ];
+    const rows = separatedRows();
 
     queryMock.mockResolvedValueOnce({ rows, rowCount: rows.length });
     const metrics = await scanRewardRpeReadiness();
 
     expect(metrics.predictionSkill).toBeGreaterThan(0);
-    expect(metrics.surpriseCount).toBe(4);
-    expect(metrics.predictedCount).toBe(2);
+    expect(metrics.surpriseCount).toBe(8);
+    expect(metrics.predictedCount).toBe(8);
+    expect(metrics.dipDifferentiationP).toBeLessThan(0.05);
     expect(metrics.dipSeparated).toBe(true);
+    expect(metrics.parityMatchedPairs).toBe(8);
     expect(metrics.parityDivergence).toBeLessThan(1e-9);
     expect(metrics.coverage).toBe(1);
     expect(metrics.ready).toBe(true);
+  });
+
+  it('does not pass readiness without matched parity rows', async () => {
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
+    const rows = separatedRows().filter((row) => row.substrate === 'ts');
+
+    queryMock.mockResolvedValueOnce({ rows, rowCount: rows.length });
+    const metrics = await scanRewardRpeReadiness();
+
+    expect(metrics.parityMatchedPairs).toBe(0);
+    expect(metrics.ready).toBe(false);
+  });
+
+  it('requires the absolute coverage floor for readiness', async () => {
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
+    const rows = separatedRows().map((row, idx) => (
+      idx < 4 ? row : { ...row, predicted_pnl_frac: null, sigma_residual: null }
+    ));
+
+    queryMock.mockResolvedValueOnce({ rows, rowCount: rows.length });
+    const metrics = await scanRewardRpeReadiness();
+
+    expect(metrics.coverage).toBe(0.25);
+    expect(metrics.ready).toBe(false);
   });
 
   it('flags live degradation when prediction skill turns negative', async () => {
     const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
     __resetRewardRpeReadinessStateForTests();
 
-    const collapsedRows = [
-      makeRow(1, { substrate: 'py', ts: '2026-05-30T00:00:00.000Z', symbol: 'BTC', phasicRpe: -1.8, realized: -0.8, predicted: 1.2, proposedDop: 0.68, tonic: 0.7 }),
-      makeRow(2, { substrate: 'ts', ts: '2026-05-30T00:00:00.000Z', symbol: 'BTC', phasicRpe: -1.8, realized: -0.8, predicted: -1.2, proposedDop: 0.6800000001, tonic: 0.7 }),
-      makeRow(3, { substrate: 'py', ts: '2026-05-30T00:01:00.000Z', symbol: 'ETH', phasicRpe: -0.2, realized: -0.7, predicted: 1.1, proposedDop: 0.69, tonic: 0.7 }),
-      makeRow(4, { substrate: 'ts', ts: '2026-05-30T00:01:00.000Z', symbol: 'ETH', phasicRpe: -0.2, realized: -0.7, predicted: -1.1, proposedDop: 0.6900000001, tonic: 0.7 }),
-      makeRow(5, { substrate: 'py', ts: '2026-05-30T00:02:00.000Z', symbol: 'SOL', phasicRpe: -0.3, realized: -0.65, predicted: 1.0, proposedDop: 0.685, tonic: 0.7 }),
-      makeRow(6, { substrate: 'ts', ts: '2026-05-30T00:02:00.000Z', symbol: 'SOL', phasicRpe: -0.3, realized: -0.65, predicted: -1.0, proposedDop: 0.6850000001, tonic: 0.7 }),
-    ];
+    const collapsedRows = separatedRows().map((row, idx) => ({
+      ...row,
+      predicted_pnl_frac: idx % 2 === 0 ? 1.2 : -1.2,
+      proposed_dop: row.tonic_baseline - 0.01,
+    }));
 
     queryMock
       .mockResolvedValueOnce({ rows: collapsedRows, rowCount: collapsedRows.length })
@@ -88,6 +129,6 @@ describe('rewardRpeReadiness', () => {
     const metrics = await scanRewardRpeReadiness();
 
     expect(metrics.liveDegradationFlagged).toBe(true);
-    expect(metrics.ready).toBe(!1);
+    expect(metrics.ready).toBe(false);
   });
 });

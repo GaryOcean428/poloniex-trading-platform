@@ -1,7 +1,10 @@
 import express from 'express';
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/connection.js';
-import { getRewardRpeReadinessTelemetry } from '../services/monkey/rewardRpeReadiness.js';
+import {
+  getRewardRpeReadinessTelemetry,
+  serializeRewardRpeReadiness
+} from '../services/monkey/rewardRpeReadiness.js';
 
 const router = express.Router();
 
@@ -51,7 +54,7 @@ router.get('/', async (req, res) => {
         mockMode: false, // Always use real data
         extensionSupported: true,
         webSocketConnected: true,
-        monkeyRewardRpeReadiness: getRewardRpeReadinessTelemetry()
+        monkeyRewardRpeReadiness: serializeRewardRpeReadiness(getRewardRpeReadinessTelemetry())
       },
       notifications: [
         // Removed demo mode notification - always using real data

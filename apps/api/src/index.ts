@@ -40,6 +40,7 @@ import { initBasinSyncBridge } from './services/monkey/basin_sync_redis_bridge.j
 import { monkeyKernel, swingMonkey } from './services/monkey/loop.js';
 import {
   getRewardRpeReadinessTelemetry,
+  serializeRewardRpeReadiness,
 } from './services/monkey/rewardRpeReadiness.js';
 import { ingestRewardRpeLive } from './services/monkey/rewardRpeEvidenceSync.js';
 import paperTradingService from './services/paperTradingService.js';
@@ -51,6 +52,7 @@ import { logger } from './utils/logger.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
+import { authenticateToken } from './middleware/auth.js';
 import {
   authRateLimiter,
   createCorsOptions,
@@ -75,6 +77,16 @@ const PORT = env.PORT;
 
 // Production monitoring configuration
 const HEARTBEAT_INTERVAL_MS = 60000; // 60 seconds
+
+function hasRewardRpeHttpCoreFields(body: unknown): boolean {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  const payload = body as Record<string, unknown>;
+  const symbol = typeof payload.symbol === 'string' ? payload.symbol.trim() : '';
+  const ts = typeof payload.ts === 'string' || typeof payload.ts === 'number' || payload.ts instanceof Date
+    ? new Date(payload.ts)
+    : null;
+  return symbol.length > 0 && ts !== null && Number.isFinite(ts.getTime());
+}
 
 // Socket.IO server setup with Railway-compatible CORS
 const allowedOrigins = [
@@ -149,38 +161,26 @@ app.get('/api/health', async (_req: Request, res: Response) => {
   });
 });
 
-app.post('/api/health/monkey/reward-rpe-live', async (req: Request, res: Response) => {
+app.post('/api/health/monkey/reward-rpe-live', authRateLimiter, authenticateToken, async (req: Request, res: Response) => {
+  if (!hasRewardRpeHttpCoreFields(req.body)) {
+    return res.status(400).json({
+      ok: false,
+      accepted: false,
+      error: 'symbol and valid ts are required',
+    });
+  }
   const accepted = await ingestRewardRpeLive(req.body);
   res.json({ ok: true, accepted });
 });
 
 app.get('/monkey/reward/readiness', (_req: Request, res: Response) => {
   const metrics = getRewardRpeReadinessTelemetry();
-  res.json({
-    prediction_skill: metrics.predictionSkill,
-    dip_differentiation_p: metrics.dipDifferentiationP,
-    parity_divergence: metrics.parityDivergence,
-    coverage: metrics.coverage,
-    n: metrics.n,
-    samples_stable: metrics.samplesStable,
-    ready: metrics.ready,
-  });
+  res.json(serializeRewardRpeReadiness(metrics));
 });
 
 app.get('/api/health/monkey/reward/readiness', (_req: Request, res: Response) => {
   const metrics = getRewardRpeReadinessTelemetry();
-  res.json({
-    ok: true,
-    prediction_skill: metrics.predictionSkill,
-    dip_differentiation_p: metrics.dipDifferentiationP,
-    parity_divergence: metrics.parityDivergence,
-    coverage: metrics.coverage,
-    n: metrics.n,
-    samples_stable: metrics.samplesStable,
-    ready: metrics.ready,
-    live_degradation_flagged: metrics.liveDegradationFlagged,
-    sustained_degrade_windows: metrics.sustainedDegradeWindows,
-  });
+  res.json(serializeRewardRpeReadiness(metrics, true));
 });
 
 // Simplified health check for Railway (backward compatibility)

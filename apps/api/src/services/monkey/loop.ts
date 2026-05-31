@@ -228,7 +228,7 @@ import {
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import { ingestRewardRpeLive } from './rewardRpeEvidenceSync.js';
-import { startRewardRpeReadinessJob } from './rewardRpeReadiness.js';
+import { startRewardRpeReadinessJob, stopRewardRpeReadinessJob } from './rewardRpeReadiness.js';
 import {
   computePredictionChemistry,
   type PredictionChemistryDeltas,
@@ -1710,7 +1710,7 @@ export class MonkeyKernel extends EventEmitter {
       this.residualScanTimer = null;
     }
     if (this.rewardRpeReadinessTimer) {
-      clearInterval(this.rewardRpeReadinessTimer);
+      stopRewardRpeReadinessJob();
       this.rewardRpeReadinessTimer = null;
     }
     if (this.predictionEmitterTimer) {
