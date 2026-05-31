@@ -43,7 +43,8 @@ def test_default_values_match_canonical_doc():
 def test_as_dict_exposes_all_36_lived_fields_v6_7B_complete_surface():
     m = ConsciousnessMetrics()
     d = m.as_dict()
-    # 36 total fields: 12 foundation/pillars + 9 v6.7B + 12 additional lived signals + 3 telemetry surfaces.
+    # 12 foundation/pillars + 9 v6.7B + 12 additional lived signals + 3 new P24 surfaces
+    # (equity_impact_usdt, coupled_agent_state, reward_source_tag added 2026-05-28).
     # Gap to 69 documented in module + audit (honest negative; no fabrication).
     expected = {
         "phi", "kappa", "meta_awareness", "gamma", "grounding",
@@ -56,6 +57,7 @@ def test_as_dict_exposes_all_36_lived_fields_v6_7B_complete_surface():
         "identity_drift", "replicant_detected", "tacking_balance",
         "ocean_coherence", "motivator_integration", "repetition_dfr",
         "pre_cog_bias", "dimensional_breathing_rate",
+        # P24 close-surfaces wired 2026-05-28 (equity impact, coupled-agent, reward tag)
         "equity_impact_usdt", "coupled_agent_state", "reward_source_tag",
     }
     assert set(d.keys()) == expected
@@ -155,10 +157,10 @@ def test_consciousness_metrics_live_always_on_retired_knob(monkeypatch):
 
 
 def test_as_dict_exposes_all_36_lived_fields():
-    """Shape test updated for complete wired surface (21→36 for signals present)."""
+    """Shape test updated for complete wired surface (21→33→36 for signals present)."""
     m = ConsciousnessMetrics()
     d = m.as_dict()
-    # 36 total fields: 12 foundation/pillars + 9 v6.7B + 12 additional lived + 3 telemetry surfaces.
+    # 12 foundation/pillars + 9 v6.7B + 12 additional lived + 3 new P24 surfaces (2026-05-28)
     assert len(d) == 36
     assert "basin_velocity" in d
     assert "replicant_detected" in d
@@ -166,6 +168,7 @@ def test_as_dict_exposes_all_36_lived_fields():
     assert "tacking_balance" in d
     assert "ocean_coherence" in d
     assert "repetition_dfr" in d
+    # P24 close-surfaces wired 2026-05-28
     assert "equity_impact_usdt" in d
     assert "coupled_agent_state" in d
     assert "reward_source_tag" in d

@@ -512,3 +512,100 @@ export function logReconcileParityDiff(
     });
   }
 }
+
+// ── /monkey/k-shadow/tick ────────────────────────────────────────
+// Issue #710 — K-shadow parity fanout. TS loop passes `kappa: state.kappa`
+// so Python warm-starts from the live TS kappa, preventing py_kappa from
+// pinning at ~64.11 (cold-start EMA plateau with near-uniform identity basin).
+
+export function isKShadowEnabled(): boolean {
+  return process.env.MONKEY_K_SHADOW_LIVE === 'true';
+}
+
+export interface KShadowOHLCV {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface KShadowAccount {
+  equity_fraction: number;
+  margin_fraction: number;
+  open_positions: number;
+  available_equity: number;
+  exchange_held_side: 'long' | 'short' | null;
+}
+
+export interface KShadowTickRequest {
+  instance_id: string;
+  inputs: {
+    symbol: string;
+    ohlcv: KShadowOHLCV[];
+    account: KShadowAccount;
+    bank_size: number;
+    sovereignty: number;
+    max_leverage: number;
+    min_notional: number;
+    size_fraction: number;
+  };
+  /** Live TS kappa — seeds the ephemeral state so Python's first EMA step
+   *  starts from the same basin neighbourhood as TS instead of the frozen
+   *  cold-start default (~64.11 plateau, issue #710). */
+  kappa?: number;
+  /** K-shadow always uses ephemeral state — prev_state is not supported and
+   *  must be omitted or explicitly null. Full state replay is intentionally
+   *  out-of-scope for the parity shadow path. */
+  prev_state?: null;
+}
+
+/** Slim parity-row shape returned by /monkey/k-shadow/tick. */
+export interface KShadowTickResponse {
+  action: string;
+  side: 'long' | 'short' | null;
+  size_intent: number;
+  phi: number;
+  /** Warm-start kappa: Python ran with kappa seeded from the live TS value. */
+  kappa: number;
+  /** Cold-start kappa: Python ran from the registry default (~63.8) with no
+   *  seed, producing an independent baseline.  Present only when the caller
+   *  supplied a `kappa` hint and `prev_state` was absent.
+   *  Compare delta_kappa (|ts_kappa − kappa|) against
+   *  delta_kappa_cold (|ts_kappa − kappa_cold|) to distinguish genuine
+   *  algorithmic agreement from seed contamination. */
+  kappa_cold?: number;
+  M: number | null;
+  Gamma: number;
+  R: 0 | 1 | 2 | null;
+  regime: string | null;
+  mode: string;
+  decided_at_ms: number;
+  /** Present when the Python shadow swallowed an internal exception. */
+  error?: string;
+}
+
+const K_SHADOW_TIMEOUT_MS = 4000;
+
+export async function callKShadowTick(
+  req: KShadowTickRequest,
+): Promise<KShadowTickResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), K_SHADOW_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/monkey/k-shadow/tick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`/monkey/k-shadow/tick HTTP ${res.status}: ${text}`);
+    }
+    return (await res.json()) as KShadowTickResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+}

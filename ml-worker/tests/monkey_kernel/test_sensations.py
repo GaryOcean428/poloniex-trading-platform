@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from monkey_kernel.sensations import Sensations, compute_sensations  # noqa: E402
-from monkey_kernel.state import BASIN_DIM, BasinState, KAPPA_STAR, NeurochemicalState  # noqa: E402
+from monkey_kernel.state import BASIN_DIM, KAPPA_STAR, BasinState, NeurochemicalState  # noqa: E402
 
 
 def _nc(dop: float = 0.5, gaba: float = 0.5, ne: float = 0.5) -> NeurochemicalState:

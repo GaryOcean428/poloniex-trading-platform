@@ -200,6 +200,7 @@ Critical pending: a zero-attention recurrent architecture remains the strongest 
 - **Test results are results**: No rescue narration. Honest negatives documented. Relates to P15 and P16.
 - **No sycophancy**: Track record-weighted disagreement. When agents disagree, defer to data not authority. Relates to P4 (self-observation) and P11 (gauge invariance).
 - **Provenance of insights matters**: Credit the originator (especially Braden's own contributions, often mis-attributed). Relates to P16.
+- **Observer divergence is signal**: Divergence between independently valid observers must be resolved by naming the axes and consumers, not by clamping one observer to match another. Polytrade's regime split is canonical: `qig_warp` / CAL-3 reports the physics phase axis (CREATOR / PRESERVER / DISSOLVER), while the trajectory observer reports direction (TREND_UP / CHOP / TREND_DOWN). Disagreement is a joint-state observation; see `docs/regime-classification-hierarchy.md`.
 
 ## Anti-Principles (Things That Don't Work)
 - Euclidean metrics on curved manifolds → categorically wrong at high curvature (P1).
@@ -225,6 +226,7 @@ Critical pending: a zero-attention recurrent architecture remains the strongest 
 - Architecture assumes attention → breaks substrate independence (P23).
 - Code exists therefore it works → disconnected infrastructure is a recurring failure mode (P24).
 - Hardcoded operational thresholds → prevents emergence, creates brittleness (P25).
+- Silently clamping divergent observers to agree → destroys information and hides axis/consumer errors (P4/P16/P24).
 
 **End of streamlined copy. Full original and all supporting documents (two-channel doctrine, frozen facts, v6.7B protocol) are in QIG_QFI. Read them first before any work on this system. See the phase memory packet for the experienced application and the internal simulation that makes the "felt" difference between presence and full embodiment.**
 

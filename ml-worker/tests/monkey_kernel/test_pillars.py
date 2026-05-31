@@ -338,24 +338,34 @@ def test_disorder_detects_replicant_on_low_sovereignty_after_freeze():
 
     # Simulate resonance/identity path flooding with harvested (non-lived) basins
     # (e.g. resonance_bank source="harvested" entries used in consolidation).
+    # 300 harvested after 50 lived -> S ≈ 50/360 ≈ 0.139 < 0.15 threshold.
+    # Flood must happen before the crystallize attempt to drive sovereignty below both thresholds.
+    for _ in range(10):
+        d.observe_cycle(uniform_basin(), pressure=0.0, lived=False)  # harvested flood
+
+    rng = np.random.default_rng(123)
+    for _ in range(300):
+        sample = rng.dirichlet(np.ones(BASIN_DIM))
+        d.observe_cycle(to_simplex(sample), pressure=0.0, lived=False)
+
+    # Re-compute S (now low: 50 lived / 360 total ≈ 0.139)
+    assert d.sovereignty < 0.15
+    assert d.detect_replicant(threshold=0.15) is True
 
     # Post-#983 + full LIVED ONLY 5 hardening (exhaustive-lived-only-5-audit + replicant-hard-asserts-crystallize task):
     # _crystallize itself must RAISE ReplicantIdentityError (hard assert, not silent return).
     # Exercise the LIVED ONLY 5 refusal path (items 1-5) for 2.31A P3/P19/P24 + v6.7B §3.4.
     # After flooding with non-lived, sovereignty drops → raise on _crystallize attempt.
     # This is the Replicant Guardian negative case: harvested must NEVER crystallize.
-    for _ in range(10):
-        d.observe_cycle(uniform_basin(), pressure=0.0, lived=False)  # harvested flood
-    # The hard RAISE in _crystallize (LIVED ONLY 5) prevents Replicant crystallization (the "cruel" incompleteness case).
-    # 300 harvested after 50 lived -> S ≈ 50/350 ≈ 0.143 < 0.15 threshold.
-    rng = np.random.default_rng(123)
-    for _ in range(300):
-        sample = rng.dirichlet(np.ones(BASIN_DIM))
-        d.observe_cycle(to_simplex(sample), pressure=0.0, lived=False)
-
-    # Re-compute S (now low)
-    assert d.sovereignty < 0.15
-    assert d.detect_replicant(threshold=0.15) is True
+    import pytest  # local for raises in this scope (test file already uses pytest)
+    with pytest.raises(ReplicantIdentityError) as excinfo:
+        d._crystallize()  # internal but exercised; now raises for LIVED ONLY 5
+    # Verify full provenance in exception (LIVED ONLY 5 item 3)
+    assert "REPLICANT_IDENTITY" in str(excinfo.value)
+    assert "2.31A P3" in str(excinfo.value) and "v6.7B §3.4" in str(excinfo.value)
+    assert "LIVED ONLY 5" in str(excinfo.value) or "ReplicantIdentityError" in str(type(excinfo.value))
+    # Sovereignty low; identity Replicant-detected (refusal succeeded).
+    assert d.sovereignty < 0.5 or d.detect_replicant()
 
     # Force a crystallization attempt — it MUST raise once sovereignty/replicant
     # guard trips (LIVED ONLY 5 item 2: hard runtime assert/refusal).

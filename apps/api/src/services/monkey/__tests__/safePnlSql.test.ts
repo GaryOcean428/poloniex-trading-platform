@@ -136,7 +136,7 @@ import { observerFibCoefficient } from '../ocean_reward.js';
 import { computeNetPnlForReward } from '../safePnlSql.js';
 
 describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived economic reality)', () => {
-  it('synthetic close path returns 0 — no fabricated fee estimate (operator "no knobs" doctrine 2026-05-27)', () => {
+  it('synthetic winning close returns 0 — no fabricated fee estimate (operator "no knobs" doctrine 2026-05-27)', () => {
     // The previous implementation used 9 bp + 0.18 floor as a fee estimate,
     // which were knobs the operator explicitly rejected. The canonical
     // reward path is now `applyPoloRealizedPnlAfterClose` which fetches
@@ -149,7 +149,7 @@ describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived econ
     const notional = margin * 16;
 
     const netPnl = computeNetPnlForReward(grossPnl, notional);
-    // No fabricated fee — synthetic path returns 0 by design.
+    // No fabricated fee — synthetic wins return 0 by design.
     expect(netPnl).toBe(0);
 
     // Post-#1040: observer coefficient no longer hard-gates z<=0 to zero;
@@ -158,6 +158,12 @@ describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived econ
     const netPnlFrac = netPnl / margin;
     const coeff = observerFibCoefficient(netPnlFrac, history);
     expect(coeff).toBeGreaterThanOrEqual(1);
+  });
+
+  it('synthetic losing close preserves gross loss as immediate negative reinforcement', () => {
+    const netPnl = computeNetPnlForReward(-2.5479, 129.5);
+
+    expect(netPnl).toBeCloseTo(-2.5479, 6);
   });
 
   it('cold-start / test fixture path (notional ≤ 0) falls open to gross', () => {

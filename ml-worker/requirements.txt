@@ -9,6 +9,11 @@ pandas>=2.0.0
 # paths (avoids psycopg malloc/segfaults with heavy native libs).
 scipy>=1.15.0
 fastapi>=0.110.0
+# httpx2 is required by fastapi.testclient (starlette>=0.46 dropped httpx
+# in favour of httpx2; importing TestClient raises a deprecation error
+# without it). Runtime: httpx2 is the maintained fork of httpx for
+# HTTPX-compatible clients.
+httpx2>=2.0.0
 uvicorn[standard]>=0.29.0
 redis>=5.0.0
 # QIG physics-based intelligence. Canonical prediction + regime stack
@@ -33,3 +38,7 @@ aiohttp>=3.9.0
 # in v0.8.3.5a). Different from aiohttp (async) — ingest runs as a
 # subprocess from /run/ingest and uses blocking calls.
 requests>=2.31.0
+# HTTP client required by starlette TestClient (used in ml-worker test suite).
+# Verified against starlette 1.2.1: testclient imports httpx2 first and only
+# falls back to deprecated httpx support if httpx2 is unavailable.
+httpx2>=2.0.0

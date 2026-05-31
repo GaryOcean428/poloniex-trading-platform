@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+import type { ValueType } from 'recharts/types/component/DefaultTooltipContent';
 import { RefreshCw, TrendingUp, TrendingDown, Activity, AlertCircle, Brain, Shield, BarChart3 } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
@@ -325,7 +326,7 @@ const Performance: React.FC = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
                         <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                         <YAxis tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={(val: number) => [`$${val.toFixed(2)}`, 'Cumulative P&L']} />
+                        <Tooltip formatter={(val: ValueType | undefined) => { const n = typeof val === 'number' ? val : 0; return [`$${n.toFixed(2)}`, 'Cumulative P&L']; }} />
                         <Legend />
                         <Line type="monotone" dataKey="cumulativePnL" stroke={CHART_COLORS.success} strokeWidth={2} dot={false} name="Cumulative P&L" />
                       </LineChart>
@@ -342,7 +343,7 @@ const Performance: React.FC = () => {
                         <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
                         <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                         <YAxis tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={(val: number) => [`$${val.toFixed(2)}`, 'Daily P&L']} />
+                        <Tooltip formatter={(val: ValueType | undefined) => { const n = typeof val === 'number' ? val : 0; return [`$${n.toFixed(2)}`, 'Daily P&L']; }} />
                         <Legend />
                         <Bar dataKey="pnl" name="Daily P&L" fill={CHART_COLORS.info}>
                           {performanceData.map((entry, index) => (
@@ -382,7 +383,7 @@ const Performance: React.FC = () => {
                             <Cell key={`cell-${index}`} fill={Object.values(CHART_COLORS)[index % Object.values(CHART_COLORS).length]} />
                           ))}
                         </Pie>
-                        <Tooltip formatter={(val: number) => [`$${val.toFixed(2)}`, 'P&L']} />
+                        <Tooltip formatter={(val: ValueType | undefined) => { const n = typeof val === 'number' ? val : 0; return [`$${n.toFixed(2)}`, 'P&L']; }} />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
