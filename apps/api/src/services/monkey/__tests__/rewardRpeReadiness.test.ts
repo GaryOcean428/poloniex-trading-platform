@@ -38,15 +38,14 @@ function makeRow(
   };
 }
 
-describe('rewardShadowReadiness', () => {
+describe('rewardRpeReadiness', () => {
   beforeEach(() => {
     queryMock.mockReset();
-    delete process.env.MONKEY_REWARD_RPE_LIVE;
   });
 
   it('computes prediction skill + dip separation + parity metrics', async () => {
-    const { scanRewardShadowReadiness, __resetRewardShadowReadinessStateForTests } = await import('../rewardShadowReadiness.js');
-    __resetRewardShadowReadinessStateForTests();
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
     const rows = [
       makeRow(1, { substrate: 'py', ts: '2026-05-30T00:00:00.000Z', symbol: 'BTC', phasicRpe: -1.6, realized: -0.8, predicted: -0.79, proposedDop: 0.1, tonic: 0.7 }),
       makeRow(2, { substrate: 'ts', ts: '2026-05-30T00:00:00.000Z', symbol: 'BTC', phasicRpe: -1.6, realized: -0.8, predicted: -0.79, proposedDop: 0.1000000002, tonic: 0.7 }),
@@ -57,7 +56,7 @@ describe('rewardShadowReadiness', () => {
     ];
 
     queryMock.mockResolvedValueOnce({ rows, rowCount: rows.length });
-    const metrics = await scanRewardShadowReadiness();
+    const metrics = await scanRewardRpeReadiness();
 
     expect(metrics.predictionSkill).toBeGreaterThan(0);
     expect(metrics.surpriseCount).toBe(4);
@@ -68,10 +67,9 @@ describe('rewardShadowReadiness', () => {
     expect(metrics.ready).toBe(true);
   });
 
-  it('flags post-cutover degrade when prediction skill turns negative', async () => {
-    const { scanRewardShadowReadiness, __resetRewardShadowReadinessStateForTests } = await import('../rewardShadowReadiness.js');
-    __resetRewardShadowReadinessStateForTests();
-    process.env.MONKEY_REWARD_RPE_LIVE = 'true';
+  it('flags live degradation when prediction skill turns negative', async () => {
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
 
     const collapsedRows = [
       makeRow(1, { substrate: 'py', ts: '2026-05-30T00:00:00.000Z', symbol: 'BTC', phasicRpe: -1.8, realized: -0.8, predicted: 1.2, proposedDop: 0.68, tonic: 0.7 }),
@@ -86,10 +84,10 @@ describe('rewardShadowReadiness', () => {
       .mockResolvedValueOnce({ rows: collapsedRows, rowCount: collapsedRows.length })
       .mockResolvedValueOnce({ rows: collapsedRows, rowCount: collapsedRows.length });
 
-    await scanRewardShadowReadiness();
-    const metrics = await scanRewardShadowReadiness();
+    await scanRewardRpeReadiness();
+    const metrics = await scanRewardRpeReadiness();
 
-    expect(metrics.postCutoverFlagged).toBe(true);
+    expect(metrics.liveDegradationFlagged).toBe(true);
     expect(metrics.ready).toBe(!1);
   });
 });

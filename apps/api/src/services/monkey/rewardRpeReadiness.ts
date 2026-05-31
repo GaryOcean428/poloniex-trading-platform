@@ -9,7 +9,7 @@ const MAD_STABILITY_EPS = 1e-3;
 const SURPRISE_RPE_Z = 1;
 const PREDICTED_RPE_Z = 0.5;
 
-export interface RewardShadowReadinessWindowRow {
+export interface RewardRpeReadinessWindowRow {
   ts: string;
   substrate: 'ts' | 'py';
   symbol: string;
@@ -23,7 +23,7 @@ export interface RewardShadowReadinessWindowRow {
   valid: boolean;
 }
 
-export interface RewardShadowReadinessMetrics {
+export interface RewardRpeReadinessMetrics {
   predictionSkill: number;
   dipDifferentiationP: number;
   parityDivergence: number;
@@ -32,7 +32,7 @@ export interface RewardShadowReadinessMetrics {
   samplesStable: boolean;
   ready: boolean;
   dipSeparated: boolean;
-  postCutoverFlagged: boolean;
+  liveDegradationFlagged: boolean;
   sustainedDegradeWindows: number;
   surpriseCount: number;
   predictedCount: number;
@@ -44,7 +44,7 @@ interface MannWhitneyResult {
   commonLanguageEffect: number;
 }
 
-let lastMetrics: RewardShadowReadinessMetrics = {
+let lastMetrics: RewardRpeReadinessMetrics = {
   predictionSkill: 0,
   dipDifferentiationP: 1,
   parityDivergence: 0,
@@ -53,13 +53,13 @@ let lastMetrics: RewardShadowReadinessMetrics = {
   samplesStable: !1,
   ready: !1,
   dipSeparated: !1,
-  postCutoverFlagged: !1,
+  liveDegradationFlagged: !1,
   sustainedDegradeWindows: 0,
   surpriseCount: 0,
   predictedCount: 0,
   latestTs: null,
 };
-let shadowWindowRows: RewardShadowReadinessWindowRow[] = [];
+let rpeWindowRows: RewardRpeReadinessWindowRow[] = [];
 
 function finiteOrNull(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -107,7 +107,7 @@ function normalCdf(x: number): number {
   return 0.5 * (1 + erf(x / Math.SQRT2));
 }
 
-async function loadWindowRows(limit: number): Promise<RewardShadowReadinessWindowRow[]> {
+async function loadWindowRows(limit: number): Promise<RewardRpeReadinessWindowRow[]> {
   const rows = await pool.query<{
     ts: string;
     substrate: 'ts' | 'py';
@@ -123,7 +123,7 @@ async function loadWindowRows(limit: number): Promise<RewardShadowReadinessWindo
   }>(
     `SELECT ts, substrate, symbol, source, realized_pnl_frac, predicted_pnl_frac,
             sigma_residual, phasic_rpe, proposed_dop, tonic_baseline, valid
-       FROM monkey_reward_shadow
+       FROM monkey_reward_rpe_evidence
       ORDER BY ts DESC
       LIMIT $1`,
     [Math.max(1, Math.floor(limit))],
@@ -144,7 +144,7 @@ async function loadWindowRows(limit: number): Promise<RewardShadowReadinessWindo
   }));
 }
 
-function computeCoverage(rows: RewardShadowReadinessWindowRow[]): number {
+function computeCoverage(rows: RewardRpeReadinessWindowRow[]): number {
   if (rows.length === 0) return 0;
   let covered = 0;
   for (const row of rows) {
@@ -153,7 +153,7 @@ function computeCoverage(rows: RewardShadowReadinessWindowRow[]): number {
   return covered / rows.length;
 }
 
-function computePredictionSkill(rows: RewardShadowReadinessWindowRow[]): number {
+function computePredictionSkill(rows: RewardRpeReadinessWindowRow[]): number {
   const validRows = rows.filter(
     (row) => row.valid && row.predictedPnlFrac !== null && row.sigmaResidual !== null,
   );
@@ -201,7 +201,7 @@ function mannWhitneyUTwoSided(surprise: number[], predicted: number[]): MannWhit
   return { pValue, commonLanguageEffect: u1 / (n1 * n2) };
 }
 
-function computeDipDifferentiation(rows: RewardShadowReadinessWindowRow[]) {
+function computeDipDifferentiation(rows: RewardRpeReadinessWindowRow[]) {
   const losses = rows.filter((row) => row.valid && row.realizedPnlFrac < 0);
   const surprise = losses
     .filter((row) => Math.abs(row.phasicRpe) > SURPRISE_RPE_Z)
@@ -225,7 +225,7 @@ function computeDipDifferentiation(rows: RewardShadowReadinessWindowRow[]) {
   };
 }
 
-function computeParityDivergence(rows: RewardShadowReadinessWindowRow[]): number {
+function computeParityDivergence(rows: RewardRpeReadinessWindowRow[]): number {
   const byKey = new Map<string, { ts?: number; py?: number }>();
   for (const row of rows) {
     const tsMs = Date.parse(row.ts);
@@ -247,7 +247,7 @@ function computeParityDivergence(rows: RewardShadowReadinessWindowRow[]): number
   return diffs.reduce((sum, value) => sum + value, 0) / diffs.length;
 }
 
-function computeSampleStability(rows: RewardShadowReadinessWindowRow[]): boolean {
+function computeSampleStability(rows: RewardRpeReadinessWindowRow[]): boolean {
   const validRows = rows.filter(
     (row) => row.valid && row.predictedPnlFrac !== null && row.sigmaResidual !== null,
   );
@@ -264,7 +264,7 @@ function computeSampleStability(rows: RewardShadowReadinessWindowRow[]): boolean
   return madOfMad <= MAD_STABILITY_EPS;
 }
 
-function metricsFailClosedDefaults(): RewardShadowReadinessMetrics {
+function metricsFailClosedDefaults(): RewardRpeReadinessMetrics {
   return {
     predictionSkill: 0,
     dipDifferentiationP: 1,
@@ -274,7 +274,7 @@ function metricsFailClosedDefaults(): RewardShadowReadinessMetrics {
     samplesStable: !1,
     ready: !1,
     dipSeparated: !1,
-    postCutoverFlagged: !1,
+    liveDegradationFlagged: !1,
     sustainedDegradeWindows: 0,
     surpriseCount: 0,
     predictedCount: 0,
@@ -282,7 +282,7 @@ function metricsFailClosedDefaults(): RewardShadowReadinessMetrics {
   };
 }
 
-function computeReadinessFromRows(rows: RewardShadowReadinessWindowRow[]): RewardShadowReadinessMetrics {
+function computeReadinessFromRows(rows: RewardRpeReadinessWindowRow[]): RewardRpeReadinessMetrics {
   if (rows.length === 0) return metricsFailClosedDefaults();
 
   const predictionSkill = computePredictionSkill(rows);
@@ -307,7 +307,7 @@ function computeReadinessFromRows(rows: RewardShadowReadinessWindowRow[]): Rewar
     samplesStable,
     ready,
     dipSeparated: dip.dipSeparated,
-    postCutoverFlagged: !1,
+    liveDegradationFlagged: !1,
     sustainedDegradeWindows: 0,
     surpriseCount: dip.surprise.length,
     predictedCount: dip.predicted.length,
@@ -315,16 +315,7 @@ function computeReadinessFromRows(rows: RewardShadowReadinessWindowRow[]): Rewar
   };
 }
 
-function updateRevertGate(metrics: RewardShadowReadinessMetrics): RewardShadowReadinessMetrics {
-  const live = process.env.MONKEY_REWARD_RPE_LIVE === 'true';
-  if (!live) {
-    return {
-      ...metrics,
-      postCutoverFlagged: !1,
-      sustainedDegradeWindows: 0,
-    };
-  }
-
+function updateRevertGate(metrics: RewardRpeReadinessMetrics): RewardRpeReadinessMetrics {
   const skillDegraded = metrics.predictionSkill < 0;
   const dipDegraded = !metrics.dipSeparated;
   const sustainedDipCollapse = dipDegraded && !lastMetrics.dipSeparated && metrics.samplesStable;
@@ -332,7 +323,7 @@ function updateRevertGate(metrics: RewardShadowReadinessMetrics): RewardShadowRe
   const sustained = flagged ? lastMetrics.sustainedDegradeWindows + 1 : 0;
 
   if (flagged) {
-    logger.error('MONKEY_REWARD_RPE_LIVE structural degrade detected', {
+    logger.error('MONKEY_REWARD_RPE structural degrade detected', {
       predictionSkill: metrics.predictionSkill,
       dipDifferentiationP: metrics.dipDifferentiationP,
       dipSeparated: metrics.dipSeparated,
@@ -346,17 +337,17 @@ function updateRevertGate(metrics: RewardShadowReadinessMetrics): RewardShadowRe
   return {
     ...metrics,
     ready: metrics.ready && !flagged,
-    postCutoverFlagged: flagged,
+    liveDegradationFlagged: flagged,
     sustainedDegradeWindows: sustained,
   };
 }
 
-export async function getRewardShadowReadiness(
+export async function getRewardRpeReadiness(
   limit: number = MAX_WINDOW_ROWS,
-): Promise<RewardShadowReadinessMetrics> {
+): Promise<RewardRpeReadinessMetrics> {
   try {
     const rows = await loadWindowRows(limit);
-    shadowWindowRows = rows;
+    rpeWindowRows = rows;
 
     const computed = computeReadinessFromRows(rows);
     const metrics = updateRevertGate(computed);
@@ -370,25 +361,25 @@ export async function getRewardShadowReadiness(
       coverage: Number.isFinite(metrics.coverage) ? metrics.coverage : 0,
     };
   } catch (error) {
-    logger.warn('rewardShadowReadiness failed', {
+    logger.warn('rewardRpeReadiness failed', {
       error: error instanceof Error ? error.message : String(error),
     });
     return metricsFailClosedDefaults();
   }
 }
 
-export async function scanRewardShadowReadiness(): Promise<RewardShadowReadinessMetrics> {
-  const metrics = await getRewardShadowReadiness(MAX_WINDOW_ROWS);
+export async function scanRewardRpeReadiness(): Promise<RewardRpeReadinessMetrics> {
+  const metrics = await getRewardRpeReadiness(MAX_WINDOW_ROWS);
   lastMetrics = metrics;
   return metrics;
 }
 
-export function startRewardShadowReadinessJob(): NodeJS.Timeout {
-  void scanRewardShadowReadiness();
+export function startRewardRpeReadinessJob(): NodeJS.Timeout {
+  void scanRewardRpeReadiness();
   const timer = setInterval(() => {
-    void scanRewardShadowReadiness().then((metrics) => {
+    void scanRewardRpeReadiness().then((metrics) => {
       if (metrics.n > 0) {
-        logger.info('rewardShadowReadiness pass', {
+        logger.info('rewardRpeReadiness pass', {
           ready: metrics.ready,
           predictionSkill: metrics.predictionSkill,
           dipDifferentiationP: metrics.dipDifferentiationP,
@@ -397,7 +388,7 @@ export function startRewardShadowReadinessJob(): NodeJS.Timeout {
           coverage: metrics.coverage,
           n: metrics.n,
           samplesStable: metrics.samplesStable,
-          postCutoverFlagged: metrics.postCutoverFlagged,
+          liveDegradationFlagged: metrics.liveDegradationFlagged,
           sustainedDegradeWindows: metrics.sustainedDegradeWindows,
         });
       }
@@ -407,21 +398,21 @@ export function startRewardShadowReadinessJob(): NodeJS.Timeout {
   return timer;
 }
 
-export function getRewardShadowReadinessTelemetry(): RewardShadowReadinessMetrics {
+export function getRewardRpeReadinessTelemetry(): RewardRpeReadinessMetrics {
   return lastMetrics;
 }
 
-export function getRewardShadowReadinessWindowRows() {
-  return shadowWindowRows;
+export function getRewardRpeReadinessWindowRows() {
+  return rpeWindowRows;
 }
 
-export function __setRewardShadowReadinessWindowForTests(
-  rows: RewardShadowReadinessWindowRow[],
+export function __setRewardRpeReadinessWindowForTests(
+  rows: RewardRpeReadinessWindowRow[],
 ): void {
-  shadowWindowRows = rows;
+  rpeWindowRows = rows;
 }
 
-export function __resetRewardShadowReadinessStateForTests(): void {
+export function __resetRewardRpeReadinessStateForTests(): void {
   lastMetrics = metricsFailClosedDefaults();
-  shadowWindowRows = [];
+  rpeWindowRows = [];
 }

@@ -1,8 +1,8 @@
--- 067_monkey_reward_shadow.sql
--- Persist dark-mode reward-rpe observer rows and provide a reusable
--- validation harness for readiness/revert gates.
+-- 067_monkey_reward_rpe_evidence.sql
+-- Persist live reward-rpe close evidence and provide reusable
+-- readiness/degradation telemetry.
 
-CREATE TABLE IF NOT EXISTS monkey_reward_shadow (
+CREATE TABLE IF NOT EXISTS monkey_reward_rpe_evidence (
   id BIGSERIAL PRIMARY KEY,
   ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   symbol TEXT NOT NULL,
@@ -26,11 +26,11 @@ CREATE TABLE IF NOT EXISTS monkey_reward_shadow (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_monkey_reward_shadow_ts
-  ON monkey_reward_shadow(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_monkey_reward_rpe_evidence_ts
+  ON monkey_reward_rpe_evidence(ts DESC);
 
-CREATE INDEX IF NOT EXISTS idx_monkey_reward_shadow_symbol_ts
-  ON monkey_reward_shadow(symbol, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_monkey_reward_rpe_evidence_symbol_ts
+  ON monkey_reward_rpe_evidence(symbol, ts DESC);
 
-CREATE INDEX IF NOT EXISTS idx_monkey_reward_shadow_substrate_ts
-  ON monkey_reward_shadow(substrate, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_monkey_reward_rpe_evidence_substrate_ts
+  ON monkey_reward_rpe_evidence(substrate, ts DESC);
