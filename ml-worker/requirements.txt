@@ -33,3 +33,6 @@ aiohttp>=3.9.0
 # in v0.8.3.5a). Different from aiohttp (async) — ingest runs as a
 # subprocess from /run/ingest and uses blocking calls.
 requests>=2.31.0
+# HTTP client required by starlette TestClient (used in ml-worker test suite).
+# starlette>=1.x requires httpx2; without it tests error with ImportError.
+httpx2>=2.0.0

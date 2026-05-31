@@ -185,7 +185,7 @@ class TestCanonicalUcpSensations:
     def test_activated_zero_at_kappa_star(self) -> None:
         """κ = κ* → no excess above → activated = tanh(0) = 0."""
         st = _state()
-        st.kappa = 64.0  # KAPPA_STAR
+        st.kappa = 63.8  # kappa_reference default (two-channel doctrine; universal 64 retired)
         sen = compute_sensations(st)
         assert sen.activated == pytest.approx(0.0, abs=1e-12)
         assert sen.dampened == pytest.approx(0.0, abs=1e-12)

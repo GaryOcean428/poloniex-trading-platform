@@ -86,7 +86,7 @@ class TestFracture:
         ev = ShadowEvent(basin=ev.basin, phi=ev.phi, kappa=70.0,
                          realized_pnl=ev.realized_pnl, regime_weights=ev.regime_weights)
         f = fracture(ev)
-        assert f.invariants["kappa_offset"] == pytest.approx(6.0, abs=1e-12)
+        assert f.invariants["kappa_offset"] == pytest.approx(6.2, abs=1e-12)
 
     def test_loss_magnitude_is_absolute(self) -> None:
         f = fracture(_shadow(pnl=-0.85))
