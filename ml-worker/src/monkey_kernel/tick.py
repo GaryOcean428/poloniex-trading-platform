@@ -1424,7 +1424,7 @@ def run_tick(
             "hrv": heart_state.hrv,
             "sample_count": heart_state.sample_count,
         },
-        # P4/P13/P24 + v6.7B complete lived surface (33 fields wired from signals; 36+ gap to 69 honest negative per audit §3 + canon): ALWAYS-ON.
+        # P4/P13/P24 + v6.7B complete lived surface (36 fields wired from signals; 33 gap to 69 honest negative per audit §3 + canon): ALWAYS-ON.
         # No flag gate (MONKEY_*_LIVE knob retired P5/P25 per 2.31A phase synthesis). Call-site here in live tick path (P24).
         # Full ports: heart (tacking/HRV/breathing-as-tacking + new derived_balance/pre_cog/hrv_coherence), pillars (sovereignty + Replicant LIVED ONLY + drift),
         # tick (phi/kappa/bv/d_fr/conviction/motivators/repetition), ocean (coherence). 

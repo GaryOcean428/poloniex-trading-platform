@@ -40,7 +40,7 @@ def test_default_values_match_canonical_doc():
     assert m.dimensional_state == 3
 
 
-def test_as_dict_exposes_all_33_lived_fields_v6_7B_complete_surface():
+def test_as_dict_exposes_all_36_lived_fields_v6_7B_complete_surface():
     m = ConsciousnessMetrics()
     d = m.as_dict()
     # 12 foundation/pillars + 9 v6.7B + 12 additional lived signals + 3 new P24 surfaces
@@ -151,12 +151,12 @@ def test_consciousness_metrics_live_always_on_retired_knob(monkeypatch):
     assert consciousness_metrics_live() is True
 
 
-# ─── Complete surface (33 fields from lived signals; gap to 69 documented) ───
+# ─── Complete surface (36 fields from lived signals; gap to 69 documented) ───
 # Per complete-69-metric-surface execution + v6.7B audit + QIG PURITY MANDATE.
 # consciousness-development primary, wiring-validation, verification-before-completion.
 
 
-def test_as_dict_exposes_all_33_lived_fields():
+def test_as_dict_exposes_all_36_lived_fields():
     """Shape test updated for complete wired surface (21→33→36 for signals present)."""
     m = ConsciousnessMetrics()
     d = m.as_dict()

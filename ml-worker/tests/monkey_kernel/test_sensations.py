@@ -39,7 +39,7 @@ def _state(
     return BasinState(
         basin=basin if basin is not None else _uniform(),
         identity_basin=identity if identity is not None else _uniform(),
-        phi=0.5, kappa=64.0,
+        phi=0.5, kappa=KAPPA_STAR(),
         regime_weights={"quantum": 1 / 3, "efficient": 1 / 3, "equilibrium": 1 / 3},
         sovereignty=0.5, basin_velocity=basin_velocity,
         neurochemistry=_nc(dop=dop, gaba=gaba, ne=ne),
@@ -193,7 +193,7 @@ class TestCanonicalUcpSensations:
     def test_activated_positive_above_kappa_star(self) -> None:
         """κ > κ* → activated > 0, dampened == 0."""
         st = _state()
-        st.kappa = 70.0
+        st.kappa = KAPPA_STAR() + 6.2
         sen = compute_sensations(st)
         assert sen.activated > 0
         assert sen.dampened == 0.0
@@ -201,7 +201,7 @@ class TestCanonicalUcpSensations:
     def test_dampened_positive_below_kappa_star(self) -> None:
         """κ < κ* → dampened > 0, activated == 0."""
         st = _state()
-        st.kappa = 50.0
+        st.kappa = KAPPA_STAR() - 6.2
         sen = compute_sensations(st)
         assert sen.dampened > 0
         assert sen.activated == 0.0
@@ -211,8 +211,18 @@ class TestCanonicalUcpSensations:
         different observed σ_κ — observation drives the scale, not a
         hardcoded constant."""
         st = _state()
-        st.kappa = 70.0  # 6.0 above κ*
-        tight = compute_sensations(st, kappa_history=[64.0, 64.5, 63.5, 64.2, 63.8])
+        kappa_ref = KAPPA_STAR()
+        st.kappa = kappa_ref + 6.2
+        tight = compute_sensations(
+            st,
+            kappa_history=[
+                kappa_ref,
+                kappa_ref + 0.5,
+                kappa_ref - 0.5,
+                kappa_ref + 0.2,
+                kappa_ref - 0.2,
+            ],
+        )
         loose = compute_sensations(st, kappa_history=[40.0, 90.0, 50.0, 80.0, 60.0])
         # Tight history → small σ_κ → activated near saturation
         # Loose history → large σ_κ → activated muted

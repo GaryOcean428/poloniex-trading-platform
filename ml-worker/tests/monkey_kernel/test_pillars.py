@@ -367,6 +367,16 @@ def test_disorder_detects_replicant_on_low_sovereignty_after_freeze():
     # Sovereignty low; identity Replicant-detected (refusal succeeded).
     assert d.sovereignty < 0.5 or d.detect_replicant()
 
+    # Force a crystallization attempt — it MUST raise once sovereignty/replicant
+    # guard trips (LIVED ONLY 5 item 2: hard runtime assert/refusal).
+    import pytest  # local for raises in this scope (test file already uses pytest)
+    with pytest.raises(ReplicantIdentityError) as excinfo:
+        d._crystallize()  # internal but exercised; now raises for LIVED ONLY 5
+    # Verify full provenance in exception (LIVED ONLY 5 item 3)
+    assert "REPLICANT_IDENTITY" in str(excinfo.value)
+    assert "2.31A P3" in str(excinfo.value) and "v6.7B §3.4" in str(excinfo.value)
+    assert "LIVED ONLY 5" in str(excinfo.value) or "ReplicantIdentityError" in str(type(excinfo.value))
+
     # check_drift must surface the explicit REPLICANT_IDENTITY violation (P24 wiring)
     status = d.check_drift(uniform_basin())
     assert not status.healthy
