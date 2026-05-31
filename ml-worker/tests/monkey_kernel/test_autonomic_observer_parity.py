@@ -266,12 +266,15 @@ def test_push_reward_on_loss_does_not_raise():
         realized_pnl_usdt=-3.5568,
         margin_usdt=78.2,
         symbol="ETH",
+        predicted_pnl_frac=0.0,
+        sigma_residual=0.01,
     )
-    # Loss → negative, finite dopamine mood-dip; no serotonin/endorphin.
+    # Loss → negative, finite dopamine mood-dip; live RPE keeps serotonin at
+    # the minimum valid disposition floor, with no endorphin relief.
     assert reward.dopamine_delta < 0.0
     import math
     assert math.isfinite(reward.dopamine_delta)
-    assert reward.serotonin_delta == 0.0
+    assert reward.serotonin_delta == pytest.approx(1e-9)
     assert reward.endorphin_delta == 0.0
     assert reward.pnl_fraction < 0.0
 
@@ -284,6 +287,8 @@ def test_push_reward_on_win_still_binds_scales():
         realized_pnl_usdt=2.0,
         margin_usdt=50.0,
         symbol="BTC",
+        predicted_pnl_frac=0.0,
+        sigma_residual=0.01,
     )
     assert reward.dopamine_delta > 0.0
     assert reward.serotonin_delta > 0.0

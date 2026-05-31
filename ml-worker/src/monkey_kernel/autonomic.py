@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -297,8 +296,8 @@ class AutonomicKernel:
             "endorphin_delta": 0.0,
         }
         self._cached_hindsight_chemistry_at_ms: float = time.time() * 1000.0
-        # Reward-rate / disposition EMAs for the prediction-error reward
-        # transform (default dark-mode; live cutover is flag-gated).
+        # Reward-rate / disposition EMAs for the live prediction-error
+        # reward transform.
         self._reward_rate_ema: float = 0.0
         self._serotonin_disposition_ema: float = 0.0
         self._reward_rate_samples: int = 0
@@ -431,10 +430,7 @@ class AutonomicKernel:
             else 0.0
         )
 
-        # Prediction-error reward transform (issue #1040): default DARK (log
-        # only), flag-gated live cutover.
-        reward_rpe_live = os.getenv("MONKEY_REWARD_RPE_LIVE", "").lower() == "true"
-        reward_rpe_dark = os.getenv("MONKEY_REWARD_RPE_DARK", "true").lower() != "false"
+        # Prediction-error reward transform (issue #1040): live reward path.
         self._reward_rate_samples += 1
         ema_alpha = 2.0 / (min(self._reward_rate_samples, get_pnl_frac_history_max()) + 1.0)
         reward_rate_sample = 1.0 if realized_pnl_usdt > 0.0 else 0.0
@@ -451,42 +447,35 @@ class AutonomicKernel:
             serotonin_disposition=max(1e-9, self._serotonin_disposition_ema),
             legibility=float(legibility) if legibility is not None else 0.0,
         )
-        if reward_rpe_dark:
+        logger.info(
+            "[%s.autonomic] reward-rpe live source=%s symbol=%s valid=%s legacy_dop=%.6f legacy_ser=%.6f legacy_endo=%.6f proposed_dop=%.6f proposed_ser=%.6f proposed_endo=%.6f phasic_rpe=%.6f tonic=%.6f",
+            self.label,
+            source,
+            symbol,
+            bool(rpe.get("valid", 0.0)),
+            legacy_dop,
+            legacy_ser,
+            legacy_endo,
+            float(rpe.get("dopamine_delta", 0.0)),
+            float(rpe.get("serotonin_delta", 0.0)),
+            float(rpe.get("endorphin_delta", 0.0)),
+            float(rpe.get("phasic_rpe", 0.0)),
+            tonic_baseline,
+        )
+        if not bool(rpe.get("valid", 0.0)):
             logger.info(
-                "[%s.autonomic] reward-rpe dark source=%s symbol=%s valid=%s live=%s legacy_dop=%.6f legacy_ser=%.6f legacy_endo=%.6f proposed_dop=%.6f proposed_ser=%.6f proposed_endo=%.6f phasic_rpe=%.6f tonic=%.6f",
+                "[%s.autonomic] reward-rpe live zero-delta (invalid prediction/residual), source=%s symbol=%s",
                 self.label,
                 source,
                 symbol,
-                bool(rpe.get("valid", 0.0)),
-                reward_rpe_live,
-                legacy_dop,
-                legacy_ser,
-                legacy_endo,
-                float(rpe.get("dopamine_delta", 0.0)),
-                float(rpe.get("serotonin_delta", 0.0)),
-                float(rpe.get("endorphin_delta", 0.0)),
-                float(rpe.get("phasic_rpe", 0.0)),
-                tonic_baseline,
             )
-        if reward_rpe_live:
-            if not bool(rpe.get("valid", 0.0)):
-                logger.info(
-                    "[%s.autonomic] reward-rpe live zero-delta (invalid prediction/residual), source=%s symbol=%s",
-                    self.label,
-                    source,
-                    symbol,
-                )
-                dop = 0.0
-                ser = 0.0
-                endo = 0.0
-            else:
-                dop = float(rpe["dopamine_delta"])
-                ser = float(rpe["serotonin_delta"])
-                endo = float(rpe["endorphin_delta"])
+            dop = 0.0
+            ser = 0.0
+            endo = 0.0
         else:
-            dop = legacy_dop
-            ser = legacy_ser
-            endo = legacy_endo
+            dop = float(rpe["dopamine_delta"])
+            ser = float(rpe["serotonin_delta"])
+            endo = float(rpe["endorphin_delta"])
 
         reward = ActivityReward(
             source=source,

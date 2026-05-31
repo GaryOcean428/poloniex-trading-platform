@@ -38,6 +38,14 @@ import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollatio
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { initBasinSyncBridge } from './services/monkey/basin_sync_redis_bridge.js';
 import { monkeyKernel, swingMonkey } from './services/monkey/loop.js';
+import {
+  getRewardRpeReadinessTelemetry,
+  serializeRewardRpeReadiness,
+} from './services/monkey/rewardRpeReadiness.js';
+import {
+  hasRequiredRewardRpeHttpFields,
+  ingestRewardRpeLive,
+} from './services/monkey/rewardRpeEvidenceSync.js';
 import paperTradingService from './services/paperTradingService.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
@@ -47,6 +55,7 @@ import { logger } from './utils/logger.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
+import { authenticateToken } from './middleware/auth.js';
 import {
   authRateLimiter,
   createCorsOptions,
@@ -143,6 +152,28 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     environment: process.env.NODE_ENV || 'development',
     publicIP: publicIP
   });
+});
+
+app.post('/api/health/monkey/reward-rpe-live', authRateLimiter, authenticateToken, async (req: Request, res: Response) => {
+  if (!hasRequiredRewardRpeHttpFields(req.body)) {
+    return res.status(400).json({
+      ok: false,
+      accepted: false,
+      error: 'symbol and valid ts are required',
+    });
+  }
+  const accepted = await ingestRewardRpeLive(req.body);
+  res.json({ ok: true, accepted });
+});
+
+app.get('/monkey/reward/readiness', authenticateToken, (_req: Request, res: Response) => {
+  const metrics = getRewardRpeReadinessTelemetry();
+  res.json(serializeRewardRpeReadiness(metrics));
+});
+
+app.get('/api/health/monkey/reward/readiness', authenticateToken, (_req: Request, res: Response) => {
+  const metrics = getRewardRpeReadinessTelemetry();
+  res.json(serializeRewardRpeReadiness(metrics, true));
 });
 
 // Simplified health check for Railway (backward compatibility)
