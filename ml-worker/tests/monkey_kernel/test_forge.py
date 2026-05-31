@@ -19,7 +19,7 @@ from monkey_kernel.forge import (  # noqa: E402
     fracture,
     nucleate,
 )
-from monkey_kernel.state import BASIN_DIM  # noqa: E402
+from monkey_kernel.state import BASIN_DIM, KAPPA_STAR  # noqa: E402
 
 
 def _peak_basin(idx: int = 5, mass: float = 0.6) -> np.ndarray:
@@ -86,7 +86,7 @@ class TestFracture:
         ev = ShadowEvent(basin=ev.basin, phi=ev.phi, kappa=70.0,
                          realized_pnl=ev.realized_pnl, regime_weights=ev.regime_weights)
         f = fracture(ev)
-        assert f.invariants["kappa_offset"] == pytest.approx(6.2, abs=1e-12)
+        assert f.invariants["kappa_offset"] == pytest.approx(70.0 - KAPPA_STAR(), abs=1e-12)
 
     def test_loss_magnitude_is_absolute(self) -> None:
         f = fracture(_shadow(pnl=-0.85))

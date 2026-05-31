@@ -34,5 +34,6 @@ aiohttp>=3.9.0
 # subprocess from /run/ingest and uses blocking calls.
 requests>=2.31.0
 # HTTP client required by starlette TestClient (used in ml-worker test suite).
-# starlette>=1.x requires httpx2; without it tests error with ImportError.
+# Verified against starlette 1.2.1: testclient imports httpx2 first and only
+# falls back to deprecated httpx support if httpx2 is unavailable.
 httpx2>=2.0.0
