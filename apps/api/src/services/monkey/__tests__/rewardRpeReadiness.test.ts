@@ -61,19 +61,18 @@ function separatedRows() {
   return rows;
 }
 
-describe('rewardShadowReadiness', () => {
+describe('rewardRpeReadiness', () => {
   beforeEach(() => {
     queryMock.mockReset();
-    delete process.env.MONKEY_REWARD_RPE_LIVE;
   });
 
   it('computes prediction skill + significant dip separation + parity metrics', async () => {
-    const { scanRewardShadowReadiness, __resetRewardShadowReadinessStateForTests } = await import('../rewardShadowReadiness.js');
-    __resetRewardShadowReadinessStateForTests();
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
     const rows = separatedRows();
 
     queryMock.mockResolvedValueOnce({ rows, rowCount: rows.length });
-    const metrics = await scanRewardShadowReadiness();
+    const metrics = await scanRewardRpeReadiness();
 
     expect(metrics.predictionSkill).toBeGreaterThan(0);
     expect(metrics.surpriseCount).toBe(8);
@@ -87,35 +86,34 @@ describe('rewardShadowReadiness', () => {
   });
 
   it('does not pass readiness without matched parity rows', async () => {
-    const { scanRewardShadowReadiness, __resetRewardShadowReadinessStateForTests } = await import('../rewardShadowReadiness.js');
-    __resetRewardShadowReadinessStateForTests();
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
     const rows = separatedRows().filter((row) => row.substrate === 'ts');
 
     queryMock.mockResolvedValueOnce({ rows, rowCount: rows.length });
-    const metrics = await scanRewardShadowReadiness();
+    const metrics = await scanRewardRpeReadiness();
 
     expect(metrics.parityMatchedPairs).toBe(0);
     expect(metrics.ready).toBe(false);
   });
 
   it('requires the absolute coverage floor for readiness', async () => {
-    const { scanRewardShadowReadiness, __resetRewardShadowReadinessStateForTests } = await import('../rewardShadowReadiness.js');
-    __resetRewardShadowReadinessStateForTests();
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
     const rows = separatedRows().map((row, idx) => (
       idx < 4 ? row : { ...row, predicted_pnl_frac: null, sigma_residual: null }
     ));
 
     queryMock.mockResolvedValueOnce({ rows, rowCount: rows.length });
-    const metrics = await scanRewardShadowReadiness();
+    const metrics = await scanRewardRpeReadiness();
 
     expect(metrics.coverage).toBe(0.25);
     expect(metrics.ready).toBe(false);
   });
 
-  it('flags post-cutover degrade when prediction skill turns negative', async () => {
-    const { scanRewardShadowReadiness, __resetRewardShadowReadinessStateForTests } = await import('../rewardShadowReadiness.js');
-    __resetRewardShadowReadinessStateForTests();
-    process.env.MONKEY_REWARD_RPE_LIVE = 'true';
+  it('flags live degradation when prediction skill turns negative', async () => {
+    const { scanRewardRpeReadiness, __resetRewardRpeReadinessStateForTests } = await import('../rewardRpeReadiness.js');
+    __resetRewardRpeReadinessStateForTests();
 
     const collapsedRows = separatedRows().map((row, idx) => ({
       ...row,
@@ -127,10 +125,10 @@ describe('rewardShadowReadiness', () => {
       .mockResolvedValueOnce({ rows: collapsedRows, rowCount: collapsedRows.length })
       .mockResolvedValueOnce({ rows: collapsedRows, rowCount: collapsedRows.length });
 
-    await scanRewardShadowReadiness();
-    const metrics = await scanRewardShadowReadiness();
+    await scanRewardRpeReadiness();
+    const metrics = await scanRewardRpeReadiness();
 
-    expect(metrics.postCutoverFlagged).toBe(true);
+    expect(metrics.liveDegradationFlagged).toBe(true);
     expect(metrics.ready).toBe(false);
   });
 });

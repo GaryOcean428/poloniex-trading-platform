@@ -8,22 +8,19 @@ vi.mock('../../../db/connection.js', () => ({
   },
 }));
 
-describe('rewardShadowSync', () => {
+describe('rewardRpeEvidenceSync', () => {
   afterEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
     queryMock.mockReset();
-    delete process.env.MONKEY_REWARD_RPE_DARK;
   });
 
-  it('persists payloads while dark observer is enabled', async () => {
-    process.env.MONKEY_REWARD_RPE_DARK = 'true';
-
-    const { ingestRewardRpeDark } = await import('../rewardShadowSync.js');
+  it('persists live payloads without an env gate', async () => {
+    const { ingestRewardRpeLive } = await import('../rewardRpeEvidenceSync.js');
 
     queryMock.mockResolvedValueOnce({ rowCount: 1, rows: [] });
 
-    const accepted = await ingestRewardRpeDark({
+    const accepted = await ingestRewardRpeLive({
       source: 'polo_authoritative_close',
       substrate: 'ts',
       symbol: 'BTC_USDT_PERP',
@@ -45,13 +42,13 @@ describe('rewardShadowSync', () => {
     expect(accepted).toBe(true);
     expect(queryMock).toHaveBeenCalledTimes(1);
     const [sql, params] = queryMock.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain('INSERT INTO monkey_reward_shadow');
+    expect(sql).toContain('INSERT INTO monkey_reward_rpe_evidence');
     expect(params[1]).toBe('BTC_USDT_PERP');
   });
 
   it('rejects invalid payloads', async () => {
-    const { ingestRewardRpeDark } = await import('../rewardShadowSync.js');
-    const accepted = await ingestRewardRpeDark({ foo: 'bar' });
+    const { ingestRewardRpeLive } = await import('../rewardRpeEvidenceSync.js');
+    const accepted = await ingestRewardRpeLive({ foo: 'bar' });
     expect(accepted).toBe(false);
   });
 });

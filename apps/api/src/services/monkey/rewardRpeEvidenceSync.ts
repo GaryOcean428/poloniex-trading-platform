@@ -1,10 +1,10 @@
 import { pool } from '../../db/connection.js';
 import { logger } from '../../utils/logger.js';
 
-export type RewardShadowSubstrate = 'ts' | 'py';
-export type RewardShadowSource = 'trade_close' | 'paper_close' | 'polo_authoritative_close';
+export type RewardRpeEvidenceSubstrate = 'ts' | 'py';
+export type RewardRpeEvidenceSource = 'trade_close' | 'paper_close' | 'polo_authoritative_close';
 
-export interface RewardRpeDarkPayload {
+export interface RewardRpePayload {
   source?: unknown;
   substrate?: unknown;
   symbol?: unknown;
@@ -26,11 +26,11 @@ export interface RewardRpeDarkPayload {
   ts?: unknown;
 }
 
-export interface RewardShadowRecord {
+export interface RewardRpeEvidenceRecord {
   ts: Date;
   symbol: string;
-  source: RewardShadowSource;
-  substrate: RewardShadowSubstrate;
+  source: RewardRpeEvidenceSource;
+  substrate: RewardRpeEvidenceSubstrate;
   realizedPnlFrac: number;
   predictedPnlFrac: number | null;
   sigmaResidual: number | null;
@@ -62,10 +62,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function parseLegacyLogText(message: string): Record<string, unknown> | null {
-  const marker = 'reward-rpe dark';
-  const idx = message.indexOf(marker);
-  if (idx < 0) return null;
-  const start = message.indexOf('{', idx + marker.length);
+  const liveIdx = message.indexOf('reward-rpe live');
+  if (liveIdx < 0) return null;
+  const start = message.indexOf('{', liveIdx);
   const end = message.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
   try {
@@ -76,7 +75,7 @@ function parseLegacyLogText(message: string): Record<string, unknown> | null {
   }
 }
 
-export function parseRewardRpeDarkPayload(input: unknown): RewardRpeDarkPayload | null {
+export function parseRewardRpePayload(input: unknown): RewardRpePayload | null {
   if (isObject(input)) return input;
   if (typeof input === 'string') {
     const trimmed = input.trim();
@@ -91,16 +90,12 @@ export function parseRewardRpeDarkPayload(input: unknown): RewardRpeDarkPayload 
   return null;
 }
 
-export function canPersistRewardShadow(): boolean {
-  return process.env.MONKEY_REWARD_RPE_DARK !== 'false';
-}
-
 export function isRewardRpeLiveEnabled(): boolean {
   return process.env.MONKEY_REWARD_RPE_LIVE !== 'false';
 }
 
-export function hasRequiredRewardShadowHttpFields(input: unknown): boolean {
-  const payload = parseRewardRpeDarkPayload(input);
+export function hasRequiredRewardRpeHttpFields(input: unknown): boolean {
+  const payload = parseRewardRpePayload(input);
   if (!payload) return false;
   const symbol = typeof payload.symbol === 'string' ? payload.symbol.trim() : '';
   const ts = payload.ts instanceof Date
@@ -111,8 +106,7 @@ export function hasRequiredRewardShadowHttpFields(input: unknown): boolean {
   return symbol.length > 0 && ts !== null && Number.isFinite(ts.getTime());
 }
 
-export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): RewardShadowRecord | null {
-  if (!canPersistRewardShadow()) return null;
+export function materializeRewardRpeEvidenceRecord(payload: RewardRpePayload): RewardRpeEvidenceRecord | null {
   const hasCoreSignal = [
     payload.realized_pnl_frac,
     payload.phasic_rpe,
@@ -122,11 +116,11 @@ export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): Re
   if (!hasCoreSignal) return null;
 
   const sourceRaw = typeof payload.source === 'string' ? payload.source : 'trade_close';
-  const source: RewardShadowSource =
+  const source: RewardRpeEvidenceSource =
     sourceRaw === 'paper_close' || sourceRaw === 'polo_authoritative_close'
       ? sourceRaw
       : 'trade_close';
-  const substrate: RewardShadowSubstrate = payload.substrate === 'py' ? 'py' : 'ts';
+  const substrate: RewardRpeEvidenceSubstrate = payload.substrate === 'py' ? 'py' : 'ts';
   const symbolRaw = typeof payload.symbol === 'string' ? payload.symbol.trim() : '';
   const symbol = symbolRaw || 'UNKNOWN';
 
@@ -185,9 +179,9 @@ export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): Re
   };
 }
 
-export async function persistRewardShadowRecord(record: RewardShadowRecord): Promise<void> {
+export async function persistRewardRpeEvidenceRecord(record: RewardRpeEvidenceRecord): Promise<void> {
   await pool.query(
-    `INSERT INTO monkey_reward_shadow (
+    `INSERT INTO monkey_reward_rpe_evidence (
       ts, symbol, source, substrate,
       realized_pnl_frac, predicted_pnl_frac, sigma_residual, phasic_rpe,
       legibility, regime, regime_persisted,
@@ -221,16 +215,16 @@ export async function persistRewardShadowRecord(record: RewardShadowRecord): Pro
   );
 }
 
-export async function ingestRewardRpeDark(payloadInput: unknown): Promise<boolean> {
-  const payload = parseRewardRpeDarkPayload(payloadInput);
+export async function ingestRewardRpeLive(payloadInput: unknown): Promise<boolean> {
+  const payload = parseRewardRpePayload(payloadInput);
   if (!payload) return false;
   try {
-    const record = materializeRewardShadowRecord(payload);
+    const record = materializeRewardRpeEvidenceRecord(payload);
     if (!record) return false;
-    await persistRewardShadowRecord(record);
+    await persistRewardRpeEvidenceRecord(record);
     return true;
   } catch (error) {
-    logger.warn('reward-shadow ingest failed', {
+    logger.warn('reward-rpe evidence ingest failed', {
       error: error instanceof Error ? error.message : String(error),
     });
     return false;
