@@ -10641,9 +10641,9 @@ export class MonkeyKernel extends EventEmitter {
         ser = proposed.serotoninDelta;
         endo = proposed.endorphinDelta;
       } else {
-        dop = 0;
-        ser = 0;
-        endo = 0;
+        dop = legacyDop;
+        ser = legacySer;
+        endo = legacyEndo;
       }
     }
 

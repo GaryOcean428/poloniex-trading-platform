@@ -14,7 +14,7 @@
     "start": "node scripts/start.js",
     "build": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json && node scripts/flatten-dist.mjs && rm -rf .shared-build",
     "build:railway": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json --incremental false --sourceMap false --removeComments true && node scripts/flatten-dist.mjs && rm -rf .shared-build",
-    "test": "jest",
+    "test": "vitest run",
     "test:run": "vitest run",
     "test:coverage": "jest --coverage",
     "lint": "eslint src/**/*.ts",
