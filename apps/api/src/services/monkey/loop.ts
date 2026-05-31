@@ -10636,9 +10636,19 @@ export class MonkeyKernel extends EventEmitter {
     let ser = legacySer;
     let endo = legacyEndo;
     if (rewardRpeLive) {
-      dop = rewardRpeTonicOnly ? tonicBaseline : useRpeDeltas ? proposed.dopamineDelta : 0;
-      ser = useRpeDeltas ? proposed.serotoninDelta : 0;
-      endo = useRpeDeltas ? proposed.endorphinDelta : 0;
+      if (rewardRpeTonicOnly) {
+        dop = tonicBaseline;
+        ser = 0;
+        endo = 0;
+      } else if (useRpeDeltas) {
+        dop = proposed.dopamineDelta;
+        ser = proposed.serotoninDelta;
+        endo = proposed.endorphinDelta;
+      } else {
+        dop = 0;
+        ser = 0;
+        endo = 0;
+      }
     }
 
     this.pendingRewards.push({

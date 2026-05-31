@@ -136,8 +136,7 @@ export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): Re
   const proposedEndo = finiteNumber(payload.proposed_endo) ?? legacyEndo;
   const tonicBaseline = finiteNumber(payload.tonic_baseline) ?? 0;
   const valid = payload.valid === true
-    ? true
-    : Number.isFinite(realizedPnlFrac)
+    || (Number.isFinite(realizedPnlFrac)
       && Number.isFinite(phasicRpe)
       && Number.isFinite(legacyDop)
       && Number.isFinite(legacySer)
@@ -145,7 +144,7 @@ export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): Re
       && Number.isFinite(proposedDop)
       && Number.isFinite(proposedSer)
       && Number.isFinite(proposedEndo)
-      && Number.isFinite(tonicBaseline);
+      && Number.isFinite(tonicBaseline));
 
   return {
     ts,

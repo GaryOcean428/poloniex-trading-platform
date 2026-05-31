@@ -173,12 +173,12 @@ app.post('/api/health/monkey/reward-rpe-dark', authRateLimiter, authenticateToke
   res.json({ ok: true, accepted });
 });
 
-app.get('/monkey/reward/shadow_readiness', (_req: Request, res: Response) => {
+app.get('/monkey/reward/shadow_readiness', authenticateToken, (_req: Request, res: Response) => {
   const metrics = getRewardShadowReadinessTelemetry();
   res.json(serializeRewardShadowReadiness(metrics));
 });
 
-app.get('/api/health/monkey/reward/shadow_readiness', (_req: Request, res: Response) => {
+app.get('/api/health/monkey/reward/shadow_readiness', authenticateToken, (_req: Request, res: Response) => {
   const metrics = getRewardShadowReadinessTelemetry();
   res.json(serializeRewardShadowReadiness(metrics, true));
 });
