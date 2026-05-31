@@ -1146,7 +1146,8 @@ def run_tick(
 
     # REGIME-1 Phase 3 — compositional cell executive (3×3 (phase, direction)
     # matrix). Always evaluated for telemetry (shadow); only ENFORCED on size
-    # and lane bias when REGIME_COMPOSITIONAL_LIVE=true. When either axis is
+    # and lane bias when REGIME_COMPOSITIONAL_LIVE=true AND
+    # REGIME_COMPOSITIONAL_EXPECTANCY_VALIDATED=true. When either axis is
     # unresolved (None), the cell is None and the legacy path takes over.
     #
     # Layer 1 (phase): extracted from expectation_decision.raw["regime_label"]
@@ -1158,7 +1159,8 @@ def run_tick(
     # TREND_UP/TREND_DOWN matching tape sign. This prevents the basin CHOP
     # read from suppressing entries when the tape is clearly directional and
     # the basin hasn't integrated yet.
-    # Env: REGIME_TAPE_OVERRIDE_LIVE (default true; kill switch only).
+    # Env: REGIME_TAPE_OVERRIDE_LIVE (default true; temporary kill switch only).
+    # TODO(#763): migrate cognition rollout gates from env to ParameterRegistry.
     _qig_raw: dict = (
         getattr(expectation_decision, "raw", {}) if expectation_decision is not None else {}
     )
@@ -1173,9 +1175,9 @@ def run_tick(
     # Tape override — same logic as loop.ts Phase 5 (phi-derived threshold).
     cell_direction = _basin_direction_label
     _cell_direction_overridden = False
-    # Default ON (kill switch: set REGIME_TAPE_OVERRIDE_LIVE=****** to disable).
+    # Default ON (kill switch: set REGIME_TAPE_OVERRIDE_LIVE=false to disable).
     _tape_override_live = (
-        os.environ.get("REGIME_TAPE_OVERRIDE_LIVE", "true").lower() not in ("******", "0", "off")
+        os.environ.get("REGIME_TAPE_OVERRIDE_LIVE", "true").lower() not in ("false", "0", "off")
     )
     if (
         _tape_override_live
@@ -1199,10 +1201,17 @@ def run_tick(
         if cell_phase is not None and cell_direction is not None
         else None
     )
-    # Default OFF — shadow-only until REGIME_COMPOSITIONAL_LIVE=true is set.
-    cell_live = os.environ.get("REGIME_COMPOSITIONAL_LIVE") == "true"
+    # Default OFF — shadow-only unless explicitly enabled.
+    # HYPOTHESIS guard: enforce compositional actions only after
+    # expectancy validation is explicitly acknowledged.
+    # TODO(#763): migrate these temporary env rollout gates to ParameterRegistry.
+    _compositional_live_requested = os.environ.get("REGIME_COMPOSITIONAL_LIVE") == "true"
+    _compositional_expectancy_validated = (
+        os.environ.get("REGIME_COMPOSITIONAL_EXPECTANCY_VALIDATED") == "true"
+    )
+    cell_live = _compositional_live_requested and _compositional_expectancy_validated
 
-    # When REGIME_COMPOSITIONAL_LIVE=true, fold the cell's sizeMultiplier
+    # When live+validated, fold the cell's sizeMultiplier
     # into capped_equity. DISSOLVER cells floor at 0.2 (SAFETY_BOUND, not
     # zero — autonomy doctrine forbids hardcoded "don't trade" gates).
     # CHOP cells scale with phi × regimeConfidence floored at 0.2.

@@ -12,7 +12,7 @@ Per docs/regime-classification-hierarchy.md §"The composition":
   |             | TREND_UP                              | CHOP                                       | TREND_DOWN                              |
   | CREATOR     | Aggressive trend-follow, max size     | Trade lightly, expect breakout             | Aggressive trend-follow (short)         |
   | PRESERVER   | Ride established trend, tight stops   | Mean-revert (consolidating)                | Ride established short, tight stops     |
-  | DISSOLVER   | Don't trade — momentum reverting      | Sit out (max entropy)                      | Don't trade — momentum reverting        |
+  | DISSOLVER   | Reduced conviction — momentum reverting | Reduced conviction (max entropy)         | Reduced conviction — momentum reverting |
 
 QIG-pure: every multiplier and bias is a discrete-choice mapping from
 (phase, direction) — no free knob is interpolated. The cells encode the intent;
@@ -56,6 +56,8 @@ _DEFAULT_OBSERVER = CellObserverContext(phi=0.5, regime_confidence=1.0)
 # floor. Autonomy doctrine: the kernel always attempts a defensive-sized
 # position rather than fully sitting out. Catastrophic safety is owned by
 # should_auto_flatten (P15), not the regime classifier.
+# TODO(#763): move this safety floor to ParameterRegistry once MODES-1
+# migration lands; module constant is temporary rollout scaffolding.
 _SAFETY_BOUND = 0.2
 
 
@@ -150,8 +152,8 @@ def evaluate_cell(
     #
     # harvestTightness stays 'tight' — when sizing is reduced, exits are
     # aggressive to protect the smaller position from chop bleed.
-    # laneBias stays 'observe' so choose_lane biases toward the smallest
-    # lane (scalp) consistent with reduced-conviction sizing.
+    # laneBias stays 'observe'. choose_lane intentionally does NOT boost
+    # observe-bias; reduced-conviction behavior comes from sizing.
     if direction in ("TREND_UP", "TREND_DOWN"):
         return CellAction(
             phase=phase, direction=direction, lane_bias="observe",
@@ -197,9 +199,14 @@ def canonical_to_phase(regime: Optional[str]) -> Optional[RegimePhase]:
     return None
 
 
-# qig_warp internal label → MarketRegime lower-case string → RegimePhase.
+# qig_warp internal label → RegimePhase.
 # qig_warp emits "CRITICAL" | "ORDERED" | "DISORDERED" from
 # ``WarpBubble.qig_regime(...).regime.regime.value``.
+#
+# HYPOTHESIS: this mapping is an applied trading translation layer
+# (REGIME-1 protocol framing), not settled lattice-physics truth.
+# Keep shadow/live telemetry on and only enable live enforcement after
+# expectancy validation confirms this translation improves outcomes.
 _QIG_WARP_TO_PHASE: dict[str, RegimePhase] = {
     "CRITICAL":   "CREATOR",    # h/J ≈ h_c, phase transition → breakouts
     "ORDERED":    "PRESERVER",  # J-dominated, trending substrate
