@@ -201,6 +201,7 @@ import {
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
+  shouldRegimeHeldProfitExit,
   shouldScalpExit,
   shouldSlowBleedExit,
   chooseLane,
@@ -3714,13 +3715,14 @@ export class MonkeyKernel extends EventEmitter {
           ? unrealizedPnl / (positionNotional / Math.max(1, leverage.value))
           : undefined;
         let observerLossFloorRoiForHeldLane: number | undefined;
+        let observerLossFloorRoiPromiseForHeldLane: Promise<number> | undefined;
         const getObserverLossFloorRoiForHeldLane = async (): Promise<number> => {
           if (observerLossFloorRoiForHeldLane === undefined) {
-            const ringForHeldLane = await getOutcomeRingStats({
+            observerLossFloorRoiPromiseForHeldLane ??= getOutcomeRingStats({
               agent: 'K',  // executive exit path is K-scoped (see L3076 entry agent)
               lane: heldLane as LaneType,
-            });
-            observerLossFloorRoiForHeldLane = computeObserverLossFloorRoi(ringForHeldLane);
+            }).then((ringForHeldLane) => computeObserverLossFloorRoi(ringForHeldLane));
+            observerLossFloorRoiForHeldLane = await observerLossFloorRoiPromiseForHeldLane;
           }
           return observerLossFloorRoiForHeldLane;
         };
@@ -3872,7 +3874,14 @@ export class MonkeyKernel extends EventEmitter {
         const regimeHeldExitLive = process.env.REGIME_HELD_EXIT_LIVE === 'true';
         let observerLossFloorRoi = 0;
         let minProfitablePnl = Number.POSITIVE_INFINITY;
-        let profitClearsFees = false;
+        let regimeHeldProfit = shouldRegimeHeldProfitExit({
+          cellHarvestTightness: cellAction?.harvestTightness ?? '',
+          currentRoi,
+          unrealizedPnlUsdt: unrealizedPnl,
+          positionNotionalUsdt: positionNotional,
+          effectiveCostFrac,
+          observerLossFloorRoi,
+        });
         if (
           regimeHeldExitLive
           && cellAction !== null
@@ -3886,16 +3895,21 @@ export class MonkeyKernel extends EventEmitter {
             effectiveCostFrac,
             observerLossFloorRoi,
           );
-          profitClearsFees = unrealizedPnl !== undefined && unrealizedPnl > minProfitablePnl;
+          regimeHeldProfit = shouldRegimeHeldProfitExit({
+            cellHarvestTightness: cellAction.harvestTightness,
+            currentRoi,
+            unrealizedPnlUsdt: unrealizedPnl,
+            positionNotionalUsdt: positionNotional,
+            effectiveCostFrac,
+            observerLossFloorRoi,
+          });
         }
         if (
           !exitFired
           && regimeHeldExitLive
           && cellAction !== null
-          && cellAction.harvestTightness === 'tight'
           && currentRoi !== undefined
-          && currentRoi > 0
-          && profitClearsFees
+          && regimeHeldProfit.value
         ) {
           const roiPct = (currentRoi * 100).toFixed(3);
           const ageS = heldDurationS !== undefined ? `${heldDurationS.toFixed(0)}s` : 'unknown';
@@ -3937,8 +3951,7 @@ export class MonkeyKernel extends EventEmitter {
               : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
               : currentRoi === undefined ? 'roi_unknown'
               : currentRoi <= 0 ? 'not_profitable'
-              : !profitClearsFees ? 'below_profit_floor'
-              : 'unknown',
+              : regimeHeldProfit.reason,
             observerLossFloorRoi,
             minProfitablePnl,
           };

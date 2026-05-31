@@ -870,6 +870,39 @@ export function computeRegimeHeldProfitFloorPnl(
   return positionNotionalUsdt * Math.max(costFrac, lossFloorRoi);
 }
 
+export function shouldRegimeHeldProfitExit(args: {
+  cellHarvestTightness: string;
+  currentRoi: number | undefined;
+  unrealizedPnlUsdt: number | undefined;
+  positionNotionalUsdt: number;
+  effectiveCostFrac: number;
+  observerLossFloorRoi: number;
+}): ExecutiveDecision<boolean> {
+  const minProfitablePnl = computeRegimeHeldProfitFloorPnl(
+    args.positionNotionalUsdt,
+    args.effectiveCostFrac,
+    args.observerLossFloorRoi,
+  );
+  const derivation = {
+    effectiveCostFrac: Math.max(0, args.effectiveCostFrac),
+    observerLossFloorRoi: Math.max(0, args.observerLossFloorRoi),
+    minProfitablePnl,
+  };
+  if (args.cellHarvestTightness !== 'tight') {
+    return { value: false, reason: 'cell_not_tight', derivation };
+  }
+  if (args.currentRoi === undefined) {
+    return { value: false, reason: 'roi_unknown', derivation };
+  }
+  if (args.currentRoi <= 0) {
+    return { value: false, reason: 'not_profitable', derivation };
+  }
+  if (args.unrealizedPnlUsdt === undefined || args.unrealizedPnlUsdt <= minProfitablePnl) {
+    return { value: false, reason: 'below_profit_floor', derivation };
+  }
+  return { value: true, reason: 'profit_clears_floor', derivation };
+}
+
 /**
  * shouldAggregateHarvest — cross-kernel aggregate-PnL harvest gate.
  *

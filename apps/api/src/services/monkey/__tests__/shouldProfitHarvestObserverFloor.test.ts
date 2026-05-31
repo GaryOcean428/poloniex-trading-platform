@@ -12,7 +12,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { computeRegimeHeldProfitFloorPnl, shouldProfitHarvest } from '../executive.js';
+import {
+  computeRegimeHeldProfitFloorPnl,
+  shouldProfitHarvest,
+  shouldRegimeHeldProfitExit,
+} from '../executive.js';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -77,6 +81,21 @@ describe('shouldProfitHarvest — Commit 9 observer loss-floor (Fix C)', () => {
     it('uses the larger of observed cost and observer loss floor', () => {
       expect(computeRegimeHeldProfitFloorPnl(1000, 0.001, 0.003)).toBeCloseTo(3);
       expect(computeRegimeHeldProfitFloorPnl(1000, 0.004, 0.003)).toBeCloseTo(4);
+    });
+
+    it('blocks REGIME-2 held-profit exits below the learned floor', () => {
+      const result = shouldRegimeHeldProfitExit({
+        cellHarvestTightness: 'tight',
+        currentRoi: 0.00083,
+        unrealizedPnlUsdt: 0.41,
+        positionNotionalUsdt: 500,
+        effectiveCostFrac: 0,
+        observerLossFloorRoi: 0.0027,
+      });
+
+      expect(result.value).toBe(false);
+      expect(result.reason).toBe('below_profit_floor');
+      expect(result.derivation.minProfitablePnl).toBeCloseTo(1.35);
     });
   });
 
