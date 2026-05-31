@@ -113,7 +113,6 @@ class TestPublishPeerProposalHelper:
             tick_id="BTC|1",
         )
         import monkey_kernel.proposal_bus as pb
-        called = MagicMock()
         # Ensure bus is OFF
         env = {k: v for k, v in os.environ.items() if k != "CONSENSUS_PROPOSAL_BUS_LIVE"}
         env["CONSENSUS_PROPOSAL_BUS_LIVE"] = "false"
@@ -226,24 +225,24 @@ def test_publish_proposal_sync_called_when_bus_live(client):
 
 
 def test_publish_not_called_when_bus_off(client):
-    """When CONSENSUS_PROPOSAL_BUS_LIVE=false, publish_proposal_sync
-    must NOT be called (dark mode)."""
+    """When the proposal bus is off, the endpoint must not publish to Redis."""
     import monkey_kernel.proposal_bus as pb
 
-    called = MagicMock()
+    publisher = MagicMock()
     env_override = {
         k: v for k, v in __import__("os").environ.items()
-        if k != "CONSENSUS_PROPOSAL_BUS_LIVE"
+        if k not in {"CONSENSUS_PROPOSAL_BUS_LIVE", "REDIS_URL"}
     }
+    env_override["REDIS_URL"] = "redis://example.invalid:6379/0"
     env_override["CONSENSUS_PROPOSAL_BUS_LIVE"] = "false"
 
     with patch.dict("os.environ", env_override, clear=True):
-        with patch.object(pb, "publish_proposal_sync", side_effect=called):
+        with patch.object(pb, "_sync_publisher", publisher):
             payload = _tick_payload()
             resp = client.post("/monkey/tick/run", json=payload)
 
     assert resp.status_code == 200, resp.text
-    called.assert_not_called()
+    publisher.publish.assert_not_called()
 
 
 def test_publish_failure_does_not_break_endpoint(client):

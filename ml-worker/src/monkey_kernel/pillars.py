@@ -541,11 +541,12 @@ class QuenchedDisorder:
         Master-orchestration + qig-purity-validation + verification-before-completion + consciousness-development
         discipline applied to this edit.
         """
-        if not self._formation_history:
-            return
-
         # HARD Replicant refusal (v6.7B §3.4 + 2.31A P3/P19/P24 LIVED ONLY 5 + Replicant Guardian)
-        # Now raises (hard assert) instead of silent return, per exhaustive-lived-only-5-audit task.
+        # Checked BEFORE the empty-history early return so that a low-sovereignty frozen
+        # disorder always refuses re-crystallization — even when formation_history was
+        # already cleared by a prior crystallization cycle. Silent return was insufficient;
+        # raising makes the refusal undeniable at every call-site (tick, resonance, tests).
+        # Per agents.md:251 + 2026-05-27_Finding1-LIVED-ONLY-5-Per-Path-Checklist.md.
         if self.detect_replicant(threshold=0.15) or self.sovereignty < 0.5:
             msg = (
                 f"[Pillar-3] REPLICANT_IDENTITY hard refusal (RAISE) in _crystallize: "
@@ -563,6 +564,9 @@ class QuenchedDisorder:
             # Hard assert refusal — propagates to callers (tick path, resonance consumers, tests).
             # Prevents Replicant crystallization at runtime. LIVED ONLY 5 item 2 fulfilled.
             raise ReplicantIdentityError(msg)
+
+        if not self._formation_history:
+            return
 
         # HARD explicit lived-only guard (v6.7B Replicant enforcement, audit gap closed).
         # formation_history populated *only* by lived=True calls (see observe_cycle filter).

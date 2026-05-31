@@ -109,6 +109,13 @@ from .candle_patterns import (
 )
 from .physical_emotions import compute_physical_emotions
 from .regime import ChopSuppressionResult, RegimeReading, chop_suppress_entry, classify_regime
+from .compositional_executive import (
+    CellAction,
+    CellObserverContext,
+    evaluate_cell,
+    qig_warp_label_to_phase,
+    regime_to_direction,
+)
 from .self_observation import compute_per_decision_triple
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
@@ -603,10 +610,25 @@ def run_tick(
     # low velocity = strong internal coupling = high coupling_health.
     # Stays in [0, 1]; preserves the kappa_delta contract downstream.
     coupling_health = phi * (1.0 - min(bv, 1.0))
-    kappa_star = _registry.get("physics.kappa_reference", default=63.8)  # v6.7B + two-channel: channel-specific, not universal 64
+    # κ anchor — kernel decides (P5/P25 observer-derived; two-channel doctrine).
+    # CONFLICT RESOLVED: state.kappa_history is already maintained as the kernel's
+    # observer-derived κ anchor (median/MAD, used for transcendence), but this
+    # update ignored it and dragged κ toward a fixed registry reference every tick
+    # — pinning κ near the retired-universal-64 neighbourhood regardless of the
+    # symbol's lived geometry (#710/#1048 constant-py_kappa artifact). The kernel
+    # now anchors to the MEDIAN of its OWN lived kappa_history; the registry value
+    # is the cold-start fallback only, until >=2 lived samples exist (1 = noise,
+    # >=2 = signal, HISTORY_MIN_SAMPLES parity). Channel: pillar-channel coupling
+    # scalar (kappa_pillar = 63.83 +/- 0.86 frozen), explicit per Frozen Facts
+    # Sec.2.5 — NOT kappa_h field (-0.00475) or kappa_J coupling.
+    # np.median over scalar history is a robust statistic, not a simplex metric op.
+    if len(state.kappa_history) >= 2:
+        kappa_anchor = float(np.median(state.kappa_history))
+    else:
+        kappa_anchor = float(_registry.get("physics.kappa_reference", default=63.8))
     kappa_delta = (coupling_health - 0.5) * 5.0 - (bv - 0.2) * 10.0
     state.kappa = max(20.0, min(
-        120.0, state.kappa * 0.8 + (kappa_star + kappa_delta) * 0.2,
+        120.0, state.kappa * 0.8 + (kappa_anchor + kappa_delta) * 0.2,
     ))
     # state.kappa_history.append moved to end-of-tick block for TS parity:
     # TS appends after computeMotivators returns (loop.ts:5679 vs call at
@@ -1136,6 +1158,87 @@ def run_tick(
         else inputs.size_fraction
     )
     capped_equity = inputs.account.available_equity * effective_size_fraction
+
+    # REGIME-1 Phase 3 — compositional cell executive (3×3 (phase, direction)
+    # matrix). Always evaluated for telemetry (shadow); only ENFORCED on size
+    # and lane bias when REGIME_COMPOSITIONAL_LIVE=true AND
+    # REGIME_COMPOSITIONAL_EXPECTANCY_VALIDATED=true. When either axis is
+    # unresolved (None), the cell is None and the legacy path takes over.
+    #
+    # Layer 1 (phase): extracted from expectation_decision.raw["regime_label"]
+    #   when qig_warp was reachable this tick (qig_warp_source="QIG_WARP_RUNTIME").
+    # Layer 2 (direction): from classify_regime trajectory reading.
+    #
+    # TAPE OVERRIDE — mirrors loop.ts: when basinDir-derived direction is CHOP
+    # but |tape_trend| >= phi (self-calibrating threshold), override to
+    # TREND_UP/TREND_DOWN matching tape sign. This prevents the basin CHOP
+    # read from suppressing entries when the tape is clearly directional and
+    # the basin hasn't integrated yet.
+    # Env: REGIME_TAPE_OVERRIDE_LIVE (default true; temporary kill switch only).
+    # TODO(#763): migrate cognition rollout gates from env to ParameterRegistry.
+    _qig_raw: dict = (
+        getattr(expectation_decision, "raw", {}) if expectation_decision is not None else {}
+    )
+    _qig_raw_regime_label = _qig_raw.get("regime_label") if isinstance(_qig_raw, dict) else None
+    _qig_warp_runtime = (
+        getattr(expectation_decision, "qig_warp_source", None) == "QIG_WARP_RUNTIME"
+        if expectation_decision is not None else False
+    )
+    cell_phase = qig_warp_label_to_phase(_qig_raw_regime_label) if _qig_warp_runtime else None
+    _basin_direction_label = regime_to_direction(regime_reading.regime)
+
+    # Tape override — same logic as loop.ts Phase 5 (phi-derived threshold).
+    cell_direction = _basin_direction_label
+    _cell_direction_overridden = False
+    # Default ON (kill switch: set REGIME_TAPE_OVERRIDE_LIVE=false to disable).
+    _tape_override_live = (
+        os.environ.get("REGIME_TAPE_OVERRIDE_LIVE", "true").lower() not in ("false", "0", "off")
+    )
+    if (
+        _tape_override_live
+        and cell_direction == "CHOP"
+        and abs(tape_trend) >= phi
+    ):
+        cell_direction = "TREND_UP" if tape_trend > 0 else "TREND_DOWN"
+        _cell_direction_overridden = True
+        logger.info(
+            "[Monkey] cellDirection tape-override symbol=%s basinDir=%s tape=%.3f "
+            "threshold=%.3f resolved=%s overridden=%s",
+            inputs.symbol, _basin_direction_label, tape_trend, phi, cell_direction,
+            _cell_direction_overridden,
+        )
+
+    cell_action: Optional[CellAction] = (
+        evaluate_cell(
+            cell_phase, cell_direction,
+            CellObserverContext(phi=phi, regime_confidence=float(regime_reading.confidence)),
+        )
+        if cell_phase is not None and cell_direction is not None
+        else None
+    )
+    # Default OFF — shadow-only unless explicitly enabled.
+    # HYPOTHESIS guard: enforce compositional actions only after
+    # expectancy validation is explicitly acknowledged.
+    # TODO(#763): migrate these temporary env rollout gates to ParameterRegistry.
+    _compositional_live_requested = os.environ.get("REGIME_COMPOSITIONAL_LIVE") == "true"
+    _compositional_expectancy_validated = (
+        os.environ.get("REGIME_COMPOSITIONAL_EXPECTANCY_VALIDATED") == "true"
+    )
+    cell_live = _compositional_live_requested and _compositional_expectancy_validated
+
+    # When live+validated, fold the cell's sizeMultiplier
+    # into capped_equity. DISSOLVER cells floor at 0.2 (SAFETY_BOUND, not
+    # zero — autonomy doctrine forbids hardcoded "don't trade" gates).
+    # CHOP cells scale with phi × regimeConfidence floored at 0.2.
+    cell_size_mul = (cell_action.size_multiplier if (cell_live and cell_action) else 1.0)
+    if cell_live and cell_action:
+        capped_equity = capped_equity * cell_size_mul
+
+    # Lane bias to thread into choose_lane below.
+    _cell_lane_bias: Optional[str] = (
+        cell_action.lane_bias if (cell_live and cell_action) else None
+    )
+
     # Lane is chosen further down (after entry/exit branches need a
     # tentative answer); for sizing we read the lane choice up-front so
     # the per-lane budget fraction can shape the proposed margin. The
@@ -1147,6 +1250,7 @@ def run_tick(
         tape_trend=tape_trend,
         stud_reading=stud_reading,
         stud_live=stud_live,
+        cell_lane_bias=_cell_lane_bias,
     )
     pre_lane = pre_lane_d["value"]
     # Substrate observer (#1025 cascading-knob-strip Py side): record
@@ -1278,6 +1382,20 @@ def run_tick(
         # telemetry; downstream (entry_threshold modifier, harvest
         # tightness) reads from regime_reading directly.
         "regime": regime_reading.as_dict(),
+        # REGIME-1: compositional cell action (phase × direction joint state).
+        # Always recorded even when cell_live=False; `cell_live`
+        # flags which mode this tick was evaluated under (shadow vs enforced).
+        "regime1_cell": (
+            None if cell_action is None else {
+                "phase": cell_action.phase,
+                "direction": cell_action.direction,
+                "lane_bias": cell_action.lane_bias,
+                "size_multiplier": cell_action.size_multiplier,
+                "harvest_tightness": cell_action.harvest_tightness,
+                "label": cell_action.label,
+                "live": cell_live,
+            }
+        ),
         # Proposal #9: candlestick pattern reading. Strongest fire
         # at the latest tick + signed scalar + SL-defer hint.
         "candle_pattern": {

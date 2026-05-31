@@ -1407,6 +1407,7 @@ def choose_lane(
     tape_trend: float = 0.0,
     stud_reading: Optional[Any] = None,
     stud_live: bool = False,
+    cell_lane_bias: Optional[LaneType] = None,
 ) -> dict[str, Any]:
     """Select execution lane.
 
@@ -1425,6 +1426,12 @@ def choose_lane(
     Math.exp normalisation, no exp(). Per QIG_PURITY_KERNEL_REFERENCE §2
     and the 2026-05-19 QIG_QFI audit; mirrors the TS fix in PR #809.
     No temperature parameter — kappa already informs other gates.
+
+    Optional ``cell_lane_bias`` (REGIME-1 Phase 3) — the lane recommended
+    by the compositional 3×3 cell matrix. Adds a fixed +0.5 score boost to
+    that lane (strong nudge but not a hard override). 'observe' bias is
+    intentionally not boosted — DISSOLVER cells get size=0.2 elsewhere, so
+    steering the lane to observe here is redundant. Mirrors TS chooseLane.
     """
     if stud_live and stud_reading is not None:
         return choose_lane_stud(stud_reading)
@@ -1446,6 +1453,18 @@ def choose_lane(
         "trend": trend_score,
         "observe": observe_score,
     }
+
+    # REGIME-1 Phase 3 — compositional cell lane bias. Adds a fixed +0.5
+    # boost to the cell-recommended lane's score. Stacks with any prior.
+    # 'observe' bias is intentionally not boosted — DISSOLVER cells get
+    # size=0.2 floor elsewhere, so steering the lane to observe here is
+    # redundant and would prevent lane-prior recovery on regime transition.
+    if cell_lane_bias and cell_lane_bias != "observe":
+        prior_shift: dict[LaneType, float] = {
+            "scalp": 0.0, "swing": 0.0, "trend": 0.0, "observe": 0.0,
+        }
+        prior_shift[cell_lane_bias] = 0.5
+        scores = {k: v + prior_shift[k] for k, v in scores.items()}
 
     # Δ³ simplex projection — positive-orthant clamp + L1 normalize.
     # Same probability-over-lanes shape as the prior softmax, no exp().
@@ -1509,6 +1528,7 @@ def choose_lane(
             "sovereignty": s.sovereignty,
             "basin_velocity": s.basin_velocity,
             "tape_trend": tape_trend,
+            "cell_lane_bias": cell_lane_bias,
             "fallback_from_zero_budget": (
                 1 if fallback_from and fallback_from != lane else 0
             ),
