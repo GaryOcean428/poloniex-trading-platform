@@ -18,6 +18,7 @@ no longer exist; strategyloop + qig_warp is the sole stack.
 """
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -2303,38 +2304,50 @@ async def monkey_k_shadow_tick(request: Request):
             rolling_kelly_stats=rolling_kelly_stats,
         )
 
-        # State resolution: caller-provided prev_state wins. If absent we
-        # build an EPHEMERAL state seeded from the uniform basin — we do
-        # NOT touch the _symbol_states cache (that's owned by
-        # /monkey/tick/run for the cutover path).
+        # State resolution: caller-provided prev_state wins. If absent,
+        # seed from the live _symbol_states cache (read-only deepcopy) so
+        # that last_basin is populated and basin_velocity (Gamma) reflects
+        # real basin curvature — matching the TS side which maintains state
+        # across ticks.  We NEVER write back to _symbol_states from the
+        # shadow path; deepcopy guarantees run_tick's in-place mutations
+        # cannot corrupt the live state.
         #
         # Issue #710 — warm-start kappa: when the caller (TS loop) passes a
-        # top-level "kappa" field, seed fresh_symbol_state with that value so
-        # Python starts from the LIVE TS kappa instead of the cold-start
-        # default (63.8).  Without this, one EMA step from kappa=63.8 with a
-        # near-uniform identity basin always produces ~64.11 (bv=0, phi≈0.41),
-        # making py_kappa suspiciously constant across symbols and ticks.
-        # The fix does NOT pass prev_state — the k-shadow is still ephemeral
-        # (no accumulated history, no cache pollution); only the scalar kappa
-        # carries over so the EMA update lands in the right neighbourhood.
-        #
-        # TODO(#1047): when #1047 lands, extend this block to also seed the
-        # full SymbolState from the live cache (Gamma > 0 path). The scalar
-        # kappa warm-start here and the full-state seed in #1047 are
-        # complementary — merge into one state-resolution block.
+        # top-level "kappa" field, that value overrides whatever kappa the
+        # cached/fresh state carries — ensuring the shadow uses the exact
+        # kappa the TS computed for this tick instead of a stale cached or
+        # cold-start default (63.8).  For cache misses (cold start) the hint
+        # is passed via kappa_initial to fresh_symbol_state so the EMA
+        # update lands in the right neighbourhood.
+        # Both seeds are needed for a fully warm shadow: last_basin for
+        # real Gamma (#709) and kappa for input-accurate kappa (#710).
         prev_state_payload = payload.get("prev_state")
         kappa_hint: Optional[float] = None
         if prev_state_payload is not None:
             state = _symbol_state_from_dict(prev_state_payload)
         else:
+            # Parse kappa hint with safe conversion (used for both warm-start
+            # seed and cold-start baseline tick below).
             raw_kappa = payload.get("kappa")
             if raw_kappa is not None:
                 try:
                     kappa_hint = float(raw_kappa)
                 except (TypeError, ValueError):
                     kappa_hint = None
-            from monkey_kernel.basin import uniform_basin
-            state = fresh_symbol_state(symbol, uniform_basin(64), kappa_initial=kappa_hint)
+            # Live path key uses the raw (non-prefixed) instance_id.
+            live_instance_id = str(payload.get("instance_id", "monkey-primary"))
+            live_key = (live_instance_id, symbol)
+            if live_key in _symbol_states:
+                # Read-only borrow: deepcopy so run_tick's in-place mutations
+                # (e.g. last_basin update) stay in the shadow copy only.
+                state = copy.deepcopy(_symbol_states[live_key])
+                # Override kappa from TS payload so the shadow uses the exact
+                # kappa scalar the TS computed for this tick, not a cached value.
+                if kappa_hint is not None:
+                    state.kappa = kappa_hint
+            else:
+                from monkey_kernel.basin import uniform_basin
+                state = fresh_symbol_state(symbol, uniform_basin(64), kappa_initial=kappa_hint)
 
         # Ephemeral autonomic / ocean / foresight / heart so the shadow
         # tick cannot accumulate kernel-bus events into the live

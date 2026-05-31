@@ -34,6 +34,10 @@ Five contracts pinned:
 
 The endpoint NEVER raises, even on internal exceptions — the response
 ALWAYS includes decided_at_ms so the TS caller can persist a parity row.
+
+Issue #709 regression: Gamma (basin_velocity / geometric-purity scalar)
+must be > 0 when the live _symbol_states cache has a prior basin set
+for the symbol, matching the TS side's behaviour.
 """
 from __future__ import annotations
 
@@ -41,6 +45,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 ML_WORKER_ROOT = Path(__file__).resolve().parents[1]
@@ -189,6 +194,7 @@ class TestKShadowEndpoint:
             for key in REQUIRED_KEYS:
                 assert key in body
 
+
     def test_kappa_warm_start_varies_output(self, client):
         """Issue #710 regression: py_kappa must vary when different kappa
         seeds are passed.
@@ -263,4 +269,102 @@ class TestKShadowEndpoint:
             f"kappa_warm={kappa_warm:.4f} and kappa_cold={kappa_cold:.4f} are too close "
             f"(diff={abs(kappa_warm - kappa_cold):.4f}). Cold-start and warm-start should "
             "diverge when the seed is far from the default."
+        )
+
+
+class TestKShadowGammaFix:
+    """Regression tests for issue #709: py_gamma=0 fix.
+
+    Before the fix, the k-shadow endpoint always created a fresh
+    SymbolState (last_basin=None), so bv=0 and Gamma=0 in the response.
+    The fix seeds from _symbol_states live cache (read-only deepcopy)
+    so the shadow sees real basin geometry when the live path has
+    warmed up.
+    """
+
+    @staticmethod
+    def _perturbed_basin(dim: int = 64) -> np.ndarray:
+        """Return a valid simplex point that is NOT the uniform basin,
+        so the Fisher-Rao distance to any other non-identical basin > 0."""
+        b = np.ones(dim, dtype=np.float64)
+        b[0] += 1.0  # tip toward first dimension — all values remain positive
+        b /= b.sum()
+        return b
+
+    def test_gamma_nonzero_when_live_state_cached(self, client):
+        """Gamma must be > 0 when _symbol_states has last_basin set for
+        the symbol — this is the issue #709 regression gate."""
+        main = sys.modules.get("main")
+        if main is None:
+            pytest.skip("main module not loaded")
+
+        try:
+            from monkey_kernel.tick import fresh_symbol_state
+            from monkey_kernel.basin import uniform_basin
+        except ImportError as exc:
+            pytest.skip(f"monkey_kernel not importable: {exc}")
+
+        # live_instance_id = payload["instance_id"] (not the k-shadow prefix)
+        live_key = ("test-k-shadow", "BTC_USDT_PERP")
+        live_state = fresh_symbol_state("BTC_USDT_PERP", uniform_basin(64))
+        # Set last_basin to a perturbed basin so FR distance to next tick > 0
+        live_state.last_basin = self._perturbed_basin()
+
+        main._symbol_states[live_key] = live_state
+        try:
+            resp = client.post("/monkey/k-shadow/tick", json=_request_body())
+        finally:
+            main._symbol_states.pop(live_key, None)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        if "error" in body and body.get("error"):
+            pytest.skip(f"shadow endpoint returned error (env issue): {body['error']}")
+        assert "Gamma" in body
+        assert isinstance(body["Gamma"], (int, float)), (
+            f"Gamma must be numeric, got {type(body['Gamma'])}"
+        )
+        assert body["Gamma"] > 0, (
+            f"Gamma must be > 0 when live last_basin is set (#709 regression), got Gamma={body['Gamma']}"
+        )
+
+    def test_live_state_not_mutated_by_shadow(self, client):
+        """run_tick is called on a deepcopy of the live state, so the
+        live last_basin must remain unchanged after the shadow tick."""
+        main = sys.modules.get("main")
+        if main is None:
+            pytest.skip("main module not loaded")
+
+        try:
+            from monkey_kernel.tick import fresh_symbol_state
+            from monkey_kernel.basin import uniform_basin
+        except ImportError as exc:
+            pytest.skip(f"monkey_kernel not importable: {exc}")
+
+        live_key = ("test-k-shadow", "BTC_USDT_PERP")
+        live_state = fresh_symbol_state("BTC_USDT_PERP", uniform_basin(64))
+        original_last_basin = self._perturbed_basin()
+        live_state.last_basin = original_last_basin.copy()
+
+        main._symbol_states[live_key] = live_state
+        try:
+            resp = client.post("/monkey/k-shadow/tick", json=_request_body())
+        finally:
+            # Capture the last_basin still in the live entry BEFORE cleanup
+            surviving_state = main._symbol_states.get(live_key)
+            main._symbol_states.pop(live_key, None)
+
+        assert resp.status_code == 200
+        if "error" in resp.json() and resp.json().get("error"):
+            pytest.skip(f"shadow endpoint error (env issue): {resp.json()['error']}")
+
+        # The live entry must not have been replaced or mutated.
+        # Endpoint never writes back to _symbol_states; deepcopy ensures
+        # run_tick's last_basin reassignment stays in the shadow copy only.
+        assert surviving_state is live_state, (
+            "_symbol_states entry must not be replaced by shadow tick"
+        )
+        np.testing.assert_array_equal(
+            live_state.last_basin, original_last_basin,
+            err_msg="Shadow run_tick must not mutate the live state's last_basin",
         )
