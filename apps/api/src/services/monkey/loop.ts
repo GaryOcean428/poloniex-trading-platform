@@ -196,10 +196,12 @@ import {
   shouldAggregateBleedExit,
   shouldAggregateHarvest,
   shouldBracketExit,
+  computeRegimeHeldProfitFloorPnl,
   shouldExtendBracket,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
+  shouldRegimeHeldProfitExit,
   shouldScalpExit,
   shouldSlowBleedExit,
   chooseLane,
@@ -3712,6 +3714,18 @@ export class MonkeyKernel extends EventEmitter {
         const currentRoi = positionNotional > 0
           ? unrealizedPnl / (positionNotional / Math.max(1, leverage.value))
           : undefined;
+        let heldLaneObserverFloorRoi: number | undefined;
+        let heldLaneObserverFloorPromise: Promise<number> | undefined;
+        const getHeldLaneObserverFloor = async (): Promise<number> => {
+          if (heldLaneObserverFloorRoi === undefined) {
+            heldLaneObserverFloorPromise ??= getOutcomeRingStats({
+              agent: 'K',  // executive exit path is K-scoped (see L3076 entry agent)
+              lane: heldLane as LaneType,
+            }).then((ringForHeldLane) => computeObserverLossFloorRoi(ringForHeldLane));
+            heldLaneObserverFloorRoi = await heldLaneObserverFloorPromise;
+          }
+          return heldLaneObserverFloorRoi;
+        };
         const regimeChangeStreak = state.regimeChangeStreakByLane[heldLane] ?? 0;
         const convictionFailedStreak = state.convictionFailedStreakByLane[heldLane] ?? 0;
         const directionalDisagreementStreak =
@@ -3843,81 +3857,53 @@ export class MonkeyKernel extends EventEmitter {
         // (PR #792) governs entry posture; this rule governs the symmetric
         // exit posture on held positions when the regime has degraded toward
         // preservation-mandate cells.
-        //
-        // Threshold: any positive ROI (currentRoi > 0). The cell-tightness
-        // signal is qualitative ("the regime says preserve") — once any
-        // profit exists, take it rather than risk it evaporating into the
-        // bleeding chop. This is structurally distinct from the trailing
-        // harvest (giveback-based) and stale-bleed (negative-ROI duration)
-        // gates that operate without regime context.
-        // Fee-aware floor — REGIME-2 must clear round-trip taker on the
-        // realized close (close uses MARKET, so taker on at least the
-        // exit; assume taker on both legs as conservative baseline when
-        // entry routing isn't known here). Poloniex futures taker = 0.075%
-        // notional one-side. Base threshold = notional × (2 × taker + 3bps slip).
-        //
-        // TIME-DECAY: fresh positions need full floor (prevents fee-only
-        // closes). Aged positions get a relaxed floor (prevents stuck-in-
-        // no-man's-land where a small profit sits open for 20+ minutes
-        // waiting for the full floor to clear). After REGIME_HELD_FEE_DECAY_S
-        // (default 300s = 5 min) the floor scales linearly toward 0 at
-        // REGIME_HELD_FEE_FLOOR_ZERO_S (default 900s = 15 min). User
-        // observation 2026-05-19 08:50: Agent T ETH positions held 20-30
-        // min unable to fire REGIME-2 because the full floor never cleared.
-        // Observer-derived fee/slip floor (replaces hardcoded
-        // TAKER_FEE_FRAC + FEE_SAFETY_BPS — P1 violation).
-        // Use rolling upper-tercile of observed (kernel_pnl - realized_pnl)
-        // per notional once we have MIN_SAMPLES observations; cold-start
-        // falls back to the env-tunable SAFETY_BOUND.
-        //
-        // Master toggle MONKEY_FEE_FLOOR_LIVE (default true):
-        //   true  — apply the floor (legacy fee-aware behavior)
-        //   false — floor is 0; ANY positive PnL clears the gate.
-        //
-        // Set to `false` under fee-free trading (operator's Poloniex tier
-        // pays zero on both maker and taker per CSV verification 2026-05-19).
-        // The floor was originally calibrated against ~0.18% round-trip
-        // taker fees + slip buffer; at zero fees, ANY positive ROI is net
-        // positive and the gate is just blocking legitimate small wins.
-        const feeFloorLive = process.env.MONKEY_FEE_FLOOR_LIVE !== 'false';
-        const effectiveCostFrac = !feeFloorLive ? 0 : (() => {
+        // Floor: pure observer/reward learning. REGIME-2 no longer treats
+        // "any positive" as enough, because tiny green exits can sit too
+        // close to the zero/breakdown line and teach artificial wins. It
+        // must clear the greater of:
+        //   1. rolling realized cost/slip from prior closes, and
+        //   2. the same outcome-ring loss floor used by profit harvest.
+        // Both self-relax from lived rewards; no fee-decay/operator knobs.
+        const effectiveCostFrac = (() => {
           const n = this.rollingEffectiveCostFrac.length;
-          // 2026-05-25 strip — fee-floor cold default is purely
-          // observer-derived. Cold start (n < min samples) → 0,
-          // letting chemistry learn from any fee losses naturally.
           if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return 0;
-          // Upper tercile of observed costs — conservatively assumes
-          // worst-case slip from the rolling distribution rather than
-          // the median (which would underestimate on noisy days).
           const sorted = [...this.rollingEffectiveCostFrac].sort((a, b) => a - b);
           const terciIdx = Math.min(n - 1, Math.floor(n * 0.67));
           return sorted[terciIdx] ?? 0;
         })();
-        const baseMinProfitablePnl =
-          positionNotional > 0
-            ? positionNotional * effectiveCostFrac
-            : Number.POSITIVE_INFINITY;
-        // envNumber respects 0 as "disable decay grace period" instead of
-        // falsy-defaulting to 300. Bug fixed 2026-05-19 — see envNumber helper.
-        const feeDecayStartS = envNumber('REGIME_HELD_FEE_DECAY_S', 300);
-        const feeDecayZeroS = envNumber('REGIME_HELD_FEE_FLOOR_ZERO_S', 900);
-        const decayFraction = (() => {
-          if (heldDurationS === undefined || heldDurationS <= feeDecayStartS) return 1.0;
-          if (heldDurationS >= feeDecayZeroS) return 0.0;
-          // Linear ramp from 1.0 at feeDecayStartS to 0.0 at feeDecayZeroS.
-          return 1.0 - (heldDurationS - feeDecayStartS) / (feeDecayZeroS - feeDecayStartS);
-        })();
-        const minProfitablePnl = baseMinProfitablePnl * decayFraction;
-        const profitClearsFees =
-          unrealizedPnl !== undefined && unrealizedPnl > minProfitablePnl;
+        const regimeHeldExitLive = process.env.REGIME_HELD_EXIT_LIVE === 'true';
+        let observerLossFloorRoi = 0;
+        let minProfitablePnl = Number.POSITIVE_INFINITY;
+        let regimeHeldProfit: ReturnType<typeof shouldRegimeHeldProfitExit> | undefined;
         if (
           !exitFired
-          && process.env.REGIME_HELD_EXIT_LIVE === 'true'
+          && regimeHeldExitLive
           && cellAction !== null
           && cellAction.harvestTightness === 'tight'
           && currentRoi !== undefined
           && currentRoi > 0
-          && profitClearsFees
+        ) {
+          observerLossFloorRoi = await getHeldLaneObserverFloor();
+          minProfitablePnl = computeRegimeHeldProfitFloorPnl(
+            positionNotional,
+            effectiveCostFrac,
+            observerLossFloorRoi,
+          );
+          regimeHeldProfit = shouldRegimeHeldProfitExit({
+            cellHarvestTightness: cellAction.harvestTightness,
+            currentRoi,
+            unrealizedPnlUsdt: unrealizedPnl,
+            positionNotionalUsdt: positionNotional,
+            effectiveCostFrac,
+            observerLossFloorRoi,
+          });
+        }
+        if (
+          !exitFired
+          && regimeHeldExitLive
+          && cellAction !== null
+          && currentRoi !== undefined
+          && regimeHeldProfit?.value === true
         ) {
           const roiPct = (currentRoi * 100).toFixed(3);
           const ageS = heldDurationS !== undefined ? `${heldDurationS.toFixed(0)}s` : 'unknown';
@@ -3925,8 +3911,9 @@ export class MonkeyKernel extends EventEmitter {
           reason =
             `regime_held_exit: cell ${cellAction.label}, ROI ${roiPct}% — `
             + `preservation-mandate cell + profitable position → take profit now `
-            + `(pnl=$${unrealizedPnl?.toFixed(4)} > fees=$${minProfitablePnl.toFixed(4)} `
-            + `[decay=${decayFraction.toFixed(2)} age=${ageS}])`;
+            + `(pnl=$${unrealizedPnl?.toFixed(4)} > floor=$${minProfitablePnl.toFixed(4)} `
+            + `[observerLossFloorRoi=${(observerLossFloorRoi * 100).toFixed(4)}% `
+            + `cost=${(effectiveCostFrac * 100).toFixed(4)}% age=${ageS}])`;
           exitFired = true;
           derivation.scalp = {
             exitTypeBit: 6,  // REGIME-2 regime-aware held exit
@@ -3941,6 +3928,8 @@ export class MonkeyKernel extends EventEmitter {
             cellHarvestTightness: cellAction.harvestTightness,
             currentRoi,
             unrealizedPnl,
+            observerLossFloorRoi,
+            minProfitablePnl,
           };
         } else if (cellAction !== null) {
           // Telemetry — record the would-fire condition each tick so the
@@ -3952,12 +3941,13 @@ export class MonkeyKernel extends EventEmitter {
             cellHarvestTightness: cellAction.harvestTightness,
             currentRoi: currentRoi ?? null,
             reason:
-              process.env.REGIME_HELD_EXIT_LIVE !== 'true' ? 'flag_off'
+              !regimeHeldExitLive ? 'flag_off'
               : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
               : currentRoi === undefined ? 'roi_unknown'
               : currentRoi <= 0 ? 'not_profitable'
-              : !profitClearsFees ? 'below_fee_floor'
-              : 'unknown',
+              : regimeHeldProfit?.reason ?? 'below_profit_floor',
+            observerLossFloorRoi,
+            minProfitablePnl,
           };
         }
 
@@ -4158,11 +4148,7 @@ export class MonkeyKernel extends EventEmitter {
           // is below the kernel's own observed loss-magnitude floor so
           // winners run to commensurate size. Pure observer; uses ring
           // we may have already fetched for sizing.
-          const ringForHarvest = await getOutcomeRingStats({
-            agent: 'K',  // executive harvest path is K-scoped (see L3076 entry agent)
-            lane: heldLane as LaneType,
-          });
-          const observerLossFloorRoi = computeObserverLossFloorRoi(ringForHarvest);
+          const observerLossFloorRoi = await getHeldLaneObserverFloor();
           const harvest = shouldProfitHarvest(
             unrealizedPnl,
             lanePeak,

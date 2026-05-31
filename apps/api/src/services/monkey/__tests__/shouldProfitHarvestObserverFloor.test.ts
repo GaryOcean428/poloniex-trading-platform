@@ -12,7 +12,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { shouldProfitHarvest } from '../executive.js';
+import {
+  computeRegimeHeldProfitFloorPnl,
+  shouldProfitHarvest,
+  shouldRegimeHeldProfitExit,
+} from '../executive.js';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -60,6 +64,39 @@ describe('shouldProfitHarvest — Commit 9 observer loss-floor (Fix C)', () => {
     // peakFrac 1% > activation; currentFrac 0.5% < trailingFloor (peak × 0.7 = 0.7%)
     expect(result.value).toBe(true);
     expect(result.reason).toMatch(/trailing_harvest|abs_usd_harvest/);
+  });
+
+  describe('REGIME-2 held-exit profit floor', () => {
+    it('requires tiny green exits to clear the observer loss floor', () => {
+      const floor = computeRegimeHeldProfitFloorPnl(
+        500,     // notional
+        0,       // no observed fee drag
+        0.0027,  // observer floor from outcome ring
+      );
+
+      expect(floor).toBeCloseTo(1.35);
+      expect(0.41).toBeLessThan(floor);
+    });
+
+    it('uses the larger of observed cost and observer loss floor', () => {
+      expect(computeRegimeHeldProfitFloorPnl(1000, 0.001, 0.003)).toBeCloseTo(3);
+      expect(computeRegimeHeldProfitFloorPnl(1000, 0.004, 0.003)).toBeCloseTo(4);
+    });
+
+    it('blocks REGIME-2 held-profit exits below the learned floor', () => {
+      const result = shouldRegimeHeldProfitExit({
+        cellHarvestTightness: 'tight',
+        currentRoi: 0.00083,
+        unrealizedPnlUsdt: 0.41,
+        positionNotionalUsdt: 500,
+        effectiveCostFrac: 0,
+        observerLossFloorRoi: 0.0027,
+      });
+
+      expect(result.value).toBe(false);
+      expect(result.reason).toBe('below_profit_floor');
+      expect(result.derivation.minProfitablePnl).toBeCloseTo(1.35);
+    });
   });
 
   it('floor > current ROI → harvest SUPPRESSED with diagnostic reason', () => {
