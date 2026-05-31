@@ -109,6 +109,13 @@ from .candle_patterns import (
 )
 from .physical_emotions import compute_physical_emotions
 from .regime import ChopSuppressionResult, RegimeReading, chop_suppress_entry, classify_regime
+from .compositional_executive import (
+    CellAction,
+    CellObserverContext,
+    evaluate_cell,
+    qig_warp_label_to_phase,
+    regime_to_direction,
+)
 from .self_observation import compute_per_decision_triple
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
@@ -1136,6 +1143,78 @@ def run_tick(
         else inputs.size_fraction
     )
     capped_equity = inputs.account.available_equity * effective_size_fraction
+
+    # REGIME-1 Phase 3 — compositional cell executive (3×3 (phase, direction)
+    # matrix). Always evaluated for telemetry (shadow); only ENFORCED on size
+    # and lane bias when REGIME_COMPOSITIONAL_LIVE=true. When either axis is
+    # unresolved (None), the cell is None and the legacy path takes over.
+    #
+    # Layer 1 (phase): extracted from expectation_decision.raw["regime_label"]
+    #   when qig_warp was reachable this tick (qig_warp_source="QIG_WARP_RUNTIME").
+    # Layer 2 (direction): from classify_regime trajectory reading.
+    #
+    # TAPE OVERRIDE — mirrors loop.ts: when basinDir-derived direction is CHOP
+    # but |tape_trend| >= phi (self-calibrating threshold), override to
+    # TREND_UP/TREND_DOWN matching tape sign. This prevents the basin CHOP
+    # read from suppressing entries when the tape is clearly directional and
+    # the basin hasn't integrated yet.
+    # Env: REGIME_TAPE_OVERRIDE_LIVE (default true; kill switch only).
+    _qig_raw: dict = (
+        getattr(expectation_decision, "raw", {}) if expectation_decision is not None else {}
+    )
+    _qig_raw_regime_label = _qig_raw.get("regime_label") if isinstance(_qig_raw, dict) else None
+    _qig_warp_runtime = (
+        getattr(expectation_decision, "qig_warp_source", None) == "QIG_WARP_RUNTIME"
+        if expectation_decision is not None else False
+    )
+    cell_phase = qig_warp_label_to_phase(_qig_raw_regime_label) if _qig_warp_runtime else None
+    _basin_direction_label = regime_to_direction(regime_reading.regime)
+
+    # Tape override — same logic as loop.ts Phase 5 (phi-derived threshold).
+    cell_direction = _basin_direction_label
+    cell_direction_overridden = False
+    # Default ON (kill switch: set REGIME_TAPE_OVERRIDE_LIVE=****** to disable).
+    _tape_override_live = (
+        os.environ.get("REGIME_TAPE_OVERRIDE_LIVE", "true").lower() not in ("******", "0", "off")
+    )
+    if (
+        _tape_override_live
+        and cell_direction == "CHOP"
+        and abs(tape_trend) >= phi
+    ):
+        cell_direction = "TREND_UP" if tape_trend > 0 else "TREND_DOWN"
+        cell_direction_overridden = True
+        logger.info(
+            "[Monkey] cellDirection tape-override symbol=%s basinDir=%s tape=%.3f "
+            "threshold=%.3f resolved=%s",
+            inputs.symbol, _basin_direction_label, tape_trend, phi, cell_direction,
+        )
+    del cell_direction_overridden  # surfaced via log only; suppress unused-variable lint
+
+    cell_action: Optional[CellAction] = (
+        evaluate_cell(
+            cell_phase, cell_direction,
+            CellObserverContext(phi=phi, regime_confidence=float(regime_reading.confidence)),
+        )
+        if cell_phase is not None and cell_direction is not None
+        else None
+    )
+    # Default OFF — shadow-only until REGIME_COMPOSITIONAL_LIVE=true is set.
+    cell_live = os.environ.get("REGIME_COMPOSITIONAL_LIVE") == "true"
+
+    # When REGIME_COMPOSITIONAL_LIVE=true, fold the cell's sizeMultiplier
+    # into capped_equity. DISSOLVER cells floor at 0.2 (SAFETY_BOUND, not
+    # zero — autonomy doctrine forbids hardcoded "don't trade" gates).
+    # CHOP cells scale with phi × regimeConfidence floored at 0.2.
+    cell_size_mul = (cell_action.size_multiplier if (cell_live and cell_action) else 1.0)
+    if cell_live and cell_action:
+        capped_equity = capped_equity * cell_size_mul
+
+    # Lane bias to thread into choose_lane below.
+    _cell_lane_bias: Optional[str] = (
+        cell_action.lane_bias if (cell_live and cell_action) else None
+    )
+
     # Lane is chosen further down (after entry/exit branches need a
     # tentative answer); for sizing we read the lane choice up-front so
     # the per-lane budget fraction can shape the proposed margin. The
@@ -1147,6 +1226,7 @@ def run_tick(
         tape_trend=tape_trend,
         stud_reading=stud_reading,
         stud_live=stud_live,
+        cell_lane_bias=_cell_lane_bias,
     )
     pre_lane = pre_lane_d["value"]
     # Substrate observer (#1025 cascading-knob-strip Py side): record
@@ -1278,6 +1358,20 @@ def run_tick(
         # telemetry; downstream (entry_threshold modifier, harvest
         # tightness) reads from regime_reading directly.
         "regime": regime_reading.as_dict(),
+        # REGIME-1: compositional cell action (phase × direction joint state).
+        # Always recorded even when cell_live=False; `cell_live`
+        # flags which mode this tick was evaluated under (shadow vs enforced).
+        "regime1_cell": (
+            None if cell_action is None else {
+                "phase": cell_action.phase,
+                "direction": cell_action.direction,
+                "lane_bias": cell_action.lane_bias,
+                "size_multiplier": cell_action.size_multiplier,
+                "harvest_tightness": cell_action.harvest_tightness,
+                "label": cell_action.label,
+                "live": cell_live,
+            }
+        ),
         # Proposal #9: candlestick pattern reading. Strongest fire
         # at the latest tick + signed scalar + SL-defer hint.
         "candle_pattern": {
