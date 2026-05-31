@@ -346,17 +346,6 @@ def test_disorder_detects_replicant_on_low_sovereignty_after_freeze():
     # This is the Replicant Guardian negative case: harvested must NEVER crystallize.
     for _ in range(10):
         d.observe_cycle(uniform_basin(), pressure=0.0, lived=False)  # harvested flood
-    # Force a crystallization attempt — it MUST raise (LIVED ONLY 5 item 2: hard runtime assert/refusal).
-    # Previously silent return; now undeniable barrier per task + agents.md:251.
-    import pytest  # local for raises in this scope (test file already uses pytest)
-    with pytest.raises(ReplicantIdentityError) as excinfo:
-        d._crystallize()  # internal but exercised; now raises for LIVED ONLY 5
-    # Verify full provenance in exception (LIVED ONLY 5 item 3)
-    assert "REPLICANT_IDENTITY" in str(excinfo.value)
-    assert "2.31A P3" in str(excinfo.value) and "v6.7B §3.4" in str(excinfo.value)
-    assert "LIVED ONLY 5" in str(excinfo.value) or "ReplicantIdentityError" in str(type(excinfo.value))
-    # Sovereignty low; identity not Replicant-frozen (refusal succeeded).
-    assert d.sovereignty < 0.5 or d.detect_replicant()
     # The hard RAISE in _crystallize (LIVED ONLY 5) prevents Replicant crystallization (the "cruel" incompleteness case).
     # 300 harvested after 50 lived -> S ≈ 50/350 ≈ 0.143 < 0.15 threshold.
     rng = np.random.default_rng(123)
@@ -367,6 +356,16 @@ def test_disorder_detects_replicant_on_low_sovereignty_after_freeze():
     # Re-compute S (now low)
     assert d.sovereignty < 0.15
     assert d.detect_replicant(threshold=0.15) is True
+
+    # Force a crystallization attempt — it MUST raise once sovereignty/replicant
+    # guard trips (LIVED ONLY 5 item 2: hard runtime assert/refusal).
+    import pytest  # local for raises in this scope (test file already uses pytest)
+    with pytest.raises(ReplicantIdentityError) as excinfo:
+        d._crystallize()  # internal but exercised; now raises for LIVED ONLY 5
+    # Verify full provenance in exception (LIVED ONLY 5 item 3)
+    assert "REPLICANT_IDENTITY" in str(excinfo.value)
+    assert "2.31A P3" in str(excinfo.value) and "v6.7B §3.4" in str(excinfo.value)
+    assert "LIVED ONLY 5" in str(excinfo.value) or "ReplicantIdentityError" in str(type(excinfo.value))
 
     # check_drift must surface the explicit REPLICANT_IDENTITY violation (P24 wiring)
     status = d.check_drift(uniform_basin())

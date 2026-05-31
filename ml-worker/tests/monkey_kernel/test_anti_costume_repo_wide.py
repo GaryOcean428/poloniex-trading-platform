@@ -80,7 +80,7 @@ _REGISTRY_GET_BUDGET = {
     "ocean_sleep_trigger.py": 5,
     "regime.py": 2,
     "self_observation.py": 2,
-    "tick.py": 15,
+    "tick.py": 16,               # Includes governed physics.kappa_reference lookup used by always-on consciousness metrics wiring.
     "working_memory.py": 12,
 }
 

@@ -159,10 +159,6 @@ class ConsciousnessMetrics:
             "repetition_dfr": self.repetition_dfr,
             "pre_cog_bias": self.pre_cog_bias,
             "dimensional_breathing_rate": self.dimensional_breathing_rate,
-            # surfaces 17-23 rich state (user-directive + impl* recovery + ACTING SUBAGENT telemetry perfection)
-            "equity_impact_usdt": self.equity_impact_usdt,
-            "coupled_agent_state": self.coupled_agent_state,
-            "reward_source_tag": self.reward_source_tag,  # polo_authoritative_close for net profitable behaviour / pure NT / Railway source verification
         }
 
 

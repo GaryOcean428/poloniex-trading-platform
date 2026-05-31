@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from monkey_kernel.sensations import Sensations, compute_sensations  # noqa: E402
-from monkey_kernel.state import BASIN_DIM, BasinState, NeurochemicalState  # noqa: E402
+from monkey_kernel.state import BASIN_DIM, BasinState, KAPPA_STAR, NeurochemicalState  # noqa: E402
 
 
 def _nc(dop: float = 0.5, gaba: float = 0.5, ne: float = 0.5) -> NeurochemicalState:
@@ -39,7 +39,7 @@ def _state(
     return BasinState(
         basin=basin if basin is not None else _uniform(),
         identity_basin=identity if identity is not None else _uniform(),
-        phi=0.5, kappa=64.0,
+        phi=0.5, kappa=KAPPA_STAR(),
         regime_weights={"quantum": 1 / 3, "efficient": 1 / 3, "equilibrium": 1 / 3},
         sovereignty=0.5, basin_velocity=basin_velocity,
         neurochemistry=_nc(dop=dop, gaba=gaba, ne=ne),
@@ -185,7 +185,7 @@ class TestCanonicalUcpSensations:
     def test_activated_zero_at_kappa_star(self) -> None:
         """κ = κ* → no excess above → activated = tanh(0) = 0."""
         st = _state()
-        st.kappa = 64.0  # KAPPA_STAR
+        st.kappa = KAPPA_STAR()
         sen = compute_sensations(st)
         assert sen.activated == pytest.approx(0.0, abs=1e-12)
         assert sen.dampened == pytest.approx(0.0, abs=1e-12)
