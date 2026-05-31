@@ -227,7 +227,10 @@ import {
 } from './outcomeRingStats.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
-import { ingestRewardRpeDark } from './rewardShadowSync.js';
+import {
+  ingestRewardRpeDark,
+  isRewardRpeLiveEnabled,
+} from './rewardShadowSync.js';
 import {
   getRewardShadowReadinessTelemetry,
   startRewardShadowReadinessJob,
@@ -10577,7 +10580,7 @@ export class MonkeyKernel extends EventEmitter {
     const legacyEndo = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim * oceanCoeff
       : 0;
-    const rewardRpeLive = process.env.MONKEY_REWARD_RPE_LIVE !== 'false';
+    const rewardRpeLive = isRewardRpeLiveEnabled();
     const rewardRpeDark = process.env.MONKEY_REWARD_RPE_DARK !== 'false';
     this.rewardRateSamples += 1;
     const emaAlpha = 2 / (Math.min(this.rewardRateSamples, 200) + 1);

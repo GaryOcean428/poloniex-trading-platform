@@ -95,6 +95,22 @@ export function canPersistRewardShadow(): boolean {
   return process.env.MONKEY_REWARD_RPE_DARK !== 'false';
 }
 
+export function isRewardRpeLiveEnabled(): boolean {
+  return process.env.MONKEY_REWARD_RPE_LIVE !== 'false';
+}
+
+export function hasRequiredRewardShadowHttpFields(input: unknown): boolean {
+  const payload = parseRewardRpeDarkPayload(input);
+  if (!payload) return false;
+  const symbol = typeof payload.symbol === 'string' ? payload.symbol.trim() : '';
+  const ts = payload.ts instanceof Date
+    ? payload.ts
+    : typeof payload.ts === 'string' || typeof payload.ts === 'number'
+      ? new Date(payload.ts)
+      : null;
+  return symbol.length > 0 && ts !== null && Number.isFinite(ts.getTime());
+}
+
 export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): RewardShadowRecord | null {
   if (!canPersistRewardShadow()) return null;
   const hasCoreSignal = [

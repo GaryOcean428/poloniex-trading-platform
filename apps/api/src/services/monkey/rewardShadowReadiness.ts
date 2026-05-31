@@ -1,5 +1,6 @@
 import { pool } from '../../db/connection.js';
 import { logger } from '../../utils/logger.js';
+import { isRewardRpeLiveEnabled } from './rewardShadowSync.js';
 
 const SCAN_INTERVAL_MS = 60_000;
 const MAX_WINDOW_ROWS = 1200;
@@ -333,7 +334,7 @@ function computeReadinessFromRows(rows: RewardShadowReadinessWindowRow[]): Rewar
 }
 
 function updateRevertGate(metrics: RewardShadowReadinessMetrics): RewardShadowReadinessMetrics {
-  const live = process.env.MONKEY_REWARD_RPE_LIVE !== 'false';
+  const live = isRewardRpeLiveEnabled();
   if (!live) {
     return {
       ...metrics,

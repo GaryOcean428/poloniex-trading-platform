@@ -42,7 +42,10 @@ import {
   getRewardShadowReadinessTelemetry,
   serializeRewardShadowReadiness,
 } from './services/monkey/rewardShadowReadiness.js';
-import { ingestRewardRpeDark } from './services/monkey/rewardShadowSync.js';
+import {
+  hasRequiredRewardShadowHttpFields,
+  ingestRewardRpeDark,
+} from './services/monkey/rewardShadowSync.js';
 import paperTradingService from './services/paperTradingService.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
@@ -77,16 +80,6 @@ const PORT = env.PORT;
 
 // Production monitoring configuration
 const HEARTBEAT_INTERVAL_MS = 60000; // 60 seconds
-
-function hasRewardShadowHttpCoreFields(body: unknown): boolean {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
-  const payload = body as Record<string, unknown>;
-  const symbol = typeof payload.symbol === 'string' ? payload.symbol.trim() : '';
-  const ts = typeof payload.ts === 'string' || typeof payload.ts === 'number' || payload.ts instanceof Date
-    ? new Date(payload.ts)
-    : null;
-  return symbol.length > 0 && ts !== null && Number.isFinite(ts.getTime());
-}
 
 // Socket.IO server setup with Railway-compatible CORS
 const allowedOrigins = [
@@ -162,7 +155,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
 });
 
 app.post('/api/health/monkey/reward-rpe-dark', authRateLimiter, authenticateToken, async (req: Request, res: Response) => {
-  if (!hasRewardShadowHttpCoreFields(req.body)) {
+  if (!hasRequiredRewardShadowHttpFields(req.body)) {
     return res.status(400).json({
       ok: false,
       accepted: false,
