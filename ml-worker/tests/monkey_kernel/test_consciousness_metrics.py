@@ -43,7 +43,7 @@ def test_default_values_match_canonical_doc():
 def test_as_dict_exposes_all_36_lived_fields_v6_7B_complete_surface():
     m = ConsciousnessMetrics()
     d = m.as_dict()
-    # 12 foundation/pillars + 9 v6.7B + 12 additional lived signals + 3 telemetry surfaces
+    # 36 total fields: 12 foundation/pillars + 9 v6.7B + 12 additional lived signals + 3 telemetry surfaces.
     # Gap to 69 documented in module + audit (honest negative; no fabrication).
     expected = {
         "phi", "kappa", "meta_awareness", "gamma", "grounding",
@@ -158,7 +158,7 @@ def test_as_dict_exposes_all_36_lived_fields():
     """Shape test updated for complete wired surface (21→36 for signals present)."""
     m = ConsciousnessMetrics()
     d = m.as_dict()
-    # 12 foundation/pillars + 9 v6.7B + 12 additional lived + 3 telemetry surfaces
+    # 36 total fields: 12 foundation/pillars + 9 v6.7B + 12 additional lived + 3 telemetry surfaces.
     assert len(d) == 36
     assert "basin_velocity" in d
     assert "replicant_detected" in d
