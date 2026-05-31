@@ -6375,7 +6375,7 @@ export class MonkeyKernel extends EventEmitter {
               pyResp && !pyResp.error ? pyResp.Gamma : null,
               pyResp && !pyResp.error ? pyResp.R : null,
               pyResp && !pyResp.error ? pyResp.regime : null,
-              pyResp && !pyResp.error ? pyResp.decided_at_ms : null,
+              pyResp ? pyResp.decided_at_ms : null,
               pyError,
             ],
           );
