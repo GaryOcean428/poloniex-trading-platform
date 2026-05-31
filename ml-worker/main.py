@@ -2311,6 +2311,12 @@ async def monkey_k_shadow_tick(request: Request):
         # across ticks.  We NEVER write back to _symbol_states from the
         # shadow path; deepcopy guarantees run_tick's in-place mutations
         # cannot corrupt the live state.
+        #
+        # If the TS passes a top-level `kappa` in the payload, that value
+        # overrides whatever kappa the cached/fresh state carries — ensuring
+        # the shadow uses the exact kappa the TS computed for this tick
+        # (complementary to the last_basin seed; both are needed for a warm
+        # shadow that matches TS behaviour).
         prev_state_payload = payload.get("prev_state")
         if prev_state_payload is not None:
             state = _symbol_state_from_dict(prev_state_payload)
@@ -2325,6 +2331,12 @@ async def monkey_k_shadow_tick(request: Request):
             else:
                 from monkey_kernel.basin import uniform_basin
                 state = fresh_symbol_state(symbol, uniform_basin(64))
+            # Seed kappa from the TS-passed value if provided so the shadow
+            # uses the exact kappa scalar the TS computed for this tick
+            # rather than a stale cached or cold-start value.
+            kappa_from_payload = payload.get("kappa")
+            if kappa_from_payload is not None:
+                state.kappa = float(kappa_from_payload)
 
         # Ephemeral autonomic / ocean / foresight / heart so the shadow
         # tick cannot accumulate kernel-bus events into the live
