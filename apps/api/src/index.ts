@@ -173,12 +173,12 @@ app.post('/api/health/monkey/reward-rpe-live', authRateLimiter, authenticateToke
   res.json({ ok: true, accepted });
 });
 
-app.get('/monkey/reward/readiness', (_req: Request, res: Response) => {
+app.get('/monkey/reward/readiness', authenticateToken, (_req: Request, res: Response) => {
   const metrics = getRewardRpeReadinessTelemetry();
   res.json(serializeRewardRpeReadiness(metrics));
 });
 
-app.get('/api/health/monkey/reward/readiness', (_req: Request, res: Response) => {
+app.get('/api/health/monkey/reward/readiness', authenticateToken, (_req: Request, res: Response) => {
   const metrics = getRewardRpeReadinessTelemetry();
   res.json(serializeRewardRpeReadiness(metrics, true));
 });
