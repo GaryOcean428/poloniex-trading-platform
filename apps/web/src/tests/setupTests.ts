@@ -1,8 +1,13 @@
 // Vitest setup file for React Testing Library and jest-dom matchers
 // Use Vitest-specific entry to ensure correct integration
 import '@testing-library/jest-dom/vitest';
-import { vi } from 'vitest';
+import { cleanup } from '@testing-library/react';
+import { afterEach, vi } from 'vitest';
 import { TextEncoder, TextDecoder } from 'node:util';
+
+afterEach(() => {
+  cleanup();
+});
 
 // Globally mock heavy dependencies to keep test graph small and avoid OOMs
 vi.mock('@tensorflow/tfjs', () => ({
