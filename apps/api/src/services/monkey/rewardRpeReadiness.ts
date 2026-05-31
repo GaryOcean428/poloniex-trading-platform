@@ -222,7 +222,7 @@ function computeDipDifferentiation(rows: RewardRpeReadinessWindowRow[]) {
     surprise.length > 0
     && predicted.length > 0
     && rank.commonLanguageEffect > (0.5 + EPS)
-    && rank.pValue < DIP_SIGNIFICANCE_ALPHA;
+    && rank.pValue <= DIP_SIGNIFICANCE_ALPHA;
 
   return {
     surprise,
