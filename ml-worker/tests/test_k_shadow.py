@@ -1,7 +1,7 @@
 """Tests for the issue #689 Python K shadow endpoint.
 
 Exercises POST /monkey/k-shadow/tick directly via FastAPI's TestClient.
-Four contracts pinned:
+Five contracts pinned:
 
   1. Healthy input → endpoint returns the slim parity-row shape with
      all required keys present (action, side, size_intent, phi, kappa,

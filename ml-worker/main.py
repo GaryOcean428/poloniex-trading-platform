@@ -2376,8 +2376,9 @@ async def monkey_k_shadow_tick(request: Request):
                     persistence=None, bus=None, coordinator=None,
                 )
                 resp["kappa_cold"] = float(getattr(cold_decision, "kappa", 0.0))
-            except Exception:  # noqa: BLE001 — cold-start failure must not block warm
-                pass
+            except Exception as cold_exc:  # noqa: BLE001 — cold-start failure must not block warm
+                logger.warning("[k-shadow] cold-start kappa tick failed (kappa_cold omitted): %s: %s",
+                               type(cold_exc).__name__, cold_exc)
 
         return resp
     except Exception as exc:  # noqa: BLE001 — shadow MUST NOT raise
