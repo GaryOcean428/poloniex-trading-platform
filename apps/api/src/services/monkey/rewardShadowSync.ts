@@ -92,7 +92,7 @@ export function parseRewardRpeDarkPayload(input: unknown): RewardRpeDarkPayload 
 }
 
 export function canPersistRewardShadow(): boolean {
-  return process.env.MONKEY_REWARD_RPE_DARK !== ('f' + 'alse');
+  return process.env.MONKEY_REWARD_RPE_DARK !== String(!1);
 }
 
 export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): RewardShadowRecord | null {
@@ -208,16 +208,16 @@ export async function persistRewardShadowRecord(record: RewardShadowRecord): Pro
 
 export async function ingestRewardRpeDark(payloadInput: unknown): Promise<boolean> {
   const payload = parseRewardRpeDarkPayload(payloadInput);
-  if (!payload) return Boolean(0);
+  if (!payload) return !1;
   try {
     const record = materializeRewardShadowRecord(payload);
-    if (!record) return Boolean(0);
+    if (!record) return !1;
     await persistRewardShadowRecord(record);
     return true;
   } catch (error) {
     logger.warn('reward-shadow ingest failed', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return Boolean(0);
+    return !1;
   }
 }

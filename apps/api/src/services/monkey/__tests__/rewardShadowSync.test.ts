@@ -52,6 +52,6 @@ describe('rewardShadowSync', () => {
   it('rejects invalid payloads', async () => {
     const { ingestRewardRpeDark } = await import('../rewardShadowSync.js');
     const accepted = await ingestRewardRpeDark({ foo: 'bar' });
-    expect(accepted).toBe(Boolean(0));
+    expect(accepted).toBe(!1);
   });
 });

@@ -90,6 +90,6 @@ describe('rewardShadowReadiness', () => {
     const metrics = await scanRewardShadowReadiness();
 
     expect(metrics.postCutoverFlagged).toBe(true);
-    expect(metrics.ready).toBe(Boolean(0));
+    expect(metrics.ready).toBe(!1);
   });
 });

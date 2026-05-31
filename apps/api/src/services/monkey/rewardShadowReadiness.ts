@@ -50,10 +50,10 @@ let lastMetrics: RewardShadowReadinessMetrics = {
   parityDivergence: 0,
   coverage: 0,
   n: 0,
-  samplesStable: Boolean(0),
-  ready: Boolean(0),
-  dipSeparated: Boolean(0),
-  postCutoverFlagged: Boolean(0),
+  samplesStable: !1,
+  ready: !1,
+  dipSeparated: !1,
+  postCutoverFlagged: !1,
   sustainedDegradeWindows: 0,
   surpriseCount: 0,
   predictedCount: 0,
@@ -251,14 +251,14 @@ function computeSampleStability(rows: RewardShadowReadinessWindowRow[]): boolean
   const validRows = rows.filter(
     (row) => row.valid && row.predictedPnlFrac !== null && row.sigmaResidual !== null,
   );
-  if (validRows.length < 3) return Boolean(0);
+  if (validRows.length < 3) return !1;
   const residualAbs = validRows.map((row) => Math.abs(row.realizedPnlFrac - (row.predictedPnlFrac ?? 0)));
 
   const rollingMads: number[] = [];
   for (let i = 3; i <= residualAbs.length; i += 1) {
     rollingMads.push(mad(residualAbs.slice(0, i)));
   }
-  if (rollingMads.length < 2) return Boolean(0);
+  if (rollingMads.length < 2) return !1;
 
   const madOfMad = mad(rollingMads);
   return madOfMad <= MAD_STABILITY_EPS;
@@ -271,10 +271,10 @@ function metricsFailClosedDefaults(): RewardShadowReadinessMetrics {
     parityDivergence: 0,
     coverage: 0,
     n: 0,
-    samplesStable: Boolean(0),
-    ready: Boolean(0),
-    dipSeparated: Boolean(0),
-    postCutoverFlagged: Boolean(0),
+    samplesStable: !1,
+    ready: !1,
+    dipSeparated: !1,
+    postCutoverFlagged: !1,
     sustainedDegradeWindows: 0,
     surpriseCount: 0,
     predictedCount: 0,
@@ -307,7 +307,7 @@ function computeReadinessFromRows(rows: RewardShadowReadinessWindowRow[]): Rewar
     samplesStable,
     ready,
     dipSeparated: dip.dipSeparated,
-    postCutoverFlagged: Boolean(0),
+    postCutoverFlagged: !1,
     sustainedDegradeWindows: 0,
     surpriseCount: dip.surprise.length,
     predictedCount: dip.predicted.length,
@@ -320,7 +320,7 @@ function updateRevertGate(metrics: RewardShadowReadinessMetrics): RewardShadowRe
   if (!live) {
     return {
       ...metrics,
-      postCutoverFlagged: Boolean(0),
+      postCutoverFlagged: !1,
       sustainedDegradeWindows: 0,
     };
   }
