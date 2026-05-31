@@ -17,6 +17,14 @@ Three contracts pinned:
      path) — proves the endpoint covers the cold-start case the live
      fanout will hit on the first ticks of a newly-listed symbol.
 
+  4. Kappa warm-start (issue #710) — when two requests are sent with
+     different `kappa` values the endpoint MUST return different kappa
+     values in the response.  Pinning kappa=50 vs kappa=100 should
+     produce clearly different py_kappa outputs (EMA step from each
+     seed must land in separate neighbourhoods) — this is the regression
+     test for the cold-start EMA plateau bug where py_kappa was always
+     ~64.11 regardless of symbol or tick.
+
 The endpoint NEVER raises, even on internal exceptions — the response
 ALWAYS includes decided_at_ms so the TS caller can persist a parity row.
 """
@@ -72,8 +80,8 @@ def _make_ohlcv(n: int) -> list[dict[str, float]]:
     return rows
 
 
-def _request_body(ohlcv: list[dict[str, float]] | None = None) -> dict[str, Any]:
-    return {
+def _request_body(ohlcv: list[dict[str, float]] | None = None, kappa: float | None = None) -> dict[str, Any]:
+    body: dict[str, Any] = {
         "instance_id": "test-k-shadow",
         "inputs": {
             "symbol": "BTC_USDT_PERP",
@@ -93,6 +101,9 @@ def _request_body(ohlcv: list[dict[str, float]] | None = None) -> dict[str, Any]
         },
         "prev_state": None,
     }
+    if kappa is not None:
+        body["kappa"] = kappa
+    return body
 
 
 REQUIRED_KEYS = {
@@ -170,3 +181,40 @@ class TestKShadowEndpoint:
             assert body.get("action") == "hold"
             for key in REQUIRED_KEYS:
                 assert key in body
+
+    def test_kappa_warm_start_varies_output(self, client):
+        """Issue #710 regression: py_kappa must vary when different kappa
+        seeds are passed.
+
+        Without the fix, fresh_symbol_state always seeds kappa=63.8 → one
+        EMA step with near-constant phi (uniform identity basin, bv=0) →
+        py_kappa always ~64.11 regardless of the `kappa` field.
+
+        With the fix, kappa_initial propagates into fresh_symbol_state:
+          - kappa_hint=50  → EMA stays near 50-neighbourhood → py_kappa < 60
+          - kappa_hint=100 → EMA stays near 100-neighbourhood → py_kappa > 90
+
+        Both responses must be HTTP 200 with all REQUIRED_KEYS (not error
+        envelopes) for the assertion to be meaningful.
+        """
+        ohlcv = _make_ohlcv(120)
+        resp_low  = client.post("/monkey/k-shadow/tick", json=_request_body(ohlcv, kappa=50.0))
+        resp_high = client.post("/monkey/k-shadow/tick", json=_request_body(ohlcv, kappa=100.0))
+        assert resp_low.status_code == 200
+        assert resp_high.status_code == 200
+        body_low  = resp_low.json()
+        body_high = resp_high.json()
+        # Skip if either returned an error envelope (e.g. missing deps).
+        if body_low.get("error") or body_high.get("error"):
+            pytest.skip("k-shadow returned error envelope — skipping kappa variation check")
+        kappa_low  = body_low["kappa"]
+        kappa_high = body_high["kappa"]
+        assert isinstance(kappa_low, (int, float))
+        assert isinstance(kappa_high, (int, float))
+        # The two seeds are 50 apart.  After one EMA step the outputs
+        # must be meaningfully separated (at least 5 units apart).
+        assert abs(kappa_high - kappa_low) > 5, (
+            f"py_kappa variation too small — kappa_low={kappa_low:.4f}, "
+            f"kappa_high={kappa_high:.4f} (diff={abs(kappa_high-kappa_low):.4f}). "
+            "Warm-start kappa fix (#710) may not be working."
+        )

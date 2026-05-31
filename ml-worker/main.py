@@ -2307,12 +2307,29 @@ async def monkey_k_shadow_tick(request: Request):
         # build an EPHEMERAL state seeded from the uniform basin — we do
         # NOT touch the _symbol_states cache (that's owned by
         # /monkey/tick/run for the cutover path).
+        #
+        # Issue #710 — warm-start kappa: when the caller (TS loop) passes a
+        # top-level "kappa" field, seed fresh_symbol_state with that value so
+        # Python starts from the LIVE TS kappa instead of the cold-start
+        # default (63.8).  Without this, one EMA step from kappa=63.8 with a
+        # near-uniform identity basin always produces ~64.11 (bv=0, phi≈0.41),
+        # making py_kappa suspiciously constant across symbols and ticks.
+        # The fix does NOT pass prev_state — the k-shadow is still ephemeral
+        # (no accumulated history, no cache pollution); only the scalar kappa
+        # carries over so the EMA update lands in the right neighbourhood.
         prev_state_payload = payload.get("prev_state")
         if prev_state_payload is not None:
             state = _symbol_state_from_dict(prev_state_payload)
         else:
+            kappa_hint: Optional[float] = None
+            raw_kappa = payload.get("kappa")
+            if raw_kappa is not None:
+                try:
+                    kappa_hint = float(raw_kappa)
+                except (TypeError, ValueError):
+                    kappa_hint = None
             from monkey_kernel.basin import uniform_basin
-            state = fresh_symbol_state(symbol, uniform_basin(64))
+            state = fresh_symbol_state(symbol, uniform_basin(64), kappa_initial=kappa_hint)
 
         # Ephemeral autonomic / ocean / foresight / heart so the shadow
         # tick cannot accumulate kernel-bus events into the live
