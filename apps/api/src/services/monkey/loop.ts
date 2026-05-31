@@ -3714,17 +3714,17 @@ export class MonkeyKernel extends EventEmitter {
         const currentRoi = positionNotional > 0
           ? unrealizedPnl / (positionNotional / Math.max(1, leverage.value))
           : undefined;
-        let observerLossFloorRoiForHeldLane: number | undefined;
-        let observerLossFloorRoiPromiseForHeldLane: Promise<number> | undefined;
-        const getObserverLossFloorRoiForHeldLane = async (): Promise<number> => {
-          if (observerLossFloorRoiForHeldLane === undefined) {
-            observerLossFloorRoiPromiseForHeldLane ??= getOutcomeRingStats({
+        let heldLaneObserverFloorRoi: number | undefined;
+        let heldLaneObserverFloorPromise: Promise<number> | undefined;
+        const getHeldLaneObserverFloor = async (): Promise<number> => {
+          if (heldLaneObserverFloorRoi === undefined) {
+            heldLaneObserverFloorPromise ??= getOutcomeRingStats({
               agent: 'K',  // executive exit path is K-scoped (see L3076 entry agent)
               lane: heldLane as LaneType,
             }).then((ringForHeldLane) => computeObserverLossFloorRoi(ringForHeldLane));
-            observerLossFloorRoiForHeldLane = await observerLossFloorRoiPromiseForHeldLane;
+            heldLaneObserverFloorRoi = await heldLaneObserverFloorPromise;
           }
-          return observerLossFloorRoiForHeldLane;
+          return heldLaneObserverFloorRoi;
         };
         const regimeChangeStreak = state.regimeChangeStreakByLane[heldLane] ?? 0;
         const convictionFailedStreak = state.convictionFailedStreakByLane[heldLane] ?? 0;
@@ -3874,14 +3874,7 @@ export class MonkeyKernel extends EventEmitter {
         const regimeHeldExitLive = process.env.REGIME_HELD_EXIT_LIVE === 'true';
         let observerLossFloorRoi = 0;
         let minProfitablePnl = Number.POSITIVE_INFINITY;
-        let regimeHeldProfit = shouldRegimeHeldProfitExit({
-          cellHarvestTightness: cellAction?.harvestTightness ?? '',
-          currentRoi,
-          unrealizedPnlUsdt: unrealizedPnl,
-          positionNotionalUsdt: positionNotional,
-          effectiveCostFrac,
-          observerLossFloorRoi,
-        });
+        let regimeHeldProfit: ReturnType<typeof shouldRegimeHeldProfitExit> | undefined;
         if (
           regimeHeldExitLive
           && cellAction !== null
@@ -3889,7 +3882,7 @@ export class MonkeyKernel extends EventEmitter {
           && currentRoi !== undefined
           && currentRoi > 0
         ) {
-          observerLossFloorRoi = await getObserverLossFloorRoiForHeldLane();
+          observerLossFloorRoi = await getHeldLaneObserverFloor();
           minProfitablePnl = computeRegimeHeldProfitFloorPnl(
             positionNotional,
             effectiveCostFrac,
@@ -3909,7 +3902,7 @@ export class MonkeyKernel extends EventEmitter {
           && regimeHeldExitLive
           && cellAction !== null
           && currentRoi !== undefined
-          && regimeHeldProfit.value
+          && regimeHeldProfit?.value === true
         ) {
           const roiPct = (currentRoi * 100).toFixed(3);
           const ageS = heldDurationS !== undefined ? `${heldDurationS.toFixed(0)}s` : 'unknown';
@@ -3951,7 +3944,7 @@ export class MonkeyKernel extends EventEmitter {
               : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
               : currentRoi === undefined ? 'roi_unknown'
               : currentRoi <= 0 ? 'not_profitable'
-              : regimeHeldProfit.reason,
+              : regimeHeldProfit?.reason ?? 'below_profit_floor',
             observerLossFloorRoi,
             minProfitablePnl,
           };
@@ -4154,7 +4147,7 @@ export class MonkeyKernel extends EventEmitter {
           // is below the kernel's own observed loss-magnitude floor so
           // winners run to commensurate size. Pure observer; uses ring
           // we may have already fetched for sizing.
-          const observerLossFloorRoi = await getObserverLossFloorRoiForHeldLane();
+          const observerLossFloorRoi = await getHeldLaneObserverFloor();
           const harvest = shouldProfitHarvest(
             unrealizedPnl,
             lanePeak,

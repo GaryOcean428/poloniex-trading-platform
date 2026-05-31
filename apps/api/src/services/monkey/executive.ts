@@ -857,6 +857,10 @@ export function shouldProfitHarvest(
   };
 }
 
+function nonNegativeFinite(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
 export function computeRegimeHeldProfitFloorPnl(
   positionNotionalUsdt: number,
   effectiveCostFrac: number,
@@ -865,8 +869,8 @@ export function computeRegimeHeldProfitFloorPnl(
   if (!Number.isFinite(positionNotionalUsdt) || positionNotionalUsdt <= 0) {
     return Number.POSITIVE_INFINITY;
   }
-  const costFrac = Number.isFinite(effectiveCostFrac) ? Math.max(0, effectiveCostFrac) : 0;
-  const lossFloorRoi = Number.isFinite(observerLossFloorRoi) ? Math.max(0, observerLossFloorRoi) : 0;
+  const costFrac = nonNegativeFinite(effectiveCostFrac);
+  const lossFloorRoi = nonNegativeFinite(observerLossFloorRoi);
   return positionNotionalUsdt * Math.max(costFrac, lossFloorRoi);
 }
 
@@ -884,8 +888,8 @@ export function shouldRegimeHeldProfitExit(args: {
     args.observerLossFloorRoi,
   );
   const derivation = {
-    effectiveCostFrac: Math.max(0, args.effectiveCostFrac),
-    observerLossFloorRoi: Math.max(0, args.observerLossFloorRoi),
+    effectiveCostFrac: nonNegativeFinite(args.effectiveCostFrac),
+    observerLossFloorRoi: nonNegativeFinite(args.observerLossFloorRoi),
     minProfitablePnl,
   };
   if (args.cellHarvestTightness !== 'tight') {
