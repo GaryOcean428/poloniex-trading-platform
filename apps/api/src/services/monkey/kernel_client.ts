@@ -555,6 +555,9 @@ export interface KShadowTickRequest {
    *  starts from the same basin neighbourhood as TS instead of the frozen
    *  cold-start default (~64.11 plateau, issue #710). */
   kappa?: number;
+  /** K-shadow always uses ephemeral state — prev_state is not supported and
+   *  must be omitted or explicitly null. Full state replay is intentionally
+   *  out-of-scope for the parity shadow path. */
   prev_state?: null;
 }
 

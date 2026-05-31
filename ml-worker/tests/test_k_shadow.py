@@ -190,9 +190,9 @@ class TestKShadowEndpoint:
         EMA step with near-constant phi (uniform identity basin, bv=0) →
         py_kappa always ~64.11 regardless of the `kappa` field.
 
-        With the fix, kappa_initial propagates into fresh_symbol_state:
-          - kappa_hint=50  → EMA stays near 50-neighbourhood → py_kappa < 60
-          - kappa_hint=100 → EMA stays near 100-neighbourhood → py_kappa > 90
+        With the fix, `kappa` propagates into fresh_symbol_state as kappa_initial:
+          - kappa=50  → EMA stays near 50-neighbourhood → py_kappa < 60
+          - kappa=100 → EMA stays near 100-neighbourhood → py_kappa > 90
 
         Both responses must be HTTP 200 with all REQUIRED_KEYS (not error
         envelopes) for the assertion to be meaningful.

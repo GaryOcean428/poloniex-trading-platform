@@ -6304,7 +6304,13 @@ export class MonkeyKernel extends EventEmitter {
         action === 'enter_long' ? 'long'
         : action === 'enter_short' ? 'short'
         : null;
-      // Map dominant regimeWeight to ordinal for parity comparison.
+      // Map dominant regimeWeight to ordinal for parity comparison:
+      //   quantum=0, equilibrium=1, efficient=2.
+      // Ties default to the first-matched channel (quantum→0) — an intentional
+      // deterministic tie-break that mirrors the Python _regime_to_ordinal
+      // fallback. Ties are extremely rare in practice (three floating-point
+      // weights rarely collide), and the parity-log delta_kappa column is the
+      // meaningful signal, not the regime ordinal alone.
       const rw = regimeWeights as { quantum: number; efficient: number; equilibrium: number };
       const rwMax = Math.max(rw.quantum, rw.efficient, rw.equilibrium);
       const tsR: 0 | 1 | 2 | null =
