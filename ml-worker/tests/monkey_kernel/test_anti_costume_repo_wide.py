@@ -80,7 +80,7 @@ _REGISTRY_GET_BUDGET = {
     "ocean_sleep_trigger.py": 5,
     "regime.py": 2,
     "self_observation.py": 2,
-    "tick.py": 16,              # #711/#766 compositional rollout gate (shadow/live)
+    "tick.py": 16,  # #1039 inline ring-buffer cap; #711/#766 compositional rollout gate (shadow/live)
     "working_memory.py": 12,
 }
 

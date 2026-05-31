@@ -98,7 +98,7 @@ export async function runStackedGhostPnlBackfill(opts: {
   );
 
   const summary: BackfillResult['summary'] = [];
-  let totalRowsUpdated = 0;
+  const totalRowsUpdated = 0;
   let totalCorrectionUsdt = 0;
 
   for (const g of groups.rows as GroupRow[]) {

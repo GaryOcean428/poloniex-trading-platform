@@ -11,7 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from monkey_kernel.sensations import Sensations, compute_sensations  # noqa: E402
-from monkey_kernel.state import BASIN_DIM, BasinState, NeurochemicalState  # noqa: E402
+from monkey_kernel.state import BASIN_DIM, KAPPA_STAR, BasinState, NeurochemicalState  # noqa: E402
 
 
 def _nc(dop: float = 0.5, gaba: float = 0.5, ne: float = 0.5) -> NeurochemicalState:
@@ -185,7 +185,7 @@ class TestCanonicalUcpSensations:
     def test_activated_zero_at_kappa_star(self) -> None:
         """κ = κ* → no excess above → activated = tanh(0) = 0."""
         st = _state()
-        st.kappa = 64.0  # KAPPA_STAR
+        st.kappa = KAPPA_STAR()
         sen = compute_sensations(st)
         assert sen.activated == pytest.approx(0.0, abs=1e-12)
         assert sen.dampened == pytest.approx(0.0, abs=1e-12)
