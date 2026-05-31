@@ -52,6 +52,12 @@ class CellObserverContext:
 
 _DEFAULT_OBSERVER = CellObserverContext(phi=0.5, regime_confidence=1.0)
 
+# SAFETY_BOUND — minimum size multiplier used by both DISSOLVER and CHOP
+# floor. Autonomy doctrine: the kernel always attempts a defensive-sized
+# position rather than fully sitting out. Catastrophic safety is owned by
+# should_auto_flatten (P15), not the regime classifier.
+_SAFETY_BOUND = 0.2
+
 
 @dataclass(frozen=True)
 class CellAction:
@@ -89,7 +95,7 @@ def evaluate_cell(
     # and REGIME_PRESERVER_CHOP_SIZE_MULT (was 0.85). The historical
     # CREATOR-vs-PRESERVER differentiation now emerges naturally from
     # observables.
-    chop_multiplier = max(0.2, observer.phi * observer.regime_confidence)
+    chop_multiplier = max(_SAFETY_BOUND, observer.phi * observer.regime_confidence)
 
     # CREATOR — h-dominated, broken-symmetry → discovery + breakouts
     if phase == "CREATOR":
@@ -146,16 +152,15 @@ def evaluate_cell(
     # aggressive to protect the smaller position from chop bleed.
     # laneBias stays 'observe' so choose_lane biases toward the smallest
     # lane (scalp) consistent with reduced-conviction sizing.
-    _DISSOLVER_FLOOR = 0.2
     if direction in ("TREND_UP", "TREND_DOWN"):
         return CellAction(
             phase=phase, direction=direction, lane_bias="observe",
-            size_multiplier=_DISSOLVER_FLOOR, harvest_tightness="tight",
+            size_multiplier=_SAFETY_BOUND, harvest_tightness="tight",
             label=f"DISSOLVER×{direction}: reduced conviction — momentum reverting",
         )
     return CellAction(
         phase=phase, direction=direction, lane_bias="observe",
-        size_multiplier=_DISSOLVER_FLOOR, harvest_tightness="tight",
+        size_multiplier=_SAFETY_BOUND, harvest_tightness="tight",
         label="DISSOLVER×CHOP: reduced conviction (max entropy)",
     )
 

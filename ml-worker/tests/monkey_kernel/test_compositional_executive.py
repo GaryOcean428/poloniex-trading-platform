@@ -176,6 +176,9 @@ class TestTSPythonParityTable:
     pair. When adding cells to one side, update both.
     """
 
+    # CHOP size values (0.5) below use the _DEFAULT_OBSERVER context
+    # (phi=0.5, regime_confidence=1.0) → max(0.2, 0.5 × 1.0) = 0.5.
+    # If _DEFAULT_OBSERVER.phi changes, update these expected values.
     CASES = [
         # (phase, direction, lane_bias, size_mult, harvest_tightness)
         ("CREATOR",  "TREND_UP",   "trend",   1.0, "normal"),

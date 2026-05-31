@@ -1172,7 +1172,7 @@ def run_tick(
 
     # Tape override — same logic as loop.ts Phase 5 (phi-derived threshold).
     cell_direction = _basin_direction_label
-    cell_direction_overridden = False
+    _cell_direction_overridden = False
     # Default ON (kill switch: set REGIME_TAPE_OVERRIDE_LIVE=****** to disable).
     _tape_override_live = (
         os.environ.get("REGIME_TAPE_OVERRIDE_LIVE", "true").lower() not in ("******", "0", "off")
@@ -1183,13 +1183,13 @@ def run_tick(
         and abs(tape_trend) >= phi
     ):
         cell_direction = "TREND_UP" if tape_trend > 0 else "TREND_DOWN"
-        cell_direction_overridden = True
+        _cell_direction_overridden = True
         logger.info(
             "[Monkey] cellDirection tape-override symbol=%s basinDir=%s tape=%.3f "
-            "threshold=%.3f resolved=%s",
+            "threshold=%.3f resolved=%s overridden=%s",
             inputs.symbol, _basin_direction_label, tape_trend, phi, cell_direction,
+            _cell_direction_overridden,
         )
-    del cell_direction_overridden  # surfaced via log only; suppress unused-variable lint
 
     cell_action: Optional[CellAction] = (
         evaluate_cell(
