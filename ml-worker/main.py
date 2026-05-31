@@ -2307,12 +2307,34 @@ async def monkey_k_shadow_tick(request: Request):
         # build an EPHEMERAL state seeded from the uniform basin — we do
         # NOT touch the _symbol_states cache (that's owned by
         # /monkey/tick/run for the cutover path).
+        #
+        # Issue #710 — warm-start kappa: when the caller (TS loop) passes a
+        # top-level "kappa" field, seed fresh_symbol_state with that value so
+        # Python starts from the LIVE TS kappa instead of the cold-start
+        # default (63.8).  Without this, one EMA step from kappa=63.8 with a
+        # near-uniform identity basin always produces ~64.11 (bv=0, phi≈0.41),
+        # making py_kappa suspiciously constant across symbols and ticks.
+        # The fix does NOT pass prev_state — the k-shadow is still ephemeral
+        # (no accumulated history, no cache pollution); only the scalar kappa
+        # carries over so the EMA update lands in the right neighbourhood.
+        #
+        # TODO(#1047): when #1047 lands, extend this block to also seed the
+        # full SymbolState from the live cache (Gamma > 0 path). The scalar
+        # kappa warm-start here and the full-state seed in #1047 are
+        # complementary — merge into one state-resolution block.
         prev_state_payload = payload.get("prev_state")
+        kappa_hint: Optional[float] = None
         if prev_state_payload is not None:
             state = _symbol_state_from_dict(prev_state_payload)
         else:
+            raw_kappa = payload.get("kappa")
+            if raw_kappa is not None:
+                try:
+                    kappa_hint = float(raw_kappa)
+                except (TypeError, ValueError):
+                    kappa_hint = None
             from monkey_kernel.basin import uniform_basin
-            state = fresh_symbol_state(symbol, uniform_basin(64))
+            state = fresh_symbol_state(symbol, uniform_basin(64), kappa_initial=kappa_hint)
 
         # Ephemeral autonomic / ocean / foresight / heart so the shadow
         # tick cannot accumulate kernel-bus events into the live
@@ -2329,7 +2351,36 @@ async def monkey_k_shadow_tick(request: Request):
             ocean=ocean, foresight=foresight, heart=heart,
             persistence=None, bus=None, coordinator=None,
         )
-        return _k_shadow_response_from_decision(decision, started_ms)
+        resp = _k_shadow_response_from_decision(decision, started_ms)
+
+        # Issue #710 (review) — parity-log tautology guard: when the caller
+        # supplied a warm-start kappa hint, also run a cold-start tick using
+        # the registry default (no kappa_initial) so both kappas are available
+        # in kernel_parity_log.  This lets delta_kappa_cold = |ts_kappa −
+        # py_kappa_cold| be compared against delta_kappa = |ts_kappa −
+        # py_kappa_warm|.  If only the seeded delta looks small, the log
+        # distinguishes that from genuine algorithmic agreement.  The cold tick
+        # uses a separate instance_id so its accumulated state is never mixed
+        # with the warm-start instance's state.
+        if kappa_hint is not None and prev_state_payload is None:
+            try:
+                from monkey_kernel.basin import uniform_basin as _ub
+                cold_state = fresh_symbol_state(symbol, _ub(64))
+                cold_iid = f"k-shadow-cold:{str(payload.get('instance_id', 'monkey-primary'))}"
+                cold_decision, _ = run_tick(
+                    tick_inputs, cold_state,
+                    _get_autonomic(cold_iid),
+                    ocean=_get_ocean(cold_iid, symbol),
+                    foresight=_get_foresight(cold_iid, symbol),
+                    heart=_get_heart(cold_iid, symbol),
+                    persistence=None, bus=None, coordinator=None,
+                )
+                resp["kappa_cold"] = float(getattr(cold_decision, "kappa", 0.0))
+            except Exception as cold_exc:  # noqa: BLE001 — cold-start failure must not block warm
+                logger.warning("[k-shadow] cold-start kappa tick failed (kappa_cold omitted): %s: %s",
+                               type(cold_exc).__name__, cold_exc)
+
+        return resp
     except Exception as exc:  # noqa: BLE001 — shadow MUST NOT raise
         logger.warning("[k-shadow] internal exception (swallowed): %s: %s",
                        type(exc).__name__, exc)

@@ -299,10 +299,11 @@ function parseKParitySince(raw: unknown): Date | null {
  *     rows: [{ id, tick_id, symbol, symbol_timestamp,
  *              ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R,
  *              ts_regime, ts_decision_ms,
- *              py_action, py_side, py_phi, py_kappa, py_M, py_Gamma, py_R,
+ *              py_action, py_side, py_phi, py_kappa, py_kappa_cold,
+ *              py_M, py_Gamma, py_R,
  *              py_regime, py_decision_ms, py_error,
  *              agree_action, agree_side, delta_phi, delta_kappa,
- *              created_at }, ...]
+ *              delta_kappa_cold, created_at }, ...]
  *   }
  */
 router.get('/k-parity', authenticateToken, async (req: Request, res: Response) => {
@@ -325,9 +326,11 @@ router.get('/k-parity', authenticateToken, async (req: Request, res: Response) =
         id, tick_id, symbol, symbol_timestamp,
         ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R,
         ts_regime, ts_decision_ms,
-        py_action, py_side, py_phi, py_kappa, py_M, py_Gamma, py_R,
+        py_action, py_side, py_phi, py_kappa, py_kappa_cold,
+        py_M, py_Gamma, py_R,
         py_regime, py_decision_ms, py_error,
         agree_action, agree_side, delta_phi, delta_kappa,
+        delta_kappa_cold,
         created_at
       FROM kernel_parity_log
       ${whereClause}
