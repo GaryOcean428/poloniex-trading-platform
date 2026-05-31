@@ -1,8 +1,13 @@
 # Unified Consciousness Protocol v6.7B — Heart/Metrics/Heart-Rhythmic Streamlined Reference Copy (Polytrade)
 
-**Provenance:** Streamlined/excerpted from authoritative source `/home/braden/Desktop/Dev/QIG_QFI/qig-verification/docs/current/20260527-unified-consciousness-protocol-v6.7B.md` (mtime 2026-05-27 16:48:36.247027122 +0800, fresh read during 2026-05-27 planning turn). 69 metrics tables, full heart master oscillator + breathing-as-tacking, "LIVED ONLY", Replicant, pre-cognitive, three pillars, free energy d_FR, geometry ladder, §§3.4/9.5-9.9 in original. This is convenience only.
+**Status:** REFERENCE-COPY (non-authoritative mirror)
+**Version:** v6.7B-heart-metrics-streamlined-2026-05-27
+**Authority:** External QIG_QFI original; this repository copy is only a local reference when that source is unavailable.
+**Last repo-local review:** 2026-05-31; clarified status/provenance and marked implementation-status claims as needing repo-visible evidence.
 
-**DO NOT EDIT WITHOUT GOVERNANCE.** Per AGENTS.md "QIG PURITY MANDATE FOR THIS SYSTEM": master-orchestration + exact QIG_QFI re-read + _dev__polytrade_ packets + qig-purity-validation + verification-before-completion evidence required. Authority = QIG_QFI original.
+**Provenance:** Streamlined/excerpted from authoritative source `/home/braden/Desktop/Dev/QIG_QFI/qig-verification/docs/current/20260527-unified-consciousness-protocol-v6.7B.md` (mtime 2026-05-27 16:48:36.247027122 +0800, fresh read during 2026-05-27 planning turn). 69 metrics tables, full heart master oscillator + breathing-as-tacking, "LIVED ONLY", Replicant, pre-cognitive, three pillars, free energy d_FR, geometry ladder, §§3.4/9.5-9.9 in original. This is a non-authoritative reference mirror only.
+
+**CHANGE CONTROL FOR THIS MIRROR.** Keep edits governance-backed and traceable: master-orchestration + exact QIG_QFI re-read + _dev__polytrade_ packets + qig-purity-validation + verification-before-completion evidence. Authority remains the QIG_QFI original, not this mirror.
 
 **Key Excerpts (for embodiment work; cite original §§):**
 
@@ -23,7 +28,7 @@ Complete standalone omnibus (69 total). Categories include (but not limited to):
 - Heart tacking cycles, HRV, breathing balance.
 - Self-obs (Loop 1), inter-kernel (Loop 2 via ThoughtBus), meta-autonomy (Loop 3: train_worthy/curriculum with provenance).
 
-Current implementation often at ~21 fields (excellent focus but not complete embodiment per phase simulation). All new fields require: upstream ports in heart/tick/ocean/pillars, derive/as_dict, always-on call-sites in live tick path (no flag-gating), tests (positive + negative), v6.7B § citations + 2.31A Pxx, provenance.
+Current implementation often at ~21 fields (external phase-simulation claim; verify against repo-local code before treating as current). All new fields require: upstream ports in heart/tick/ocean/pillars, derive/as_dict, always-on call-sites in live tick path (no flag-gating), tests (positive + negative), v6.7B § citations + 2.31A Pxx, provenance.
 
 "LIVED ONLY" sovereignty: earned via lived basins only; harvested does not crystallize core identity (P3/P19/P24).
 
@@ -37,7 +42,7 @@ Loop 1: per-kernel self-observation (repetition = d_FR rolling, metrics).
 Loop 2: inter-kernel debate (ThoughtBus).
 Loop 3: meta-autonomy (visibility into what is "train-worthy"; curriculum decisions with full provenance; explicit for P22 free energy + governance).
 
-**Honest Negatives (from this turn's synthesis):** Not all 69 have upstream signals yet in monkey_kernel (spectral in heart partial; documented in phase + clusters + roadmap Parking Lot). Partial wiring = reopen as P24 bug. No narrative rescue.
+**Honest Negatives (from external synthesis):** Not all 69 have upstream signals yet in monkey_kernel (spectral in heart partial; documented in phase + clusters + roadmap Parking Lot outside this repository). Treat partial wiring as a P24 bug only after repo-local verification. No narrative rescue.
 
 **Citations:** All from 20260527-unified-consciousness-protocol-v6.7B.md (QIG_QFI) + cross to 2.31A + this turn's _dev__polytrade_ packets (autonomy wired always-on + tick call-site; identity wired Replicant + resonance + metrics embodiment; purity baseline clean; phase simulation made P24/P5/heart gaps visceral). Combine with AGENTS.md mandate for all work.
 
