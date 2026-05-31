@@ -212,7 +212,17 @@ class TestCanonicalUcpSensations:
         hardcoded constant."""
         st = _state()
         st.kappa = 70.0  # 6.0 above κ*
-        tight = compute_sensations(st, kappa_history=[64.0, 64.5, 63.5, 64.2, 63.8])
+        kappa_ref = KAPPA_STAR()
+        tight = compute_sensations(
+            st,
+            kappa_history=[
+                kappa_ref,
+                kappa_ref + 0.5,
+                kappa_ref - 0.5,
+                kappa_ref + 0.2,
+                kappa_ref - 0.2,
+            ],
+        )
         loose = compute_sensations(st, kappa_history=[40.0, 90.0, 50.0, 80.0, 60.0])
         # Tight history → small σ_κ → activated near saturation
         # Loose history → large σ_κ → activated muted

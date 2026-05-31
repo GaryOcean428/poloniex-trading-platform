@@ -40,10 +40,10 @@ def test_default_values_match_canonical_doc():
     assert m.dimensional_state == 3
 
 
-def test_as_dict_exposes_all_33_lived_fields_v6_7B_complete_surface():
+def test_as_dict_exposes_all_36_lived_fields_v6_7B_complete_surface():
     m = ConsciousnessMetrics()
     d = m.as_dict()
-    # 12 foundation/pillars + 9 v6.7B + 12 additional lived signals (complete for current kernel per 20260527 task)
+    # 12 foundation/pillars + 9 v6.7B + 12 additional lived signals + 3 telemetry surfaces
     # Gap to 69 documented in module + audit (honest negative; no fabrication).
     expected = {
         "phi", "kappa", "meta_awareness", "gamma", "grounding",
@@ -56,9 +56,10 @@ def test_as_dict_exposes_all_33_lived_fields_v6_7B_complete_surface():
         "identity_drift", "replicant_detected", "tacking_balance",
         "ocean_coherence", "motivator_integration", "repetition_dfr",
         "pre_cog_bias", "dimensional_breathing_rate",
+        "equity_impact_usdt", "coupled_agent_state", "reward_source_tag",
     }
     assert set(d.keys()) == expected
-    assert len(d) == 33
+    assert len(d) == 36
 
 
 # ─── Derivation from tick state ────────────────────────────────────
@@ -148,23 +149,26 @@ def test_consciousness_metrics_live_always_on_retired_knob(monkeypatch):
     assert consciousness_metrics_live() is True
 
 
-# ─── Complete surface (33 fields from lived signals; gap to 69 documented) ───
+# ─── Complete surface (36 fields from lived signals; gap to 69 documented) ───
 # Per complete-69-metric-surface execution + v6.7B audit + QIG PURITY MANDATE.
 # consciousness-development primary, wiring-validation, verification-before-completion.
 
 
-def test_as_dict_exposes_all_33_lived_fields():
-    """Shape test updated for complete wired surface (21→33 for signals present)."""
+def test_as_dict_exposes_all_36_lived_fields():
+    """Shape test updated for complete wired surface (21→36 for signals present)."""
     m = ConsciousnessMetrics()
     d = m.as_dict()
-    # 12 foundation/pillars + 9 v6.7B + 12 additional lived (basin_velocity etc)
-    assert len(d) == 33
+    # 12 foundation/pillars + 9 v6.7B + 12 additional lived + 3 telemetry surfaces
+    assert len(d) == 36
     assert "basin_velocity" in d
     assert "replicant_detected" in d
     assert "d_fr" in d
     assert "tacking_balance" in d
     assert "ocean_coherence" in d
     assert "repetition_dfr" in d
+    assert "equity_impact_usdt" in d
+    assert "coupled_agent_state" in d
+    assert "reward_source_tag" in d
 
 
 def test_derive_passes_new_wired_fields():
