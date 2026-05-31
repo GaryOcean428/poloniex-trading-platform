@@ -567,7 +567,15 @@ export interface KShadowTickResponse {
   side: 'long' | 'short' | null;
   size_intent: number;
   phi: number;
+  /** Warm-start kappa: Python ran with kappa seeded from the live TS value. */
   kappa: number;
+  /** Cold-start kappa: Python ran from the registry default (~63.8) with no
+   *  seed, producing an independent baseline.  Present only when the caller
+   *  supplied a `kappa` hint and `prev_state` was absent.
+   *  Compare delta_kappa (|ts_kappa − kappa|) against
+   *  delta_kappa_cold (|ts_kappa − kappa_cold|) to distinguish genuine
+   *  algorithmic agreement from seed contamination. */
+  kappa_cold?: number;
   M: number | null;
   Gamma: number;
   R: 0 | 1 | 2 | null;

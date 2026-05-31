@@ -6362,9 +6362,9 @@ export class MonkeyKernel extends EventEmitter {
             `INSERT INTO kernel_parity_log
                (tick_id, symbol, symbol_timestamp,
                 ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R, ts_regime, ts_decision_ms,
-                py_action, py_side, py_phi, py_kappa, py_M, py_Gamma, py_R, py_regime, py_decision_ms,
+                py_action, py_side, py_phi, py_kappa, py_kappa_cold, py_M, py_Gamma, py_R, py_regime, py_decision_ms,
                 py_error)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
             [
               tickId, symbol, symbolTimestamp,
               action, tsSide, phi, state.kappa, null, bv, tsR, regimeReading.regime, tsDecisionMs,
@@ -6372,6 +6372,7 @@ export class MonkeyKernel extends EventEmitter {
               pyResp && !pyResp.error ? pyResp.side : null,
               pyResp && !pyResp.error ? pyResp.phi : null,
               pyResp && !pyResp.error ? pyResp.kappa : null,
+              pyResp && !pyResp.error ? (pyResp.kappa_cold ?? null) : null,
               pyResp && !pyResp.error ? pyResp.M : null,
               pyResp && !pyResp.error ? pyResp.Gamma : null,
               pyResp && !pyResp.error ? pyResp.R : null,

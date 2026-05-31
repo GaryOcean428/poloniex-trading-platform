@@ -1,7 +1,7 @@
 """Tests for the issue #689 Python K shadow endpoint.
 
 Exercises POST /monkey/k-shadow/tick directly via FastAPI's TestClient.
-Three contracts pinned:
+Four contracts pinned:
 
   1. Healthy input → endpoint returns the slim parity-row shape with
      all required keys present (action, side, size_intent, phi, kappa,
@@ -24,6 +24,13 @@ Three contracts pinned:
      seed must land in separate neighbourhoods) — this is the regression
      test for the cold-start EMA plateau bug where py_kappa was always
      ~64.11 regardless of symbol or tick.
+
+  5. Cold-start baseline (issue #710 review) — when a kappa hint is
+     supplied, the response MUST include `kappa_cold` (computed from
+     a fresh cold-start state seeded at the registry default, ~63.8).
+     This allows kernel_parity_log to log delta_kappa_cold alongside
+     the seeded delta_kappa so the cutover gate is not resting on a
+     tautological comparison.
 
 The endpoint NEVER raises, even on internal exceptions — the response
 ALWAYS includes decided_at_ms so the TS caller can persist a parity row.
@@ -217,4 +224,43 @@ class TestKShadowEndpoint:
             f"py_kappa variation too small — kappa_low={kappa_low:.4f}, "
             f"kappa_high={kappa_high:.4f} (diff={abs(kappa_high-kappa_low):.4f}). "
             "Warm-start kappa fix (#710) may not be working."
+        )
+
+    def test_cold_start_kappa_returned_when_hint_supplied(self, client):
+        """Issue #710 (review) parity-log tautology guard: when a kappa hint
+        is supplied the response must include `kappa_cold` — the independent
+        cold-start baseline computed without the seed.
+
+        `kappa_cold` must:
+          - be present in the response body
+          - be a numeric value
+          - differ meaningfully from the warm-start `kappa` when the seed
+            is far from the cold-start default (~63.8 registry value).
+
+        This ensures that kernel_parity_log can expose delta_kappa_cold
+        (|ts_kappa − py_kappa_cold|) alongside the seeded delta_kappa,
+        so the cutover gate is not resting on a tautological comparison.
+        """
+        ohlcv = _make_ohlcv(120)
+        # Use a seed far from the cold-start default so the two kappas
+        # are clearly distinguishable.
+        resp = client.post("/monkey/k-shadow/tick", json=_request_body(ohlcv, kappa=50.0))
+        assert resp.status_code == 200
+        body = resp.json()
+        if body.get("error"):
+            pytest.skip("k-shadow returned error envelope — skipping kappa_cold check")
+        assert "kappa_cold" in body, (
+            "kappa_cold missing from response — cold-start baseline not being computed "
+            "(parity-log tautology guard, issue #710 review)"
+        )
+        kappa_warm = body["kappa"]
+        kappa_cold = body["kappa_cold"]
+        assert isinstance(kappa_cold, (int, float))
+        # kappa=50 seed is ~14 units below the cold-start default (~63.8).
+        # After one EMA step the warm output should be noticeably below
+        # the cold output.
+        assert abs(kappa_warm - kappa_cold) > 3, (
+            f"kappa_warm={kappa_warm:.4f} and kappa_cold={kappa_cold:.4f} are too close "
+            f"(diff={abs(kappa_warm - kappa_cold):.4f}). Cold-start and warm-start should "
+            "diverge when the seed is far from the default."
         )
