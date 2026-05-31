@@ -3876,7 +3876,8 @@ export class MonkeyKernel extends EventEmitter {
         let minProfitablePnl = Number.POSITIVE_INFINITY;
         let regimeHeldProfit: ReturnType<typeof shouldRegimeHeldProfitExit> | undefined;
         if (
-          regimeHeldExitLive
+          !exitFired
+          && regimeHeldExitLive
           && cellAction !== null
           && cellAction.harvestTightness === 'tight'
           && currentRoi !== undefined
