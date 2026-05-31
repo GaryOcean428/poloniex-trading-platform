@@ -18,6 +18,7 @@ no longer exist; strategyloop + qig_warp is the sole stack.
 """
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -2303,16 +2304,27 @@ async def monkey_k_shadow_tick(request: Request):
             rolling_kelly_stats=rolling_kelly_stats,
         )
 
-        # State resolution: caller-provided prev_state wins. If absent we
-        # build an EPHEMERAL state seeded from the uniform basin — we do
-        # NOT touch the _symbol_states cache (that's owned by
-        # /monkey/tick/run for the cutover path).
+        # State resolution: caller-provided prev_state wins. If absent,
+        # seed from the live _symbol_states cache (read-only deepcopy) so
+        # that last_basin is populated and basin_velocity (Gamma) reflects
+        # real basin curvature — matching the TS side which maintains state
+        # across ticks.  We NEVER write back to _symbol_states from the
+        # shadow path; deepcopy guarantees run_tick's in-place mutations
+        # cannot corrupt the live state.
         prev_state_payload = payload.get("prev_state")
         if prev_state_payload is not None:
             state = _symbol_state_from_dict(prev_state_payload)
         else:
-            from monkey_kernel.basin import uniform_basin
-            state = fresh_symbol_state(symbol, uniform_basin(64))
+            # Live path key uses the raw (non-prefixed) instance_id.
+            live_instance_id = str(payload.get("instance_id", "monkey-primary"))
+            live_key = (live_instance_id, symbol)
+            if live_key in _symbol_states:
+                # Read-only borrow: deepcopy so run_tick's in-place mutations
+                # (e.g. last_basin update) stay in the shadow copy only.
+                state = copy.deepcopy(_symbol_states[live_key])
+            else:
+                from monkey_kernel.basin import uniform_basin
+                state = fresh_symbol_state(symbol, uniform_basin(64))
 
         # Ephemeral autonomic / ocean / foresight / heart so the shadow
         # tick cannot accumulate kernel-bus events into the live
