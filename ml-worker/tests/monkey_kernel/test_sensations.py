@@ -193,7 +193,7 @@ class TestCanonicalUcpSensations:
     def test_activated_positive_above_kappa_star(self) -> None:
         """κ > κ* → activated > 0, dampened == 0."""
         st = _state()
-        st.kappa = 70.0
+        st.kappa = KAPPA_STAR() + 6.2
         sen = compute_sensations(st)
         assert sen.activated > 0
         assert sen.dampened == 0.0
@@ -201,7 +201,7 @@ class TestCanonicalUcpSensations:
     def test_dampened_positive_below_kappa_star(self) -> None:
         """κ < κ* → dampened > 0, activated == 0."""
         st = _state()
-        st.kappa = 50.0
+        st.kappa = KAPPA_STAR() - 6.2
         sen = compute_sensations(st)
         assert sen.dampened > 0
         assert sen.activated == 0.0
@@ -211,8 +211,8 @@ class TestCanonicalUcpSensations:
         different observed σ_κ — observation drives the scale, not a
         hardcoded constant."""
         st = _state()
-        st.kappa = 70.0  # 6.0 above κ*
         kappa_ref = KAPPA_STAR()
+        st.kappa = kappa_ref + 6.2
         tight = compute_sensations(
             st,
             kappa_history=[
