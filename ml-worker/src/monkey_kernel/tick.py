@@ -610,10 +610,25 @@ def run_tick(
     # low velocity = strong internal coupling = high coupling_health.
     # Stays in [0, 1]; preserves the kappa_delta contract downstream.
     coupling_health = phi * (1.0 - min(bv, 1.0))
-    kappa_star = _registry.get("physics.kappa_reference", default=63.8)  # v6.7B + two-channel: channel-specific, not universal 64
+    # κ anchor — kernel decides (P5/P25 observer-derived; two-channel doctrine).
+    # CONFLICT RESOLVED: state.kappa_history is already maintained as the kernel's
+    # observer-derived κ anchor (median/MAD, used for transcendence), but this
+    # update ignored it and dragged κ toward a fixed registry reference every tick
+    # — pinning κ near the retired-universal-64 neighbourhood regardless of the
+    # symbol's lived geometry (#710/#1048 constant-py_kappa artifact). The kernel
+    # now anchors to the MEDIAN of its OWN lived kappa_history; the registry value
+    # is the cold-start fallback only, until >=2 lived samples exist (1 = noise,
+    # >=2 = signal, HISTORY_MIN_SAMPLES parity). Channel: pillar-channel coupling
+    # scalar (kappa_pillar = 63.83 +/- 0.86 frozen), explicit per Frozen Facts
+    # Sec.2.5 — NOT kappa_h field (-0.00475) or kappa_J coupling.
+    # np.median over scalar history is a robust statistic, not a simplex metric op.
+    if len(state.kappa_history) >= 2:
+        kappa_anchor = float(np.median(state.kappa_history))
+    else:
+        kappa_anchor = float(_registry.get("physics.kappa_reference", default=63.8))
     kappa_delta = (coupling_health - 0.5) * 5.0 - (bv - 0.2) * 10.0
     state.kappa = max(20.0, min(
-        120.0, state.kappa * 0.8 + (kappa_star + kappa_delta) * 0.2,
+        120.0, state.kappa * 0.8 + (kappa_anchor + kappa_delta) * 0.2,
     ))
     # state.kappa_history.append moved to end-of-tick block for TS parity:
     # TS appends after computeMotivators returns (loop.ts:5679 vs call at
