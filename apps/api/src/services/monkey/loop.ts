@@ -228,7 +228,11 @@ import {
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
 import { ingestRewardRpeDark } from './rewardShadowSync.js';
-import { startRewardShadowReadinessJob } from './rewardShadowReadiness.js';
+import {
+  getRewardShadowReadinessTelemetry,
+  startRewardShadowReadinessJob,
+  stopRewardShadowReadinessJob,
+} from './rewardShadowReadiness.js';
 import {
   computePredictionChemistry,
   type PredictionChemistryDeltas,
@@ -1710,7 +1714,7 @@ export class MonkeyKernel extends EventEmitter {
       this.residualScanTimer = null;
     }
     if (this.rewardShadowReadinessTimer) {
-      clearInterval(this.rewardShadowReadinessTimer);
+      stopRewardShadowReadinessJob();
       this.rewardShadowReadinessTimer = null;
     }
     if (this.predictionEmitterTimer) {
@@ -10573,7 +10577,7 @@ export class MonkeyKernel extends EventEmitter {
     const legacyEndo = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim * oceanCoeff
       : 0;
-    const rewardRpeLive = process.env.MONKEY_REWARD_RPE_LIVE === 'true';
+    const rewardRpeLive = process.env.MONKEY_REWARD_RPE_LIVE !== 'false';
     const rewardRpeDark = process.env.MONKEY_REWARD_RPE_DARK !== 'false';
     this.rewardRateSamples += 1;
     const emaAlpha = 2 / (Math.min(this.rewardRateSamples, 200) + 1);
@@ -10626,12 +10630,13 @@ export class MonkeyKernel extends EventEmitter {
         symbol: input.symbol,
       });
     }
-    const useRpeDeltas = rewardRpeLive && proposed.valid;
+    const rewardRpeTonicOnly = rewardRpeLive && getRewardShadowReadinessTelemetry().postCutoverFlagged;
+    const useRpeDeltas = rewardRpeLive && proposed.valid && !rewardRpeTonicOnly;
     let dop = legacyDop;
     let ser = legacySer;
     let endo = legacyEndo;
     if (rewardRpeLive) {
-      dop = useRpeDeltas ? proposed.dopamineDelta : 0;
+      dop = rewardRpeTonicOnly ? tonicBaseline : useRpeDeltas ? proposed.dopamineDelta : 0;
       ser = useRpeDeltas ? proposed.serotoninDelta : 0;
       endo = useRpeDeltas ? proposed.endorphinDelta : 0;
     }

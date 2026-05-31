@@ -208,16 +208,16 @@ export async function persistRewardShadowRecord(record: RewardShadowRecord): Pro
 
 export async function ingestRewardRpeDark(payloadInput: unknown): Promise<boolean> {
   const payload = parseRewardRpeDarkPayload(payloadInput);
-  if (!payload) return !1;
+  if (!payload) return false;
   try {
     const record = materializeRewardShadowRecord(payload);
-    if (!record) return !1;
+    if (!record) return false;
     await persistRewardShadowRecord(record);
     return true;
   } catch (error) {
     logger.warn('reward-shadow ingest failed', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return !1;
+    return false;
   }
 }

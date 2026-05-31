@@ -6,6 +6,9 @@ const MAX_WINDOW_ROWS = 1200;
 const EPS = 1e-9;
 const PARITY_EPS = 1e-6;
 const MAD_STABILITY_EPS = 1e-3;
+const DIP_SIGNIFICANCE_ALPHA = 0.05;
+const COVERAGE_FLOOR = 0.8;
+const MIN_PARITY_MATCHED_PAIRS = 1;
 const SURPRISE_RPE_Z = 1;
 const PREDICTED_RPE_Z = 0.5;
 
@@ -27,6 +30,7 @@ export interface RewardShadowReadinessMetrics {
   predictionSkill: number;
   dipDifferentiationP: number;
   parityDivergence: number;
+  parityMatchedPairs: number;
   coverage: number;
   n: number;
   samplesStable: boolean;
@@ -48,18 +52,21 @@ let lastMetrics: RewardShadowReadinessMetrics = {
   predictionSkill: 0,
   dipDifferentiationP: 1,
   parityDivergence: 0,
+  parityMatchedPairs: 0,
   coverage: 0,
   n: 0,
-  samplesStable: !1,
-  ready: !1,
-  dipSeparated: !1,
-  postCutoverFlagged: !1,
+  samplesStable: false,
+  ready: false,
+  dipSeparated: false,
+  postCutoverFlagged: false,
   sustainedDegradeWindows: 0,
   surpriseCount: 0,
   predictedCount: 0,
   latestTs: null,
 };
 let shadowWindowRows: RewardShadowReadinessWindowRow[] = [];
+let readinessTimer: NodeJS.Timeout | null = null;
+let readinessTimerUsers = 0;
 
 function finiteOrNull(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -215,7 +222,7 @@ function computeDipDifferentiation(rows: RewardShadowReadinessWindowRow[]) {
     surprise.length > 0
     && predicted.length > 0
     && rank.commonLanguageEffect > (0.5 + EPS)
-    && rank.pValue < (1 - EPS);
+    && rank.pValue < DIP_SIGNIFICANCE_ALPHA;
 
   return {
     surprise,
@@ -225,7 +232,10 @@ function computeDipDifferentiation(rows: RewardShadowReadinessWindowRow[]) {
   };
 }
 
-function computeParityDivergence(rows: RewardShadowReadinessWindowRow[]): number {
+function computeParityDivergence(rows: RewardShadowReadinessWindowRow[]): {
+  divergence: number;
+  matchedPairs: number;
+} {
   const byKey = new Map<string, { ts?: number; py?: number }>();
   for (const row of rows) {
     const tsMs = Date.parse(row.ts);
@@ -243,22 +253,27 @@ function computeParityDivergence(rows: RewardShadowReadinessWindowRow[]): number
       diffs.push(Math.abs(entry.ts - entry.py));
     }
   }
-  if (diffs.length === 0) return 0;
-  return diffs.reduce((sum, value) => sum + value, 0) / diffs.length;
+  if (diffs.length === 0) {
+    return { divergence: Number.POSITIVE_INFINITY, matchedPairs: 0 };
+  }
+  return {
+    divergence: diffs.reduce((sum, value) => sum + value, 0) / diffs.length,
+    matchedPairs: diffs.length,
+  };
 }
 
 function computeSampleStability(rows: RewardShadowReadinessWindowRow[]): boolean {
   const validRows = rows.filter(
     (row) => row.valid && row.predictedPnlFrac !== null && row.sigmaResidual !== null,
   );
-  if (validRows.length < 3) return !1;
+  if (validRows.length < 3) return false;
   const residualAbs = validRows.map((row) => Math.abs(row.realizedPnlFrac - (row.predictedPnlFrac ?? 0)));
 
   const rollingMads: number[] = [];
   for (let i = 3; i <= residualAbs.length; i += 1) {
     rollingMads.push(mad(residualAbs.slice(0, i)));
   }
-  if (rollingMads.length < 2) return !1;
+  if (rollingMads.length < 2) return false;
 
   const madOfMad = mad(rollingMads);
   return madOfMad <= MAD_STABILITY_EPS;
@@ -269,12 +284,13 @@ function metricsFailClosedDefaults(): RewardShadowReadinessMetrics {
     predictionSkill: 0,
     dipDifferentiationP: 1,
     parityDivergence: 0,
+    parityMatchedPairs: 0,
     coverage: 0,
     n: 0,
-    samplesStable: !1,
-    ready: !1,
-    dipSeparated: !1,
-    postCutoverFlagged: !1,
+    samplesStable: false,
+    ready: false,
+    dipSeparated: false,
+    postCutoverFlagged: false,
     sustainedDegradeWindows: 0,
     surpriseCount: 0,
     predictedCount: 0,
@@ -287,27 +303,28 @@ function computeReadinessFromRows(rows: RewardShadowReadinessWindowRow[]): Rewar
 
   const predictionSkill = computePredictionSkill(rows);
   const dip = computeDipDifferentiation(rows);
-  const parityDivergence = computeParityDivergence(rows);
+  const parity = computeParityDivergence(rows);
   const coverage = computeCoverage(rows);
   const samplesStable = computeSampleStability(rows);
-  const coverageFloor = 1 / rows.length;
   const ready =
     predictionSkill > 0
     && dip.dipSeparated
-    && parityDivergence <= PARITY_EPS
-    && coverage >= coverageFloor
+    && parity.matchedPairs >= MIN_PARITY_MATCHED_PAIRS
+    && parity.divergence <= PARITY_EPS
+    && coverage >= COVERAGE_FLOOR
     && samplesStable;
 
   return {
     predictionSkill,
     dipDifferentiationP: dip.pValue,
-    parityDivergence,
+    parityDivergence: parity.divergence,
+    parityMatchedPairs: parity.matchedPairs,
     coverage,
     n: rows.length,
     samplesStable,
     ready,
     dipSeparated: dip.dipSeparated,
-    postCutoverFlagged: !1,
+    postCutoverFlagged: false,
     sustainedDegradeWindows: 0,
     surpriseCount: dip.surprise.length,
     predictedCount: dip.predicted.length,
@@ -316,11 +333,11 @@ function computeReadinessFromRows(rows: RewardShadowReadinessWindowRow[]): Rewar
 }
 
 function updateRevertGate(metrics: RewardShadowReadinessMetrics): RewardShadowReadinessMetrics {
-  const live = process.env.MONKEY_REWARD_RPE_LIVE === 'true';
+  const live = process.env.MONKEY_REWARD_RPE_LIVE !== 'false';
   if (!live) {
     return {
       ...metrics,
-      postCutoverFlagged: !1,
+      postCutoverFlagged: false,
       sustainedDegradeWindows: 0,
     };
   }
@@ -337,6 +354,7 @@ function updateRevertGate(metrics: RewardShadowReadinessMetrics): RewardShadowRe
       dipDifferentiationP: metrics.dipDifferentiationP,
       dipSeparated: metrics.dipSeparated,
       parityDivergence: metrics.parityDivergence,
+      parityMatchedPairs: metrics.parityMatchedPairs,
       coverage: metrics.coverage,
       samplesStable: metrics.samplesStable,
       sustainedDegradeWindows: sustained,
@@ -367,6 +385,7 @@ export async function getRewardShadowReadiness(
         ? metrics.dipDifferentiationP
         : 1,
       parityDivergence: Number.isFinite(metrics.parityDivergence) ? metrics.parityDivergence : 0,
+      parityMatchedPairs: metrics.parityMatchedPairs,
       coverage: Number.isFinite(metrics.coverage) ? metrics.coverage : 0,
     };
   } catch (error) {
@@ -384,8 +403,13 @@ export async function scanRewardShadowReadiness(): Promise<RewardShadowReadiness
 }
 
 export function startRewardShadowReadinessJob(): NodeJS.Timeout {
+  if (readinessTimer) {
+    readinessTimerUsers += 1;
+    return readinessTimer;
+  }
+
   void scanRewardShadowReadiness();
-  const timer = setInterval(() => {
+  readinessTimer = setInterval(() => {
     void scanRewardShadowReadiness().then((metrics) => {
       if (metrics.n > 0) {
         logger.info('rewardShadowReadiness pass', {
@@ -394,6 +418,7 @@ export function startRewardShadowReadinessJob(): NodeJS.Timeout {
           dipDifferentiationP: metrics.dipDifferentiationP,
           dipSeparated: metrics.dipSeparated,
           parityDivergence: metrics.parityDivergence,
+          parityMatchedPairs: metrics.parityMatchedPairs,
           coverage: metrics.coverage,
           n: metrics.n,
           samplesStable: metrics.samplesStable,
@@ -403,8 +428,17 @@ export function startRewardShadowReadinessJob(): NodeJS.Timeout {
       }
     });
   }, SCAN_INTERVAL_MS);
+  readinessTimerUsers = 1;
 
-  return timer;
+  return readinessTimer;
+}
+
+export function stopRewardShadowReadinessJob(): void {
+  if (readinessTimerUsers > 0) readinessTimerUsers -= 1;
+  if (readinessTimer && readinessTimerUsers === 0) {
+    clearInterval(readinessTimer);
+    readinessTimer = null;
+  }
 }
 
 export function getRewardShadowReadinessTelemetry(): RewardShadowReadinessMetrics {
@@ -413,6 +447,26 @@ export function getRewardShadowReadinessTelemetry(): RewardShadowReadinessMetric
 
 export function getRewardShadowReadinessWindowRows() {
   return shadowWindowRows;
+}
+
+export function serializeRewardShadowReadiness(metrics: RewardShadowReadinessMetrics, ok?: boolean) {
+  return {
+    ...(ok === undefined ? {} : { ok }),
+    prediction_skill: metrics.predictionSkill,
+    dip_differentiation_p: metrics.dipDifferentiationP,
+    parity_divergence: metrics.parityDivergence,
+    parity_matched_pairs: metrics.parityMatchedPairs,
+    coverage: metrics.coverage,
+    n: metrics.n,
+    samples_stable: metrics.samplesStable,
+    ready: metrics.ready,
+    dip_separated: metrics.dipSeparated,
+    post_cutover_flagged: metrics.postCutoverFlagged,
+    sustained_degrade_windows: metrics.sustainedDegradeWindows,
+    surprise_count: metrics.surpriseCount,
+    predicted_count: metrics.predictedCount,
+    latest_ts: metrics.latestTs,
+  };
 }
 
 export function __setRewardShadowReadinessWindowForTests(
@@ -424,4 +478,9 @@ export function __setRewardShadowReadinessWindowForTests(
 export function __resetRewardShadowReadinessStateForTests(): void {
   lastMetrics = metricsFailClosedDefaults();
   shadowWindowRows = [];
+  if (readinessTimer) {
+    clearInterval(readinessTimer);
+    readinessTimer = null;
+  }
+  readinessTimerUsers = 0;
 }
