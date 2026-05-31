@@ -38,6 +38,10 @@ import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollatio
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { initBasinSyncBridge } from './services/monkey/basin_sync_redis_bridge.js';
 import { monkeyKernel, swingMonkey } from './services/monkey/loop.js';
+import {
+  getRewardShadowReadinessTelemetry,
+} from './services/monkey/rewardShadowReadiness.js';
+import { ingestRewardRpeDark } from './services/monkey/rewardShadowSync.js';
 import paperTradingService from './services/paperTradingService.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
@@ -142,6 +146,40 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     publicIP: publicIP
+  });
+});
+
+app.post('/api/health/monkey/reward-rpe-dark', async (req: Request, res: Response) => {
+  const accepted = await ingestRewardRpeDark(req.body);
+  res.json({ ok: true, accepted });
+});
+
+app.get('/monkey/reward/shadow_readiness', (_req: Request, res: Response) => {
+  const metrics = getRewardShadowReadinessTelemetry();
+  res.json({
+    prediction_skill: metrics.predictionSkill,
+    dip_differentiation_p: metrics.dipDifferentiationP,
+    parity_divergence: metrics.parityDivergence,
+    coverage: metrics.coverage,
+    n: metrics.n,
+    samples_stable: metrics.samplesStable,
+    ready: metrics.ready,
+  });
+});
+
+app.get('/api/health/monkey/reward/shadow_readiness', (_req: Request, res: Response) => {
+  const metrics = getRewardShadowReadinessTelemetry();
+  res.json({
+    ok: true,
+    prediction_skill: metrics.predictionSkill,
+    dip_differentiation_p: metrics.dipDifferentiationP,
+    parity_divergence: metrics.parityDivergence,
+    coverage: metrics.coverage,
+    n: metrics.n,
+    samples_stable: metrics.samplesStable,
+    ready: metrics.ready,
+    post_cutover_flagged: metrics.postCutoverFlagged,
+    sustained_degrade_windows: metrics.sustainedDegradeWindows,
   });
 });
 

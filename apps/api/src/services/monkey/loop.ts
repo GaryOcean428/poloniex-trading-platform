@@ -227,6 +227,8 @@ import {
 } from './outcomeRingStats.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
+import { ingestRewardRpeDark } from './rewardShadowSync.js';
+import { startRewardShadowReadinessJob } from './rewardShadowReadiness.js';
 import {
   computePredictionChemistry,
   type PredictionChemistryDeltas,
@@ -1117,6 +1119,8 @@ export class MonkeyKernel extends EventEmitter {
   private pnlScanTimer: ReturnType<typeof setInterval> | null = null;
   /** #941 Phase 2 prediction-residual scanner timer. Runs independent of tick(). */
   private residualScanTimer: ReturnType<typeof setInterval> | null = null;
+  /** Reward-RPE shadow readiness scanner timer. */
+  private rewardShadowReadinessTimer: ReturnType<typeof setInterval> | null = null;
   /** #941 Phase 3 prediction-reward emitter timer. Refreshes the cached
    *  prediction-error chemistry deltas every 30s; the tick loop reads
    *  the cache and adds the deltas into computeNeurochemicals inputs. */
@@ -1658,6 +1662,8 @@ export class MonkeyKernel extends EventEmitter {
     // Cadence is structural (matches kernel tick × 2).
     this.residualScanTimer = startPredictionResidualJob();
     this.residualScanTimer.unref?.();
+    this.rewardShadowReadinessTimer = startRewardShadowReadinessJob();
+    this.rewardShadowReadinessTimer.unref?.();
 
     // #941 Phase 3: prediction-reward emitter. Refreshes the cached
     // chemistry delta from residual rows every 30s (half the residual
@@ -1702,6 +1708,10 @@ export class MonkeyKernel extends EventEmitter {
     if (this.residualScanTimer) {
       clearInterval(this.residualScanTimer);
       this.residualScanTimer = null;
+    }
+    if (this.rewardShadowReadinessTimer) {
+      clearInterval(this.rewardShadowReadinessTimer);
+      this.rewardShadowReadinessTimer = null;
     }
     if (this.predictionEmitterTimer) {
       clearInterval(this.predictionEmitterTimer);
@@ -10583,20 +10593,32 @@ export class MonkeyKernel extends EventEmitter {
       legibility: Number(input.legibility ?? 0),
     });
     if (rewardRpeDark) {
-      logger.info(`[${this.label}] reward-rpe dark`, {
+      const rewardRpePayload = {
+        ts: new Date().toISOString(),
         source: input.source,
+        substrate: 'ts',
         symbol: input.symbol,
-        live: rewardRpeLive,
+        realized_pnl_frac: pnlFrac,
+        predicted_pnl_frac: Number(input.predictedPnlFrac),
+        sigma_residual: Number(input.sigmaResidual),
+        phasic_rpe: proposed.phasicRpe,
+        legibility: Number(input.legibility ?? 0),
+        regime: null,
+        regime_persisted: input.regimePersistence,
         valid: proposed.valid,
-        legacyDop,
-        legacySer,
-        legacyEndo,
-        proposedDop: proposed.dopamineDelta,
-        proposedSer: proposed.serotoninDelta,
-        proposedEndo: proposed.endorphinDelta,
-        phasicRpe: proposed.phasicRpe,
-        tonicBaseline,
+        legacy_dop: legacyDop,
+        legacy_ser: legacySer,
+        legacy_endo: legacyEndo,
+        proposed_dop: proposed.dopamineDelta,
+        proposed_ser: proposed.serotoninDelta,
+        proposed_endo: proposed.endorphinDelta,
+        tonic_baseline: tonicBaseline,
+      };
+      logger.info(`[${this.label}] reward-rpe dark`, {
+        ...rewardRpePayload,
+        live: rewardRpeLive,
       });
+      void ingestRewardRpeDark(rewardRpePayload);
     }
     if (rewardRpeLive && !proposed.valid) {
       logger.info(`[${this.label}] reward-rpe live zero-delta (invalid prediction/residual)`, {
