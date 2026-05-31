@@ -857,6 +857,19 @@ export function shouldProfitHarvest(
   };
 }
 
+export function computeRegimeHeldProfitFloorPnl(
+  positionNotionalUsdt: number,
+  effectiveCostFrac: number,
+  observerLossFloorRoi: number,
+): number {
+  if (!Number.isFinite(positionNotionalUsdt) || positionNotionalUsdt <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  const costFrac = Number.isFinite(effectiveCostFrac) ? Math.max(0, effectiveCostFrac) : 0;
+  const lossFloorRoi = Number.isFinite(observerLossFloorRoi) ? Math.max(0, observerLossFloorRoi) : 0;
+  return positionNotionalUsdt * Math.max(costFrac, lossFloorRoi);
+}
+
 /**
  * shouldAggregateHarvest — cross-kernel aggregate-PnL harvest gate.
  *
