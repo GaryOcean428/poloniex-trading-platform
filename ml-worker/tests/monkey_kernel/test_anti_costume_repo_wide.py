@@ -80,7 +80,7 @@ _REGISTRY_GET_BUDGET = {
     "ocean_sleep_trigger.py": 5,
     "regime.py": 2,
     "self_observation.py": 2,
-    "tick.py": 16,  # +1 (#1039): conviction_hesitation_window used inline to cap ring buffer at line 2314
+    "tick.py": 16,  # #1039 inline ring-buffer cap; #711/#766 compositional rollout gate (shadow/live)
     "working_memory.py": 12,
 }
 
