@@ -92,7 +92,7 @@ export function parseRewardRpeDarkPayload(input: unknown): RewardRpeDarkPayload 
 }
 
 export function canPersistRewardShadow(): boolean {
-  return process.env.MONKEY_REWARD_RPE_DARK !== String(!1);
+  return process.env.MONKEY_REWARD_RPE_DARK !== 'false';
 }
 
 export function materializeRewardShadowRecord(payload: RewardRpeDarkPayload): RewardShadowRecord | null {
