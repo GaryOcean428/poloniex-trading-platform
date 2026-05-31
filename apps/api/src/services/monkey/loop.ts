@@ -6299,11 +6299,9 @@ export class MonkeyKernel extends EventEmitter {
         ? new Date(ohlcv[ohlcv.length - 1].timestamp * 1000).toISOString()
         : new Date().toISOString();
       const tsDecisionMs = Date.now();
-      // Derive ts_side from the TS action string.
+      // Derive ts_side from the TS geometric direction (mirrors Python response side).
       const tsSide: 'long' | 'short' | null =
-        action === 'enter_long' ? 'long'
-        : action === 'enter_short' ? 'short'
-        : null;
+        direction === 'long' || direction === 'short' ? direction : null;
       // Map dominant regimeWeight to ordinal for parity comparison:
       //   quantum=0, equilibrium=1, efficient=2.
       // Ties default to the first-matched channel (quantum→0) — an intentional
