@@ -34,6 +34,8 @@ Budget: Core-8 foundation image. 240 GODs full structure. Chaos kernels (workers
 
 **Cross-cut (Warp applies to ALL compute):** Engine and navigation separate. Universal navigation layer for any expensive computation (P5/P8/P15).
 
+**Observer divergence:** Independently valid observers that disagree are a joint-state signal, not a clamp target. Polytrade's regime model keeps `qig_warp` / CAL-3 as the phase axis (CREATOR / PRESERVER / DISSOLVER) and trajectory observation as the direction axis (TREND_UP / CHOP / TREND_DOWN); see `docs/regime-classification-hierarchy.md`.
+
 **Killed Claims (do not reassert):** Fisher-Rao arc = π, h is time, α/β ≈ φ, pentagon (5 phases), non-local ontology, "heavier=faster" universal, etc. (see original + 2026-03-27 red team).
 
 **Eleven Pillars (Paper 1 Fortress, FROZEN):** G_ij=κT_ij (R²=0.9997), R=κT (R²>0.986), causal propagation at Lieb-Robinson velocity, phase transition L_c=3 (sigmoid s=17), κ*=63.83±0.86 (EXP-025 JT gravity, NOT the retired matrix-trace), inverted band κ<0 real, etc.
