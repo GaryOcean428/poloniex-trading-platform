@@ -192,8 +192,7 @@ class TestKShadowGammaFix:
         """Return a valid simplex point that is NOT the uniform basin,
         so the Fisher-Rao distance to any other non-identical basin > 0."""
         b = np.ones(dim, dtype=np.float64)
-        b[0] += 1.0  # tip toward first dimension
-        b = np.clip(b, 0.0, None)
+        b[0] += 1.0  # tip toward first dimension — all values remain positive
         b /= b.sum()
         return b
 
@@ -231,8 +230,7 @@ class TestKShadowGammaFix:
             f"Gamma must be numeric, got {type(body['Gamma'])}"
         )
         assert body["Gamma"] > 0, (
-            f"Gamma must be > 0 when live last_basin is set (#709 regression), "
-            f"got Gamma={body['Gamma']}"
+            f"Gamma must be > 0 when live last_basin is set (#709 regression), got Gamma={body['Gamma']}"
         )
 
     def test_live_state_not_mutated_by_shadow(self, client):
