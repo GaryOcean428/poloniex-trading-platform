@@ -18,7 +18,8 @@ export interface FillQualityRecord {
   fillPrice: number;
   restingMs?: number | null;
   outcomePnl?: number | null;
-  tradeId?: number | null;
+  /** autonomous_trades.id — a UUID string, not a number. */
+  tradeId?: string | null;
 }
 
 export async function recordFillQuality(record: FillQualityRecord): Promise<void> {

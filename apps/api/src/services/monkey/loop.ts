@@ -8765,7 +8765,10 @@ export class MonkeyKernel extends EventEmitter {
               fillPrice: markPrice,
               restingMs: null,
               outcomePnl: rowPnl,
-              tradeId: Number(row.id) || null,
+              // autonomous_trades.id is a UUID string — pass it as-is (the old
+              // Number(row.id) coerced every UUID to NaN→null, so the trade
+              // linkage was never recorded).
+              tradeId: row.id != null ? String(row.id) : null,
             }).catch(() => {}); // never throws — telemetry must not affect trading
           }
 
