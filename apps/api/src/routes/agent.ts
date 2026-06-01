@@ -13,6 +13,10 @@ import {
   setExecutionMode,
   type ExecutionMode,
 } from '../services/executionModeService.js';
+import {
+  getAllFlags,
+  setFlag,
+} from '../services/featureFlagsService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import { logger } from '../utils/logger.js';
@@ -918,6 +922,68 @@ router.put('/execution-mode', authenticateToken, async (req: Request, res: Respo
   } catch (error: unknown) {
     logger.error('Error updating execution mode:', error);
     return res.status(500).json({ success: false, error: 'Failed to update execution mode' });
+  }
+});
+
+/**
+ * GET /api/agent/feature-flags
+ * List every Monkey on/off feature flag with its current value + audit meta.
+ * The dashboard renders one toggle per row. (Numeric calibration thresholds are
+ * observer-derived per the P1 doctrine and are intentionally NOT exposed here.)
+ */
+router.get('/feature-flags', authenticateToken, async (_req: Request, res: Response) => {
+  try {
+    const flags = await getAllFlags();
+    return res.json({
+      success: true,
+      flags: flags.map((f) => ({
+        key: f.flagKey,
+        value: f.value,
+        updatedAt: f.updatedAt.toISOString(),
+        updatedBy: f.updatedBy,
+      })),
+    });
+  } catch (error: unknown) {
+    logger.error('Error reading feature flags:', error);
+    return res.status(500).json({ success: false, error: 'Failed to read feature flags' });
+  }
+});
+
+/**
+ * PUT /api/agent/feature-flags/:key
+ * Set a single flag. Body: { value }. `value` is a string ('true'/'false' for
+ * toggles). The kernel picks the new value up within one tick via the cache.
+ */
+router.put('/feature-flags/:key', authenticateToken, async (req: Request, res: Response) => {
+  const key = String(req.params.key ?? '').trim();
+  const { value } = (req.body ?? {}) as { value?: unknown };
+  if (!key) {
+    return res.status(400).json({ success: false, error: 'flag key is required' });
+  }
+  // All current flags are boolean toggles — accept only canonical 'true'/'false'
+  // (relax when value-typed flags are introduced). Prevents '1'/'yes'/typos from
+  // silently flipping a flag.
+  if (value !== 'true' && value !== 'false') {
+    return res.status(400).json({ success: false, error: "value must be 'true' or 'false'" });
+  }
+  const operator = (req.user?.email || req.user?.id || req.user?.userId || 'unknown').toString();
+  try {
+    // Reject unknown keys so a typo can't create a phantom flag the kernel never reads.
+    const known = await getAllFlags();
+    if (!known.some((f) => f.flagKey === key)) {
+      return res.status(404).json({ success: false, error: `unknown feature flag: ${key}` });
+    }
+    const record = await setFlag(key, value, operator);
+    return res.json({
+      success: true,
+      key: record.flagKey,
+      value: record.value,
+      updatedAt: record.updatedAt.toISOString(),
+      updatedBy: record.updatedBy,
+    });
+  } catch (error: unknown) {
+    logger.error('Error updating feature flag:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update feature flag' });
   }
 });
 
