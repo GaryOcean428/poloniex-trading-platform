@@ -179,6 +179,7 @@ import {
 } from './candlePatterns.js';
 import { evaluateBankWrite } from './learning_gate_client.js';
 import { resonanceBank } from './resonance_bank.js';
+import { recordFillQuality } from './fill_quality_recorder.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
 import {
@@ -8245,19 +8246,19 @@ export class MonkeyKernel extends EventEmitter {
       // tick re-fires close → 21002 retry storm.
       const openRows = closeLane
         ? await pool.query(
-            `SELECT id, quantity, agent FROM autonomous_trades
+            `SELECT id, quantity, agent, lane FROM autonomous_trades
               WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
                 AND (lane = $3 OR lane IS NULL)
               ORDER BY entry_time ASC`,
             [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
           )
         : await pool.query(
-            `SELECT id, quantity, agent FROM autonomous_trades
+            `SELECT id, quantity, agent, lane FROM autonomous_trades
               WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
               ORDER BY entry_time ASC`,
             [`monkey|kernel=${this.instanceId}|%`, symbol],
           );
-      const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null }>;
+      const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null; lane: string | null }>;
       const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
       // Accumulate per-agent (pnl, qty) inside the row loop so we can
       // push ONE reward event per agent at the end. Per-row pushes would
@@ -8392,6 +8393,26 @@ export class MonkeyKernel extends EventEmitter {
           this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl, (markPrice * rowQty) / 16);
           perAgentTotals[agentLabel].pnl += rowPnl;
           perAgentTotals[agentLabel].qty += rowQty;
+
+          // #827: record fill quality for symbol-scope analysis (best-effort, non-blocking).
+          // Derives entry order_type: scalp lane + SCALP_LIMIT_MAKER_LIVE env = maker
+          // (the same gate that controls limit_maker routing). Safe default: taker.
+          {
+            const entryOrderType: 'maker' | 'taker' =
+              row.lane === 'scalp' && process.env.SCALP_LIMIT_MAKER_LIVE === 'true'
+                ? 'maker'
+                : 'taker';
+            recordFillQuality({
+              symbol,
+              side: heldSide,
+              orderType: entryOrderType,
+              entryPrice,
+              fillPrice: markPrice,
+              restingMs: null,
+              outcomePnl: rowPnl,
+              tradeId: Number(row.id) || null,
+            }).catch(() => {}); // never throws — telemetry must not affect trading
+          }
 
           // For canonical Polo surface: collect the actual row IDs and the
           // synthetic gross_pnl so we can pass them to the Polo history fetch
