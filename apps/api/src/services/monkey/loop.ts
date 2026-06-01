@@ -119,12 +119,7 @@ import {
 } from './kernel_predictions.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { recoveredOutcomeMatchesInstance } from './recovered_outcome_routing.js';
-import {
-  callKShadowTick,
-  isKShadowEnabled,
-  logParityDiff,
-  type KShadowTickResponse,
-} from './kernel_client.js';
+import { logParityDiff } from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
@@ -6306,108 +6301,6 @@ export class MonkeyKernel extends EventEmitter {
       logger.debug('[Monkey] decision insert failed (fail-soft)', {
         err: err instanceof Error ? err.message : String(err),
       });
-    }
-
-    // Issue #710 — K-shadow parity fanout.
-    // Fire-and-forget: call Python's /monkey/k-shadow/tick with the same
-    // inputs TS just decided on, and persist both decisions to
-    // kernel_parity_log so the cutover gate can measure parity.
-    // Passing `kappa: state.kappa` seeds Python's ephemeral state at the
-    // LIVE TS kappa, preventing py_kappa from pinning at the cold-start
-    // EMA plateau (~64.11, issue #710).
-    // Never blocks the TS tick — all errors are soft-fails.
-    if (isKShadowEnabled()) {
-      const tickId = randomUUID();
-      const symbolTimestamp = ohlcv.length > 0
-        ? new Date(ohlcv[ohlcv.length - 1].timestamp * 1000).toISOString()
-        : new Date().toISOString();
-      const tsDecisionMs = Date.now();
-      // Derive ts_side from the TS geometric direction (mirrors Python response side).
-      const tsSide: 'long' | 'short' | null =
-        direction === 'long' || direction === 'short' ? direction : null;
-      // Map dominant regimeWeight to ordinal for parity comparison:
-      //   quantum=0, equilibrium=1, efficient=2.
-      // Ties default to the first-matched channel (quantum→0) — an intentional
-      // deterministic tie-break that mirrors the Python _regime_to_ordinal
-      // fallback. Ties are extremely rare in practice (three floating-point
-      // weights rarely collide), and the parity-log delta_kappa column is the
-      // meaningful signal, not the regime ordinal alone.
-      const rw = regimeWeights as { quantum: number; efficient: number; equilibrium: number };
-      const rwMax = Math.max(rw.quantum, rw.efficient, rw.equilibrium);
-      const tsR: 0 | 1 | 2 | null =
-        rw.quantum === rwMax ? 0
-        : rw.equilibrium === rwMax ? 1
-        : rw.efficient === rwMax ? 2
-        : null;
-
-      void (async () => {
-        let pyResp: KShadowTickResponse | null = null;
-        let pyError: string | null = null;
-        try {
-          pyResp = await callKShadowTick({
-            instance_id: this.instanceId,
-            inputs: {
-              symbol,
-              ohlcv: ohlcv.map((c) => ({
-                timestamp: c.timestamp,
-                open: c.open,
-                high: c.high,
-                low: c.low,
-                close: c.close,
-                volume: c.volume,
-              })),
-              account: {
-                equity_fraction: equityFraction,
-                margin_fraction: marginFraction,
-                open_positions: typeof openPositions === 'number' ? openPositions : 0,
-                available_equity: availableEquity,
-                exchange_held_side: exchangeHeldSide ?? null,
-              },
-              bank_size: bankSize,
-              sovereignty,
-              max_leverage: maxLevBoundary,
-              min_notional: minNotional,
-              size_fraction: effectiveSizeFraction,
-            },
-            kappa: state.kappa,
-          });
-          if (pyResp.error) {
-            pyError = pyResp.error;
-          }
-        } catch (fetchErr) {
-          pyError = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-        }
-
-        try {
-          await pool.query(
-            `INSERT INTO kernel_parity_log
-               (tick_id, symbol, symbol_timestamp,
-                ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R, ts_regime, ts_decision_ms,
-                py_action, py_side, py_phi, py_kappa, py_kappa_cold, py_M, py_Gamma, py_R, py_regime, py_decision_ms,
-                py_error)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
-            [
-              tickId, symbol, symbolTimestamp,
-              action, tsSide, phi, state.kappa, null, bv, tsR, regimeReading.regime, tsDecisionMs,
-              pyResp && !pyResp.error ? pyResp.action : null,
-              pyResp && !pyResp.error ? pyResp.side : null,
-              pyResp && !pyResp.error ? pyResp.phi : null,
-              pyResp && !pyResp.error ? pyResp.kappa : null,
-              pyResp && !pyResp.error ? (pyResp.kappa_cold ?? null) : null,
-              pyResp && !pyResp.error ? pyResp.M : null,
-              pyResp && !pyResp.error ? pyResp.Gamma : null,
-              pyResp && !pyResp.error ? pyResp.R : null,
-              pyResp && !pyResp.error ? pyResp.regime : null,
-              pyResp ? pyResp.decided_at_ms : null,
-              pyError,
-            ],
-          );
-        } catch (dbErr) {
-          logger.debug('[Monkey] k-shadow parity log insert failed (fail-soft)', {
-            err: dbErr instanceof Error ? dbErr.message : String(dbErr),
-          });
-        }
-      })();
     }
 
     // Identity crystallization (§3.4 Pillar 3): after 50 ticks, start
