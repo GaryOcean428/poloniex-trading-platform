@@ -1622,7 +1622,7 @@ export class MonkeyKernel extends EventEmitter {
     // for entire sessions). Now we await per-symbol bootstrap, retain
     // the per-TF status, and ``maybeRetryMTFBootstrap`` re-runs cold
     // timeframes on a later tick.
-    if (process.env.MONKEY_MTF_BOOTSTRAP !== 'false') {
+    if (await getBoolFlag('MONKEY_MTF_BOOTSTRAP', true)) {
       void this.runInitialMTFBootstrap();
     }
 
@@ -1650,7 +1650,7 @@ export class MonkeyKernel extends EventEmitter {
     // stays authoritative; the cache is a fresher cross-check surface a
     // later PR can flip to primary on evidence. Fail-soft — a WS failure
     // leaves the kernel on REST exactly as before.
-    if (process.env.MONKEY_WS_PRIVATE_LIVE === 'true') {
+    if (await getBoolFlag('MONKEY_WS_PRIVATE_LIVE', false)) {
       void this.startWsPositionFeed();
     }
 
@@ -3610,7 +3610,7 @@ export class MonkeyKernel extends EventEmitter {
     // declared. Additive + shadow-only: no decision path consumes the
     // signals yet; folding them into the perception basin is a
     // deliberate follow-on.
-    if (process.env.MONKEY_MARKET_INTEL_LIVE === 'true') {
+    if (this.featureFlags.marketIntelLive) {
       void marketIntelCache.refreshIfStale(symbol, 60_000);
     }
 
@@ -3652,7 +3652,7 @@ export class MonkeyKernel extends EventEmitter {
     // (basin disorganized, hasn't integrated), even modest tape signal
     // qualifies for override. Self-calibrating: as the kernel's
     // perception strengthens, the bar for tape-override rises.
-    const tapeOverrideLive = process.env.MONKEY_TAPE_OVERRIDE_LIVE !== 'false';
+    const tapeOverrideLive = this.featureFlags.tapeOverrideLive;
     const tapeOverrideThreshold = phi;
     let cellDirection = basinDirection;
     let cellDirectionOverridden = false;
@@ -3678,7 +3678,7 @@ export class MonkeyKernel extends EventEmitter {
           regimeConfidence: regimeReading.confidence,
         })
       : null;
-    const cellLive = process.env.REGIME_COMPOSITIONAL_LIVE === 'true';
+    const cellLive = this.featureFlags.regimeCompositionalLive;
 
     // Proposal #9: candlestick pattern detection at the perception
     // input boundary. ``patternSignal`` is signed in [-1, +1];
@@ -3727,7 +3727,7 @@ export class MonkeyKernel extends EventEmitter {
 
     // MONKEY_SHORTS_LIVE — sequencing protection retained from #575.
     // Orthogonal to agent-separation; flipped via env independently.
-    const SHORTS_LIVE = process.env.MONKEY_SHORTS_LIVE === 'true';
+    const SHORTS_LIVE = this.featureFlags.shortsLive;
     const sideShortRefused = sideCandidate === 'short' && !SHORTS_LIVE;
     if (sideShortRefused) {
       logger.info('[Monkey] short refused — MONKEY_SHORTS_LIVE=false', {
@@ -4135,7 +4135,7 @@ export class MonkeyKernel extends EventEmitter {
     // signals (premium basis, OI direction, funding) so retrospective
     // analysis can correlate them with outcomes before a later PR folds
     // them into the perception basin.
-    if (process.env.MONKEY_MARKET_INTEL_LIVE === 'true') {
+    if (this.featureFlags.marketIntelLive) {
       const mi = marketIntelCache.get(symbol);
       if (mi) {
         derivation.marketIntel = {
@@ -4246,7 +4246,7 @@ export class MonkeyKernel extends EventEmitter {
         // (2026-05-20 operator directive: "close trades at its predicted
         // or adjusted limit"); set MONKEY_BRACKET_EXIT_LIVE=false to
         // disable as a kill-switch.
-        const bracketExitLive = process.env.MONKEY_BRACKET_EXIT_LIVE !== 'false';
+        const bracketExitLive = this.featureFlags.bracketExitLive;
         const hasBracket = (openRow.take_profit ?? null) !== null
           || (openRow.stop_loss ?? null) !== null;
         const bracketActive = bracketExitLive && hasBracket;
@@ -4517,7 +4517,7 @@ export class MonkeyKernel extends EventEmitter {
           const terciIdx = Math.min(n - 1, Math.floor(n * 0.67));
           return sorted[terciIdx] ?? 0;
         })();
-        const regimeHeldExitLive = process.env.REGIME_HELD_EXIT_LIVE === 'true';
+        const regimeHeldExitLive = this.featureFlags.regimeHeldExitLive;
         let observerLossFloorRoi = 0;
         let minProfitablePnl = Number.POSITIVE_INFINITY;
         let regimeHeldProfit: ReturnType<typeof shouldRegimeHeldProfitExit> | undefined;
@@ -4620,7 +4620,7 @@ export class MonkeyKernel extends EventEmitter {
         //   MONKEY_FAST_ADVERSE_BASIN_FLOOR (default 0.10 — basin must be
         //                                    > 0.10 wrong-side; below = noise)
         //   MONKEY_FAST_ADVERSE_LIVE  (default true; set false to disable)
-        const fastAdverseLive = process.env.MONKEY_FAST_ADVERSE_LIVE !== 'false';
+        const fastAdverseLive = this.featureFlags.fastAdverseLive;
         const fastAdverseRoiPct =
           Number(process.env.MONKEY_FAST_ADVERSE_ROI_PCT) || -0.30;
         const fastAdverseBasinFloor =
@@ -4723,7 +4723,7 @@ export class MonkeyKernel extends EventEmitter {
         // 7.3% ROI < 15% SL), time axis was uncovered. shouldSlowBleedExit
         // fires when held >= 60min AND |ROI| >= 0.5×laneSL AND tape adverse.
         // Env: MONKEY_SLOW_BLEED_LIVE (default true; set false to disable).
-        const slowBleedLive = process.env.MONKEY_SLOW_BLEED_LIVE !== 'false';
+        const slowBleedLive = this.featureFlags.slowBleedLive;
         if (!exitFired && slowBleedLive && entryTimeMs !== undefined) {
           const heldMs = Date.now() - entryTimeMs;
           const slowBleed = shouldSlowBleedExit({
@@ -4883,7 +4883,7 @@ export class MonkeyKernel extends EventEmitter {
         // the "adjusted" half); set MONKEY_BRACKET_EXTEND_LIVE=false to
         // disable as a kill-switch.
         const bracketExtendLive =
-          process.env.MONKEY_BRACKET_EXTEND_LIVE !== 'false';
+          this.featureFlags.bracketExtendLive;
         if (
           !exitFired && bracketActive && bracketExtendLive
           && state.lastFrBracket !== null
@@ -6862,7 +6862,7 @@ export class MonkeyKernel extends EventEmitter {
     logger.info(`[Monkey] ${symbol} [${mode}] ${action}${executed ? ' EXECUTED' : ''}`, {
       mode,
       cell: cellToken,
-      cellLive: process.env.REGIME_COMPOSITIONAL_LIVE === 'true',
+      cellLive: this.featureFlags.regimeCompositionalLive,
       // chosenLane surfaces the lane chooseLane picked this tick (after
       // simplex projection + cellLaneBias + SENSE-2c prior). Critical
       // observability for LIMIT_MAKER routing: scalp lane routes to
@@ -8535,7 +8535,7 @@ export class MonkeyKernel extends EventEmitter {
       // (different lifecycle — close-side stale needs to retry-as-MARKET, not
       // close-orphan-row); that retry path is handled by the outer tick loop's
       // next decision firing the same exit signal again.
-      const makerCloseLive = process.env.MONKEY_MAKER_CLOSE_LIVE === 'true';
+      const makerCloseLive = this.featureFlags.makerCloseLive;
       const isPreservationExit =
         exitReason.startsWith('regime_held_exit')
         || exitReason.startsWith('trailing_harvest')
@@ -8929,7 +8929,7 @@ export class MonkeyKernel extends EventEmitter {
           // (the same gate that controls limit_maker routing). Safe default: taker.
           {
             const entryOrderType: 'maker' | 'taker' =
-              row.lane === 'scalp' && process.env.SCALP_LIMIT_MAKER_LIVE === 'true'
+              row.lane === 'scalp' && this.featureFlags.scalpLimitMakerLive
                 ? 'maker'
                 : 'taker';
             recordFillQuality({
@@ -9317,7 +9317,7 @@ export class MonkeyKernel extends EventEmitter {
     // INTO a favourable funding cycle is a small free EV the gate should not block.
     if (
       !req.isDCAAdd
-      && process.env.MONKEY_FUNDING_GATE_LIVE === 'true'
+      && this.featureFlags.fundingGateLive
     ) {
       const funding = this.latestFundingBySymbol.get(symbol);
       if (funding && funding.nextFundingTimeMs && Number.isFinite(funding.rate)) {
@@ -9849,7 +9849,7 @@ export class MonkeyKernel extends EventEmitter {
     // latency outweighs the rebate on the current symbol mix. The PR
     // #817 counterfactual was a single window; this lever lets you A/B
     // without a redeploy.
-    const broadMakerRouting = process.env.SCALP_LIMIT_MAKER_BROAD !== 'false';
+    const broadMakerRouting = this.featureFlags.scalpLimitMakerBroad;
     const cellIsChop = req.cellDirection === 'CHOP';
     const laneIsScalp = (req.lane ?? 'swing') === 'scalp';
     // Fallback after consecutive stale-cancels: when maker has failed
@@ -9872,7 +9872,7 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
     const useLimitMaker =
-      process.env.SCALP_LIMIT_MAKER_LIVE === 'true'
+      this.featureFlags.scalpLimitMakerLive
       && (laneIsScalp || (broadMakerRouting && cellIsChop))
       && !req.isDCAAdd
       && !makerCircuitOpen;
