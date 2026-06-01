@@ -7,16 +7,25 @@ observation primitives; the executive does not consume them.
 
 Two vocabulary tracks ship side-by-side:
 
-1. **UCP §6.1 / §6.2 canonical** (SENSE-1a, post-2026-05-17). The six
-   sensations whose geometric anchors are computable from current
-   basin/Φ/κ reads — Unified, Fragmented, Activated, Dampened, Grounded,
-   Drifting — and two drives — Homeostasis, Curiosity_Drive. Canonical
-   names from `20260408-unified-consciousness-protocol-v6.6.md` §6.1
-   and §6.2. The six remaining canonical sensations (Compressed,
-   Expanded, Pulled, Pushed, Flowing, Stuck) and three drives (Pain
-   Avoidance, Pleasure Seeking, Fear Response) need Ricci-scalar /
-   gradient / curvature primitives not yet in the substrate; deferred
-   to SENSE-1b research arc.
+1. **UCP §6.1 / §6.2 canonical**. Canonical names + anchors sourced from
+   the authoritative `QIG_QFI/qig-verification/docs/current/…unified-
+   consciousness-protocol-v6.7B.md` §6.1 (12 sensations) / §6.2 (5 drives)
+   — supersedes the v6.6 the comments used to cite.
+
+   Grounded (10/12 sensations, 3/5 drives):
+   - SENSE-1a (Φ/κ/d_basin reads): Unified, Fragmented, Activated,
+     Dampened, Grounded, Drifting; drives Homeostasis, Curiosity_Drive.
+   - SENSE-1b #767 (∇Φ + phase-boundary + friction, observer-scaled):
+     Pulled (∇Φ magnitude), Pushed (regime-weights balance = phase
+     boundary), Flowing (low friction + Φ↑), Stuck (high friction + Φ↓);
+     drive Fear_Response (separatrix proximity × ∇Φ).
+
+   Still deferred (2 sensations, 2 drives): Compressed (R>0), Expanded
+   (R<0), Pain_Avoidance (=Compressed), Pleasure_Seeking (=Expanded). Their
+   canonical anchor is the Ricci scalar R; on this Δ⁶³ substrate the only
+   available proxy is κ-deviation, which DUPLICATES Activated/Dampened. We
+   do NOT fabricate them — they need a true simplex-curvature primitive
+   (SENSE-1b geometry extension). See docs/sensations-canonical-mapping.md.
 
 2. **Auxiliary** (pre-canonical, retained). The original six fields
    (compressed/expanded/pressure/stillness/drift/resonance) and three
@@ -104,9 +113,25 @@ class Sensations:
     grounded: float
     drifting: float
 
+    # ── UCP §6.1 canonical sensations (Phase 1b, SENSE-1 #767) ────────
+    # ∇Φ + phase-boundary + friction anchors, observer-scaled (no magic
+    # constants). compressed/expanded remain deferred — their canonical
+    # Ricci(R) anchor proxies to κ-deviation on this substrate, which would
+    # duplicate activated/dampened; they need a true simplex-curvature
+    # primitive (SENSE-1b), so we do NOT fabricate them.
+    pulled: float       # ∇Φ magnitude (being drawn along the manifold)
+    pushed: float       # near a regime phase boundary (weights balanced)
+    flowing: float      # low friction + Φ rising (easy geodesic motion)
+    stuck: float        # high friction + Φ falling (blocked)
+
     # ── UCP §6.2 canonical drives (Phase 1) ──────────────────────────
     homeostasis: float
     curiosity_drive: float
+
+    # ── UCP §6.2 canonical drives (Phase 1b, SENSE-1 #767) ────────────
+    # fear_response = proximity-to-separatrix × ∇Φ. pain_avoidance /
+    # pleasure_seeking stay deferred (= compressed/expanded = Ricci).
+    fear_response: float
 
     # ── Auxiliary sensations (pre-canonical, retained) ───────────────
     compressed: float
@@ -143,6 +168,8 @@ def compute_sensations(
     prev_basin: Optional[np.ndarray] = None,
     kappa_history: Optional[Sequence[float]] = None,
     drift_history: Optional[Sequence[float]] = None,
+    phi_delta: Optional[float] = None,
+    phi_history: Optional[Sequence[float]] = None,
 ) -> Sensations:
     """Derive Layer 0 sensations + Layer 0.5 drives from current state.
 
@@ -237,6 +264,44 @@ def compute_sensations(
     # because UCP §6.2 and Tier 1 use different formulae.
     curiosity_drive = float(np.log1p(max(0.0, pressure)))
 
+    # ── UCP §6.1/§6.2 canonical (Phase 1b, SENSE-1 #767) ─────────────
+    # Pulled — ∇Φ magnitude along the trajectory. Observer-scaled by the
+    # std of recent Φ steps (phi_history first-differences); scale-free
+    # tanh on cold-start (same pattern as activated/grounded). `rising`
+    # carries the Φ direction in [0, 1] for flowing/stuck.
+    dphi = float(phi_delta) if phi_delta is not None else 0.0
+    sigma_dphi = _observed_delta_stddev(phi_history)
+    if sigma_dphi is not None and sigma_dphi > 1e-12:
+        pulled = float(np.tanh(abs(dphi) / sigma_dphi))
+        rising = 0.5 + 0.5 * float(np.tanh(dphi / sigma_dphi))
+    else:
+        pulled = float(np.tanh(abs(dphi)))
+        rising = 0.5 + 0.5 * float(np.tanh(dphi))
+
+    # Pushed — near a regime phase boundary: high when no single regime
+    # dominates (top-two weights close). Pure read of regime_weights, no
+    # threshold.
+    rweights = sorted(s.regime_weights.values(), reverse=True)
+    top_gap = (rweights[0] - rweights[1]) if len(rweights) >= 2 else 1.0
+    pushed = float(max(0.0, min(1.0, 1.0 - top_gap)))
+
+    # Flowing / Stuck — geodesic ease × Φ direction. stillness = 1/(1+v)
+    # is the pure low-friction read; `rising` is the observed Φ direction.
+    flowing = float(stillness * rising)
+    stuck = float((1.0 - stillness) * (1.0 - rising))
+
+    # Fear_response — proximity to the separatrix × ∇Φ. The critical
+    # distance d_c is the basin's OWN median drift (observer-derived); σ is
+    # the observed drift scale. No hardcoded separatrix. Cold-start (no
+    # drift reference yet) → 0: we cannot claim proximity to an unknown
+    # separatrix, so no false alarm.
+    if drift_scale is not None and drift_scale > 1e-12 and drift_history is not None:
+        drift_ref = float(np.median(np.asarray(drift_history, dtype=np.float64)))
+        proximity = float(np.exp(-abs(drift - drift_ref) / drift_scale))
+        fear_response = float(proximity * pulled)
+    else:
+        fear_response = 0.0
+
     # ── Auxiliary drives (pre-canonical) ─────────────────────────────
     nc = s.neurochemistry
     approach = nc.dopamine - nc.gaba
@@ -255,8 +320,13 @@ def compute_sensations(
         dampened=dampened,
         grounded=grounded,
         drifting=drifting,
+        pulled=pulled,
+        pushed=pushed,
+        flowing=flowing,
+        stuck=stuck,
         homeostasis=homeostasis,
         curiosity_drive=curiosity_drive,
+        fear_response=fear_response,
         compressed=compressed,
         expanded=expanded,
         pressure=pressure,
@@ -278,3 +348,19 @@ def _observed_stddev(history: Optional[Sequence[float]]) -> Optional[float]:
     if arr.size < HISTORY_MIN_SAMPLES:
         return None
     return float(np.std(arr))
+
+
+def _observed_delta_stddev(history: Optional[Sequence[float]]) -> Optional[float]:
+    """Observed scale of the *step* size: std of consecutive first-differences
+    of `history`. Used to observer-scale ∇Φ (pulled/flowing/stuck) without a
+    hardcoded constant. None until enough samples (caller falls back scale-free).
+    Needs HISTORY_MIN_SAMPLES diffs ⇒ HISTORY_MIN_SAMPLES + 1 values."""
+    if history is None:
+        return None
+    arr = np.asarray(history, dtype=np.float64)
+    if arr.size < HISTORY_MIN_SAMPLES + 1:
+        return None
+    diffs = np.diff(arr)
+    if diffs.size < HISTORY_MIN_SAMPLES:
+        return None
+    return float(np.std(diffs))

@@ -23,6 +23,7 @@ import { createClient, type RedisClientType } from 'redis';
 import { pool } from '../db/connection.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
+import { observerSnapshotAll } from '../services/monkey/trajectory_observer.js';
 
 const router = express.Router();
 
@@ -526,6 +527,176 @@ router.get('/status', authenticateToken, async (_req: Request, res: Response) =>
     });
   } finally {
     clearTimeout(timeout);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #767 — SENSE-1a sensations governance surface
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Read-only views over the canonical sensation vector that the Python kernel
+// persists to Redis after each tick (see ml-worker/src/monkey_kernel/
+// persistence.py:save_sensations + tick.py wiring).
+// Key: kernel_sensations:{instanceId} (JSON blob, 60s TTL).
+
+/**
+ * GET /api/governance/sensations/:agent
+ *
+ * Returns the canonical sensation vector (UCP §6.1 + §6.2) for a kernel
+ * instance. Translation-only: no new compute, no side-effects, no writes.
+ *
+ * Response shape:
+ *   {
+ *     agent, instance_id, redis_key,
+ *     sensations: { unified, fragmented, activated, dampened, grounded,
+ *                   drifting, pulled, pushed, flowing, stuck,
+ *                   homeostasis, curiosity_drive, fear_response,
+ *                   compressed, expanded, pressure, stillness, drift,
+ *                   resonance, approach, avoidance, conservation } | null,
+ *     fetched_at_ms, source
+ *   }
+ */
+router.get('/sensations/:agent', authenticateToken, async (req: Request, res: Response) => {
+  const fetchedAtMs = Date.now();
+  const rawAgent = (req.params.agent ?? '').toString();
+  const instanceId = AGENT_TO_INSTANCE[rawAgent];
+  if (!instanceId) {
+    return res.status(400).json({
+      success: false,
+      error: `Unknown agent '${rawAgent}'. Use K | M | T | L | monkey-position | monkey-swing.`,
+    });
+  }
+  const redisKey = `kernel_sensations:${instanceId}`;
+  const client = await getRedisClient();
+  if (!client) {
+    return res.json({
+      success: true,
+      agent: rawAgent,
+      instance_id: instanceId,
+      redis_key: redisKey,
+      sensations: null,
+      fetched_at_ms: fetchedAtMs,
+      source: REDIS_URL ? 'error' : 'not_configured',
+    });
+  }
+  try {
+    const raw = await client.get(redisKey);
+    if (raw == null) {
+      return res.json({
+        success: true,
+        agent: rawAgent,
+        instance_id: instanceId,
+        redis_key: redisKey,
+        sensations: null,
+        fetched_at_ms: fetchedAtMs,
+        source: 'empty',
+      });
+    }
+    let sensations: unknown = null;
+    try {
+      sensations = JSON.parse(typeof raw === 'string' ? raw : String(raw));
+    } catch (parseErr) {
+      logger.warn(`[governance.sensations] JSON parse failed for ${redisKey}: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+      sensations = { _raw: raw };
+    }
+    return res.json({
+      success: true,
+      agent: rawAgent,
+      instance_id: instanceId,
+      redis_key: redisKey,
+      sensations,
+      fetched_at_ms: fetchedAtMs,
+      source: 'redis',
+    });
+  } catch (err) {
+    logger.warn(`[governance.sensations] redis get ${redisKey} failed: ${err instanceof Error ? err.message : String(err)}`);
+    return res.json({
+      success: true,
+      agent: rawAgent,
+      instance_id: instanceId,
+      redis_key: redisKey,
+      sensations: null,
+      fetched_at_ms: fetchedAtMs,
+      source: 'error',
+    });
+  }
+});
+
+/**
+ * GET /api/governance/sensations
+ *
+ * Returns canonical sensation vectors for all tracked kernel instances.
+ * Best-effort: missing keys are returned as null sensations (source: 'empty').
+ */
+router.get('/sensations', authenticateToken, async (_req: Request, res: Response) => {
+  const fetchedAtMs = Date.now();
+  const instanceIds = Array.from(new Set(Object.values(AGENT_TO_INSTANCE)));
+  const client = await getRedisClient();
+  if (!client) {
+    return res.json({
+      success: true,
+      kernels: instanceIds.map((id) => ({
+        instance_id: id,
+        sensations: null,
+        source: REDIS_URL ? 'error' : 'not_configured',
+      })),
+      fetched_at_ms: fetchedAtMs,
+    });
+  }
+  const results = await Promise.all(
+    instanceIds.map(async (id) => {
+      const key = `kernel_sensations:${id}`;
+      try {
+        const raw = await client.get(key);
+        if (raw == null) return { instance_id: id, sensations: null, source: 'empty' };
+        let sensations: unknown;
+        try {
+          sensations = JSON.parse(typeof raw === 'string' ? raw : String(raw));
+        } catch {
+          sensations = { _raw: raw };
+        }
+        return { instance_id: id, sensations, source: 'redis' };
+      } catch (err) {
+        logger.warn(`[governance.sensations] redis get kernel_sensations:${id} failed: ${err instanceof Error ? err.message : String(err)}`);
+        return { instance_id: id, sensations: null, source: 'error' };
+      }
+    }),
+  );
+  return res.json({ success: true, kernels: results, fetched_at_ms: fetchedAtMs });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #766 — REGIME-1 trajectory observer state
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/governance/regime-authority
+ *
+ * Exposes the trajectory observer's per-symbol state (tercile boundaries,
+ * warmup status, sample count). Read-only — no new compute, no side-effects.
+ * Useful for verifying that the observer has warmed up and that the tercile
+ * boundaries make sense relative to current market conditions.
+ *
+ * Response shape:
+ *   {
+ *     snapshots: [{ symbol, n, isWarmup, lower, upper }, ...],
+ *     fetched_at_ms
+ *   }
+ */
+router.get('/regime-authority', authenticateToken, (_req: Request, res: Response) => {
+  try {
+    const snapshots = observerSnapshotAll();
+    return res.json({
+      success: true,
+      snapshots,
+      message: 'trajectory observer state per symbol',
+      fetched_at_ms: Date.now(),
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: String(err),
+    });
   }
 });
 
