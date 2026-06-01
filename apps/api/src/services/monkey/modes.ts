@@ -27,6 +27,7 @@ import { fisherRao, type Basin } from './basin.js';
 import type { ExecutiveDecision } from './executive.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 import { basinDirection } from './perception.js';
+import { loadModeProfilesFromRegistry, SAFETY_BOUNDS } from './mode_profile_registry.js';
 
 export enum MonkeyMode {
   EXPLORATION = 'exploration',
@@ -153,6 +154,34 @@ export const MODE_PROFILES: Record<MonkeyMode, ModeProfile> = {
     description: 'sideways noise — observe only',
   },
 };
+
+/**
+ * Load registry-managed operational params into MODE_PROFILES.
+ * Called once at kernel startup. If registry is unavailable, keeps hardcoded defaults.
+ * Safety bounds (sovereignCapFloor, canEnter) are NOT overridden — they come from
+ * SAFETY_BOUNDS in mode_profile_registry.ts and are already baked into MODE_PROFILES.
+ *
+ * (#763 MODES-1)
+ */
+export async function refreshModeProfilesFromRegistry(): Promise<void> {
+  const registryProfiles = await loadModeProfilesFromRegistry();
+  for (const [modeName, opValues] of Object.entries(registryProfiles)) {
+    const modeKey = MonkeyMode[modeName as keyof typeof MonkeyMode];
+    if (modeKey === undefined) continue;
+    const profile = MODE_PROFILES[modeKey];
+    if (profile === undefined) continue;
+    // Only update operational keys; safety bounds (sovereignCapFloor, canEnter) are untouched.
+    profile.tpBaseFrac = opValues.tpBaseFrac;
+    profile.slRatio = opValues.slRatio;
+    profile.entryThresholdScale = opValues.entryThresholdScale;
+    profile.sizeFloor = opValues.sizeFloor;
+    profile.tickMs = opValues.tickMs;
+  }
+}
+
+// Re-export safety bounds so callers can reference them without importing
+// mode_profile_registry directly.
+export { SAFETY_BOUNDS };
 
 export interface ModeInputs {
   /** Current basin (post-refract). */

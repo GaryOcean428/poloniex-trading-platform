@@ -121,7 +121,7 @@ import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { recoveredOutcomeMatchesInstance } from './recovered_outcome_routing.js';
 import { logParityDiff } from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
-import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
+import { detectMode, MODE_PROFILES, MonkeyMode, refreshModeProfilesFromRegistry } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import {
@@ -1471,6 +1471,13 @@ export class MonkeyKernel extends EventEmitter {
    * ('paper_only'), or suppress entries ('pause').
    */
   async start(): Promise<void> {
+    // #763 MODES-1: load operational mode profile thresholds from the
+    // monkey_parameters registry before the first tick. Fail-soft — if the
+    // DB is unreachable, hardcoded defaults remain in place (P25 compliance).
+    try {
+      await refreshModeProfilesFromRegistry();
+    } catch { /* fail-soft — hardcoded defaults survive */ }
+
     for (const sym of this.symbols) {
       this.symbolStates.set(sym, this.newSymbolState());
       this.turtleStates.set(sym, newTurtleState());
