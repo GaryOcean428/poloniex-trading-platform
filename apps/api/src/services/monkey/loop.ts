@@ -156,6 +156,7 @@ import {
   refract,
   trendProxy as computeTrendProxy,
   type OHLCVCandle,
+  type PerceptionInputsV3,
 } from './perception.js';
 import { frBracketDistances } from './fr_trade_params.js';
 import { applyConsensusOverride } from './consensus_arbiter.js';
@@ -185,7 +186,7 @@ import {
 } from './candlePatterns.js';
 import { evaluateBankWrite } from './learning_gate_client.js';
 import { resonanceBank } from './resonance_bank.js';
-import { recordFillQuality } from './fill_quality_recorder.js';
+import { recordFillQuality, getSymbolFillQuality } from './fill_quality_recorder.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
 import {
@@ -1341,6 +1342,19 @@ export class MonkeyKernel extends EventEmitter {
     { rate: number; atMs: number; nextFundingTimeMs?: number }
   > = new Map();
   /**
+   * SENSE-2 (#768): latest single-period BTC log-return. Set during BTC
+   * ticks; read by other-symbol ticks as the cross-symbol beacon signal.
+   */
+  private latestBtcReturn = 0;
+  /**
+   * SENSE-3 (#769): rolling account equity history for drawdown gradient
+   * computation. Entries stored as { equity: equityFraction, atMs: timestamp }.
+   * P25 safety cap: 500 entries (~30+ hours at typical tick cadence).
+   */
+  private equityHistory: Array<{ equity: number; atMs: number }> = [];
+  /** Peak equity fraction observed since kernel start (for drawdown %). */
+  private peakEquity = 0;
+  /**
    * Latest mark price per symbol — populated at the start of each
    * processSymbol tick. Consumed by the funding-arb execution block
    * (BTC tick) when it needs the ETH price to size the ETH leg.
@@ -2489,6 +2503,13 @@ export class MonkeyKernel extends EventEmitter {
     // the basin reading) and consumed at the entry-threshold gate.
     if (symbol === 'BTC_USDT_PERP') {
       noteBtcPrice(lastPrice);
+      // SENSE-2: track latest BTC single-period log-return for perception beacon.
+      if (ohlcv.length >= 2) {
+        const prevBtcClose = ohlcv[ohlcv.length - 2]!.close;
+        if (prevBtcClose > 0) {
+          this.latestBtcReturn = Math.log(lastPrice / prevBtcClose);
+        }
+      }
     }
 
     // Funding rate for the symbol's perpetual contract (8h rate from exchange).
@@ -2680,6 +2701,18 @@ export class MonkeyKernel extends EventEmitter {
       heldSide: exchangeHeldSide,
       availableEquity,
     } = await this.fetchAccountContext(symbol);
+
+    // SENSE-3 (#769): update rolling equity history for drawdown gradient
+    // computation. Run once per tick (not per symbol) to avoid duplicate
+    // entries — process only on the first symbol each tick cycle.
+    // We update on every symbol tick since processSymbol is called independently;
+    // the gradient lookback is time-based so duplicates cancel out.
+    const nowMs = Date.now();
+    if (equityFraction > 0) {
+      this.equityHistory.push({ equity: equityFraction, atMs: nowMs });
+      if (this.equityHistory.length > 500) this.equityHistory.shift(); // P25 safety cap
+      if (equityFraction > this.peakEquity) this.peakEquity = equityFraction;
+    }
 
     // Funding-arb #794 — execution block (paired entry + exit) when FUNDING_ARB_LIVE
     // flag is enabled. Runs for BTC and ETH ticks; entry only fires on BTC tick to
@@ -2959,15 +2992,69 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    const rawBasin = perceive({
-      ohlcv,
-      equityFraction,
-      marginFraction,
-      openPositions,
-      sessionAgeTicks: state.sessionTicks,
-      canonicalRegime,
-      canonicalRegimeScores,
-    });
+    // SENSE-3 (#769): fetch fill quality best-effort (non-blocking DB read).
+    const fillQuality = await getSymbolFillQuality(symbol).catch(() => null);
+
+    const rawBasin = perceive((() => {
+      // SENSE-3 (#769): compute drawdown gradients
+      const currentDrawdownPct = this.peakEquity > 0 && equityFraction < this.peakEquity
+        ? (this.peakEquity - equityFraction) / this.peakEquity
+        : 0;
+
+      // Helper: find the most recent equity sample at least `ageMs` old
+      const getEquityAtAge = (ageMs: number): number | null => {
+        const cutoff = nowMs - ageMs;
+        for (let i = this.equityHistory.length - 1; i >= 0; i--) {
+          if (this.equityHistory[i]!.atMs <= cutoff) return this.equityHistory[i]!.equity;
+        }
+        return null;
+      };
+
+      const eq1h = getEquityAtAge(3_600_000);
+      const eq4h = getEquityAtAge(14_400_000);
+      const eq24h = getEquityAtAge(86_400_000);
+
+      const drawdownGradient1h = (eq1h != null && eq1h > 0)
+        ? (equityFraction - eq1h) / eq1h : undefined;
+      const drawdownGradient4h = (eq4h != null && eq4h > 0)
+        ? (equityFraction - eq4h) / eq4h : undefined;
+      const drawdownGradient24h = (eq24h != null && eq24h > 0)
+        ? (equityFraction - eq24h) / eq24h : undefined;
+
+      // Fill quality → execution quality dims 43-45 (SENSE-3)
+      // makerSlippageMean is fraction (e.g. 0.0005 = 5bps); convert to bps
+      const meanFillSlippageBps = fillQuality?.makerSlippageMean != null
+        ? fillQuality.makerSlippageMean * 10_000
+        : undefined;
+      // avgRestingMs is the fill latency proxy for maker orders
+      const meanFillLatencyMs = fillQuality?.avgRestingMs ?? undefined;
+      // makerWinRate as a proxy for fill quality ratio
+      const meanFillRatio = fillQuality?.makerWinRate ?? undefined;
+
+      const perceptionInputs: PerceptionInputsV3 = {
+        ohlcv,
+        equityFraction,
+        marginFraction,
+        openPositions,
+        sessionAgeTicks: state.sessionTicks,
+        canonicalRegime,
+        canonicalRegimeScores,
+        // SENSE-2 inputs
+        fundingRate8h: Number.isFinite(fundingRate8h) && fundingRate8h !== 0
+          ? fundingRate8h : undefined,
+        btcReturn: symbol === 'BTC_USDT_PERP' ? 0 : this.latestBtcReturn,
+        hourOfDayMs: nowMs,
+        // SENSE-3 inputs
+        currentDrawdownPct: this.peakEquity > 0 ? currentDrawdownPct : undefined,
+        drawdownGradient1h,
+        drawdownGradient4h,
+        drawdownGradient24h,
+        meanFillSlippageBps,
+        meanFillLatencyMs,
+        meanFillRatio,
+      };
+      return perceptionInputs;
+    })());
 
     // §3.3 Pillar 2 surface absorption — external input at 30% max
     let basin = refract(rawBasin, state.identityBasin, 0.30);

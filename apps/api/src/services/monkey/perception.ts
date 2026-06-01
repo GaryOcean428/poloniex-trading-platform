@@ -36,13 +36,19 @@
  *   dims 31..38 — Price-structure harmonics (8 dims)
  *                   Hi/Lo/Close positions relative to recent bands
  *
- *   dims 39..54 — Reserved / noise floor (16 dims, Dirichlet prior)
- *                   Pillar 1 fluctuation reservoir — prevents zombie
- *                   collapse if other dims go to 0
+ *   dims 39..45 — SENSE-3 trajectory + execution quality (7 dims, #769)
+ *                   39: currentDrawdownPct, 40-42: drawdown gradients (1h/4h/24h)
+ *                   43: fill slippage bps, 44: fill latency, 45: fill ratio
+ *                   Falls back to NOISE_FLOOR_VALUE when absent.
+ *
+ *   dims 46..54 — Pillar 1 noise floor (9 dims, Dirichlet prior)
+ *                   Reservoir — prevents zombie collapse if other dims
+ *                   go to 0. Noise anchor for basinDirection B1.1.
  *
  *   dims 55..63 — Account/coupling (9 dims)
  *                   Equity fraction, margin fraction, open-position
  *                   count, session age, etc.
+ *                   59-63: SENSE-2 market context (#768)
  *
  * The exact dimensions will evolve as Monkey earns sovereignty and
  * the important features self-select through her basin deepening.
@@ -101,6 +107,42 @@ export interface PerceptionInputs {
 }
 
 /**
+ * SENSE-2 (#768) — market microstructure + time-of-day inputs.
+ * All fields are optional; when absent dims 59-63 fall back to 0.5 neutral.
+ */
+export interface PerceptionInputsV2 extends PerceptionInputs {
+  /** [-1, 1] book imbalance from market_microstructure: (bid-ask)/(bid+ask). */
+  bookImbalance?: number;
+  /** Signed 8h funding rate from exchange (e.g. 0.0001 = 1bp per 8h). */
+  fundingRate8h?: number;
+  /** Single-period BTC log-return. 0 when symbol IS BTC. */
+  btcReturn?: number;
+  /** Epoch ms for time-of-day encoding; falls back to Date.now() when absent. */
+  hourOfDayMs?: number;
+}
+
+/**
+ * SENSE-3 (#769) — drawdown trajectory + execution quality inputs.
+ * All fields are optional; when absent dims 39-45 stay at NOISE_FLOOR_VALUE.
+ */
+export interface PerceptionInputsV3 extends PerceptionInputsV2 {
+  /** [0, 1] fraction of peak equity lost. */
+  currentDrawdownPct?: number;
+  /** Signed equity return over 1h (e.g. 0.01 = +1%). */
+  drawdownGradient1h?: number;
+  /** Signed equity return over 4h. */
+  drawdownGradient4h?: number;
+  /** Signed equity return over 24h. */
+  drawdownGradient24h?: number;
+  /** Rolling mean fill slippage in basis points (positive = paid more). */
+  meanFillSlippageBps?: number;
+  /** Rolling mean decision-to-fill latency in ms. */
+  meanFillLatencyMs?: number;
+  /** Rolling mean fill completeness [0, 1]. */
+  meanFillRatio?: number;
+}
+
+/**
  * Normalize a raw feature value into [0, 1]. Uses sigmoid for
  * unbounded inputs, direct clip for already-bounded ones.
  */
@@ -145,12 +187,14 @@ function momentumCoord(logRet: number): number {
 }
 
 /**
- * Noise-floor raw value — dims 39..54 of every `perceive()` basin are
+ * Noise-floor raw value — dims 46..54 of every `perceive()` basin are
  * pinned to this constant (Pillar 1 fluctuation reservoir). Because it
  * is a *known fixed raw value*, the noise band pins the simplex scale
  * `T`: after `toSimplex`, `p[noise] = NOISE_FLOOR_VALUE / T`, so
- * `T = NOISE_FLOOR_VALUE / mean(p[39..54])`. `basinDirection` uses this
+ * `T = NOISE_FLOOR_VALUE / mean(p[46..54])`. `basinDirection` uses this
  * to recover an EXACT neutral-momentum reference (B1.1).
+ * Note: dims 39..45 are repurposed for SENSE-3 (#769); only dims 46..54
+ * serve as the noise anchor. The formula in basinDirection is unchanged.
  */
 export const NOISE_FLOOR_VALUE = 0.0055;
 
@@ -274,35 +318,30 @@ export function basinDirection(basin: Basin): number {
   // The momentum band is built by `momentumCoord`, which is 0.5-neutral
   // by construction (logReturn 0 → 0.5 raw). So a neutral momentum band
   // weighs 8 × 0.5 = 4 in raw (pre-toSimplex) units. The noise band
-  // (dims 39..54) is a fixed raw NOISE_FLOOR_VALUE per dim — it pins the
-  // simplex scale `T = NOISE_FLOOR_VALUE / noiseMean`, so the neutral
-  // momentum p-share is exact: (8·0.5)/T = 4·noiseMean/NOISE_FLOOR_VALUE.
+  // (dims 46..54, 9 dims) is a fixed raw NOISE_FLOOR_VALUE per dim — it
+  // pins the simplex scale `T = NOISE_FLOOR_VALUE / noiseMean`, so the
+  // neutral momentum p-share is exact: (8·0.5)/T = 4·noiseMean/NOISE_FLOOR_VALUE.
   // The sign test then reduces exactly to `mean(momentum dim) ≥ 0.5`.
   //
-  // #880's `8·peerMean` averaged the volatility+volume bands as a proxy
-  // for "neutral per-dim mass" — but those bands are NOT 0.5-centred
-  // (volume's log(volRatio) runs mostly negative → volume dims ~0.40),
-  // so the neutral skewed low → momMass > neutral even on a flat market
-  // → basinDir sign pinned +1 (confirmed in production telemetry post-B1,
-  // 2026-05-21). The noise anchor removes that skew.
+  // Note: dims 39..45 are repurposed for SENSE-3 (#769); the noise
+  // anchor uses only dims 46..54 (9 dims). noiseMean = noiseSum / 9
+  // still gives NOISE_FLOOR_VALUE / T (all 9 dims at the same raw
+  // value), so the formula is unchanged. The `noiseSum < 0.02` guard
+  // still self-detects genuine perceive() output (9 × 0.0055 / T ≈
+  // 0.003 << 0.02) versus synthetic uniform basins (9 × 1/64 ≈ 0.14).
   //
   // The anchor is EXACT only on a genuine perceive() output (noise dims
-  // at raw NOISE_FLOOR_VALUE). It self-detects that: a real perceive()
-  // noise band is 16 × 0.0055 raw ≈ 0.4–0.9% of the basin (T ≈ 10–20).
-  // The `noiseSum < 0.02` guard (2%) sits ~3× above that and well below
-  // any hand-built uniform-ish basin (whose 16 "noise" dims carry ≥4%)
-  // — so synthetic test fixtures and non-perceive basins fall through
-  // to #880's peerMean, no regression. MONKEY_PERCEPTION_EXPRESSIVE_LIVE
-  // =false reverts the whole B1 path. Final fallback: the 8/64 constant.
+  // at raw NOISE_FLOOR_VALUE). MONKEY_PERCEPTION_EXPRESSIVE_LIVE=false
+  // reverts the whole B1 path. Final fallback: the 8/64 constant.
   let neutralMomMass: number;
   let noiseSum = 0;
-  for (let i = 39; i <= 54; i++) noiseSum += p[i]!;
+  for (let i = 46; i <= 54; i++) noiseSum += p[i]!;
   if (
     process.env.MONKEY_PERCEPTION_EXPRESSIVE_LIVE !== 'false'
     && noiseSum > EPS
     && noiseSum < 0.02
   ) {
-    const noiseMean = noiseSum / 16;
+    const noiseMean = noiseSum / 9;  // 9 noise dims (46..54); was 16 before SENSE-3
     neutralMomMass = (8 * 0.5 * noiseMean) / NOISE_FLOOR_VALUE;
   } else {
     let peerSum = 0;
@@ -369,7 +408,7 @@ function volRatio(ohlcv: OHLCVCandle[], n: number): number {
  * Raw perception — input BEFORE identity refraction.
  * This is what "hits Monkey's sensors" this tick.
  */
-export function perceive(inputs: PerceptionInputs): Basin {
+export function perceive(inputs: PerceptionInputsV3): Basin {
   const v = new Float64Array(BASIN_DIM);
   const ohlcv = inputs.ohlcv;
   const lastClose = ohlcv.length > 0 ? ohlcv[ohlcv.length - 1].close : 1;
@@ -468,20 +507,81 @@ export function perceive(inputs: PerceptionInputs): Basin {
     v[31 + i] = range > 0 ? clip01((lastClose - lo) / range) : 0.5;
   }
 
-  // dims 39..54 — Noise floor / Pillar 1 reservoir (16 dims).
-  // Fixed constant (v0.8.0) for deterministic cross-language parity with the
-  // Python port. A non-zero floor is the Pillar 1 requirement; per-tick
-  // variance was decorative. toSimplex normalises so uniform mass still
-  // keeps the basin off the boundary.
-  for (let i = 39; i < 55; i++) v[i] = NOISE_FLOOR_VALUE;
+  // dims 39..45 — SENSE-3 trajectory + execution quality (#769).
+  // When drawdown inputs are absent, fall back to NOISE_FLOOR_VALUE.
+  if (inputs.currentDrawdownPct != null) {
+    // dim 39: currentDrawdownPct → [0, 1]; 0 = no drawdown, 1 = total loss
+    v[39] = Math.min(1, inputs.currentDrawdownPct);
+    // dims 40-42: drawdown gradient (signed velocity) → [0, 1] via tanh
+    // positive return = gain (> 0.5), negative return = loss (< 0.5)
+    // tanh(5 * gradient) saturates at ~±20% equity move
+    v[40] = 0.5 + Math.tanh((inputs.drawdownGradient1h ?? 0) * 5) * 0.45;
+    v[41] = 0.5 + Math.tanh((inputs.drawdownGradient4h ?? 0) * 5) * 0.45;
+    v[42] = 0.5 + Math.tanh((inputs.drawdownGradient24h ?? 0) * 5) * 0.45;
+  } else {
+    v[39] = NOISE_FLOOR_VALUE;
+    v[40] = NOISE_FLOOR_VALUE;
+    v[41] = NOISE_FLOOR_VALUE;
+    v[42] = NOISE_FLOOR_VALUE;
+  }
+  if (inputs.meanFillSlippageBps != null || inputs.meanFillLatencyMs != null || inputs.meanFillRatio != null) {
+    // dim 43: slippage normalized → 0.5 = no slippage; >0.5 = paid more than expected
+    // tanh saturation; 100bps = significant slippage
+    v[43] = 0.5 + Math.tanh((inputs.meanFillSlippageBps ?? 0) / 50) * 0.45;
+    // dim 44: latency → [0, 1] via exponential; P25: 5000ms saturating
+    v[44] = 1 - Math.exp(-(inputs.meanFillLatencyMs ?? 0) / 2000);
+    // dim 45: fill ratio → [0, 1] directly
+    v[45] = Math.min(1, Math.max(0, inputs.meanFillRatio ?? 1.0));
+  } else {
+    v[43] = NOISE_FLOOR_VALUE;
+    v[44] = NOISE_FLOOR_VALUE;
+    v[45] = NOISE_FLOOR_VALUE;
+  }
+
+  // dims 46..54 — Pillar 1 noise floor (9 dims, always fixed).
+  // Noise anchor for basinDirection B1.1 — must not be repurposed.
+  for (let i = 46; i < 55; i++) v[i] = NOISE_FLOOR_VALUE;
 
   // dims 55..63 — Account/coupling (9 dims)
   v[55] = clip01(inputs.equityFraction);
   v[56] = clip01(inputs.marginFraction);
   v[57] = clip01(inputs.openPositions / 5);  // saturate at 5 open
   v[58] = clip01(inputs.sessionAgeTicks / 500);
-  // 59..63 — reserved, uniform
-  for (let i = 59; i < 64; i++) v[i] = 0.01;
+
+  // dims 59-63: SENSE-2 market context (#768).
+  // Active when any SENSE-2 input is provided (book, funding, BTC return, or timestamp).
+  if (
+    inputs.bookImbalance != null
+    || inputs.fundingRate8h != null
+    || inputs.btcReturn != null
+    || inputs.hourOfDayMs != null
+  ) {
+    const fr = inputs.fundingRate8h ?? 0;
+    const bi = inputs.bookImbalance ?? 0;
+    const ts = inputs.hourOfDayMs ?? Date.now();
+    const date = new Date(ts);
+    const hourOfDay = date.getUTCHours() + date.getUTCMinutes() / 60;
+    const btcRet = inputs.btcReturn ?? 0;
+
+    // dim 59: funding rate centered at 0.5 (positive = longs pay = bearish lean)
+    // P25: tanh saturation; 0.002 = 2bps/hour at 8h rate — moderate regime
+    v[59] = 0.5 + Math.tanh(fr / 0.002) * 0.4;
+    // dim 60: book imbalance → [0.1, 0.9] range (0.4 safety scale)
+    v[60] = 0.5 + bi * 0.4;
+    // dim 61: hourSin circular time-of-day
+    v[61] = 0.5 + Math.sin(2 * Math.PI * hourOfDay / 24) * 0.45;
+    // dim 62: hourCos circular time-of-day
+    v[62] = 0.5 + Math.cos(2 * Math.PI * hourOfDay / 24) * 0.45;
+    // dim 63: BTC return beacon (tanh; 50 = trendProxy scale, 1% = significant)
+    v[63] = 0.5 + Math.tanh(btcRet * 50) * 0.45;
+  } else {
+    // Cold start / SENSE-2 not active: simplex-neutral 0.5
+    v[59] = 0.5;
+    v[60] = 0.5;
+    v[61] = 0.5;
+    v[62] = 0.5;
+    v[63] = 0.5;
+  }
 
   return toSimplex(v);
 }
