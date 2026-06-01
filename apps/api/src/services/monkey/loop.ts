@@ -199,6 +199,7 @@ import {
   shouldScalpExit,
   shouldSlowBleedExit,
   chooseLane,
+  computeKellyFStar,
   type BasinState,
   type Direction,
   type LaneType,
@@ -297,6 +298,9 @@ import {
   kellyPrimaryContractCap,
   VENUE_CONTRACTS_CEILING,
 } from './positionContractsBound.js';
+// #1033 PR2: exemplar feedback (CC→kernel coupling, read side)
+import { getExemplarSignal } from './exemplar_reader.js';
+import { isFeatureEnabled } from './feature_flags.js';
 
 /** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -3264,11 +3268,36 @@ export class MonkeyKernel extends EventEmitter {
         btcEntryMul = entrySuppressionMultiplier(btcBeacon, sideCandidate);
       }
     }
-    const entryThr = btcEntryMul === 1.0
+    const entryThrAfterBtc = btcEntryMul === 1.0
       ? entryThrBase
       : {
           value: entryThrBase.value * btcEntryMul,
           derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
+        };
+    // #1033 PR2: exemplar feedback — raise/lower entry bar based on CC
+    // exemplar decisions. Gated behind EXEMPLAR_FEEDBACK_ENABLED flag
+    // (migration 069, default off). Best-effort: any failure → modifier=0.
+    let exemplarModifier = 0;
+    try {
+      if (await isFeatureEnabled('EXEMPLAR_FEEDBACK_ENABLED')) {
+        const sig = await getExemplarSignal(symbol);
+        if (sig != null && !sig.stale) {
+          exemplarModifier = sig.entryModifier;
+          logger.debug('[exemplar] entry modifier applied', {
+            symbol, modifier: exemplarModifier, abstain: sig.abstainCount,
+            win: sig.winCount, loss: sig.lossCount, total: sig.totalCount,
+            regime: sig.regime,
+          });
+        }
+      }
+    } catch (_exemplarErr) {
+      // fail open — exemplar failure must never block trading
+    }
+    const entryThr = exemplarModifier === 0
+      ? entryThrAfterBtc
+      : {
+          value: entryThrAfterBtc.value * (1 + exemplarModifier),
+          derivation: { ...entryThrAfterBtc.derivation, exemplarModifier },
         };
     const entryConviction = hasEntrySignalConviction({
       basinDir,
@@ -5361,7 +5390,14 @@ export class MonkeyKernel extends EventEmitter {
             // eliminated the cold-start sentinel — during warmup the
             // composer returns 0 and the kernel re-enters at substrate
             // cadence (no synthetic delay).
-            const reverseReopenCooldown = composeCooldown({ symbol, tickCadenceMs: 0 });
+            const reverseReopenCooldown = composeCooldown({
+              symbol,
+              tickCadenceMs: 0,
+              expectancyEdge: rollingStats != null ? {
+                fStar: computeKellyFStar(rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss) ?? 0,
+                sampleCount: rollingStats.sampleCount,
+              } : null,
+            });
             logger.debug(`[Monkey] ${symbol} reverse-reopen ${formatCooldownTelemetry(reverseReopenCooldown)}`);
             if (reverseReopenCooldown.finalMs > 0) {
               await new Promise((resolve) => setTimeout(resolve, reverseReopenCooldown.finalMs));
@@ -6203,7 +6239,14 @@ export class MonkeyKernel extends EventEmitter {
     // #1009 PR2: observer-derived cooldown for telemetry. Same composition
     // as the entry-veto gate uses; tickCadence=0 because this is just
     // surfacing remaining-seconds, not enforcing tick floor here.
-    const cooldownMs = composeCooldown({ symbol, tickCadenceMs: 0 }).finalMs;
+    const cooldownMs = composeCooldown({
+      symbol,
+      tickCadenceMs: 0,
+      expectancyEdge: rollingStats != null ? {
+        fStar: computeKellyFStar(rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss) ?? 0,
+        sampleCount: rollingStats.sampleCount,
+      } : null,
+    }).finalMs;
     const cooldownLongRemS = cooldownLongAt
       ? Math.max(0, (cooldownMs - (Date.now() - cooldownLongAt)) / 1000)
       : 0;
