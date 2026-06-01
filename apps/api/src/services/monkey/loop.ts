@@ -2179,7 +2179,12 @@ export class MonkeyKernel extends EventEmitter {
       // running the per-symbol pipeline. Stale = older than
       // LIMIT_MAKER_STALE_MS (2 min). Errors are non-fatal — the next
       // tick retries cancel.
-      try { await this.cancelStaleLimitMakers(); } catch { /* non-fatal */ }
+      // Operator MANDATE: only touch the live exchange in 'auto'. When the
+      // operator has taken over (paper_only / pause) the kernel must not even
+      // cancel resting orders — it is fully disengaged from the live account.
+      if (this.executionMode === 'auto') {
+        try { await this.cancelStaleLimitMakers(); } catch { /* non-fatal */ }
+      }
       for (const sym of this.symbols) {
         try {
           await this.processSymbol(sym);
