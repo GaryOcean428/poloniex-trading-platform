@@ -730,6 +730,30 @@ def kelly_leverage_cap(
     return float(cap)
 
 
+def compute_kelly_f_star(
+    p_win: float,
+    avg_win: float,
+    avg_loss: float,
+) -> Optional[float]:
+    """Compute Kelly fraction f* from rolling stats. Returns None if uninformative.
+
+    Unlike kelly_leverage_cap (which returns max_lev on negative edge to
+    leave the geometric formula undisturbed), this function returns the raw
+    f* including negative values — the cooldown layer uses the sign and
+    magnitude to derive an observer-based extension floor (#1032).
+    """
+    if p_win <= 0 or avg_win <= 0:
+        return None
+    abs_loss = abs(avg_loss)
+    if abs_loss <= 1e-12:
+        return None
+    b = avg_win / abs_loss
+    if b <= 0:
+        return None
+    q = 1.0 - p_win
+    return (p_win * b - q) / b
+
+
 def current_leverage(
     s: ExecBasinState,
     *,

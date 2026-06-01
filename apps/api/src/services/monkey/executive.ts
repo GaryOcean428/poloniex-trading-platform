@@ -432,6 +432,30 @@ export function kellyLeverageCap(
   return Math.max(1, Math.min(maxLev, Math.max(KELLY_CAP_TRADABLE_FLOOR, rawCap)));
 }
 
+/**
+ * Compute the Kelly expectancy fraction f* from rolling stats.
+ * Returns null if stats are insufficient or uninformative.
+ * Exported so the cooldown layer can use the same observed edge.
+ *
+ * Unlike kellyLeverageCap (which returns maxLev on negative edge to
+ * leave the geometric formula undisturbed), this function returns the
+ * raw f* including negative values — the cooldown layer uses the sign
+ * and magnitude to derive an observer-based extension floor (#1032).
+ */
+export function computeKellyFStar(
+  pWin: number,
+  avgWin: number,
+  avgLoss: number,
+): number | null {
+  if (pWin <= 0 || avgWin <= 0) return null;
+  const absLoss = Math.abs(avgLoss);
+  if (absLoss <= 1e-12) return null;
+  const b = avgWin / absLoss;
+  if (b <= 0) return null;
+  const q = 1 - pWin;
+  return (pWin * b - q) / b;
+}
+
 export function currentLeverage(
   s: BasinState,
   maxLeverageBoundary: number,

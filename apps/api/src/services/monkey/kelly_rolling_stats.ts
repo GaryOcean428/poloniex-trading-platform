@@ -33,7 +33,7 @@ const KELLY_MIN_TRADES = 5;
 export async function getKellyRollingStats(
   agent: string,
   lane?: LaneType,
-): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
+): Promise<{ winRate: number; avgWin: number; avgLoss: number; sampleCount: number } | null> {
   try {
     const params: string[] = [agent];
     let laneClause = '';
@@ -63,7 +63,7 @@ export async function getKellyRollingStats(
     const avgLoss = losses.length > 0
       ? losses.reduce((s, v) => s + v, 0) / losses.length
       : 0;
-    return { winRate, avgWin, avgLoss };
+    return { winRate, avgWin, avgLoss, sampleCount: pnls.length };
   } catch (err) {
     logger.debug('[Monkey] getKellyRollingStats failed; defer to geometric formula', {
       agent,

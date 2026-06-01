@@ -1,9 +1,9 @@
 /**
  * cooldown_composer.ts — post-close cooldown composition for #1009.
  *
- * Composes four layers:
+ * Composes five layers:
  *
- *   final = max(safety, decoherence, heart, tick_cadence)
+ *   final = max(safety, decoherence, heart, tick_cadence, expectancy)
  *
  * Replaces the two legacy hardcoded sites in `loop.ts`:
  *   - `POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000` (loop.ts:1186) — was
@@ -26,10 +26,16 @@
  * - **tick_cadence_floor** — substrate polling rate. When everything
  *   else converges to 0, the kernel still cannot act faster than its
  *   next tick. Reads from a caller-supplied lane decision period.
+ * - **expectancy_floor** — observer-derived extension on negative rolling
+ *   edge. When fStar < 0 (Kelly says EV is negative) and the sample
+ *   count is >= EXPECTANCY_MIN_SAMPLES, the extension equals
+ *   |fStar| × max(safety, tickCadence) × sampleRamp. No new knobs:
+ *   the multiplier is the kernel's own observed floor and the
+ *   magnitude is the Kelly shortfall. Implements #1032.
  *
  * # Telemetry shape
  *
- * Every composition writes a structured object with all four terms plus
+ * Every composition writes a structured object with all five terms plus
  * the binding floor name. Without this, HEART arbitration would not be
  * falsifiable post-deploy — a binding floor of 30s could be HEART asking
  * for 30s OR safety overriding HEART's 0. `by=` tells you which.
@@ -67,14 +73,21 @@ export type BindingFloor =
   | 'safety'
   | 'decoherence'
   | 'heart'
+  | 'expectancy'
   | 'tick_cadence'
   | 'zero';
+
+/** Minimum rolling-window trade count before the expectancy gate is trusted.
+ * Acceptable as a significance gate per P25 — this is a safety bound, not an
+ * operational threshold. Below this sample count the gate is silent. */
+const EXPECTANCY_MIN_SAMPLES = 20;
 
 export interface CooldownBreakdown {
   safetyMs: number;
   decoherenceMs: number;
   heartMs: number;
   tickCadenceMs: number;
+  expectancyMs: number;
   finalMs: number;
   by: BindingFloor;
   cooldownActive: boolean;
@@ -124,6 +137,16 @@ export interface ComposeArgs {
    */
   heartProvider?: (symbol: string) => number;
   decoherenceProvider?: (symbol: string) => number;
+  /**
+   * Optional: Kelly expectancy state from rolling trade history.
+   * When fStar < 0 (negative EV) AND sampleCount >= EXPECTANCY_MIN_SAMPLES,
+   * add an expectancy floor = |fStar| × max(safety, tickCadence) × sampleRamp.
+   * Observer-derived: fStar from realized history, base from existing floors.
+   */
+  expectancyEdge?: {
+    fStar: number;       // Kelly fraction from rolling stats (negative = negative EV)
+    sampleCount: number; // rolling window trade count (significance gate)
+  } | null;
 }
 
 export function composeCooldown(args: ComposeArgs): CooldownBreakdown {
@@ -148,10 +171,26 @@ export function composeCooldown(args: ComposeArgs): CooldownBreakdown {
   );
   const tickCadence = finiteNonNegative(args.tickCadenceMs);
 
-  const final = Math.max(safety, decoherence, heart, tickCadence);
+  // Expectancy gate: observer-derived cooldown extension on negative rolling edge.
+  // Extension = |fStar| × max(safety, tickCadence) × sampleRamp — no new numeric literals.
+  // The |fStar| magnitude is the Kelly shortfall (how far below break-even the
+  // rolling stats are). Multiplying by the current floor means the extension
+  // scales with the kernel's observed settlement/substrate rhythm, not a knob.
+  // sampleRamp prevents over-suppression: ramps from 0 at MIN_SAMPLES to 1 at
+  // 2×MIN_SAMPLES (linear) so the signal matures with more evidence.
+  const expEdge = args.expectancyEdge;
+  let expectancy = 0;
+  if (expEdge != null && expEdge.sampleCount >= EXPECTANCY_MIN_SAMPLES && expEdge.fStar < 0) {
+    const sampleRamp = Math.min(1, (expEdge.sampleCount - EXPECTANCY_MIN_SAMPLES) / EXPECTANCY_MIN_SAMPLES);
+    const negFrac = Math.abs(expEdge.fStar);  // [0, ∞) but practically [0, 1]
+    const baseFloor = Math.max(safety, tickCadence);
+    expectancy = finiteNonNegative(negFrac * baseFloor * sampleRamp);
+  }
+
+  const final = Math.max(safety, decoherence, heart, tickCadence, expectancy);
 
   // Determine binding floor — the term whose value equals `final`. Ties
-  // resolve in the order safety > decoherence > heart > tick_cadence
+  // resolve in the order safety > decoherence > heart > expectancy > tick_cadence
   // so the most operationally-significant cause is named.
   let by: BindingFloor;
   if (final === 0) {
@@ -162,6 +201,8 @@ export function composeCooldown(args: ComposeArgs): CooldownBreakdown {
     by = 'decoherence';
   } else if (final === heart) {
     by = 'heart';
+  } else if (final === expectancy && expectancy > 0) {
+    by = 'expectancy';
   } else {
     by = 'tick_cadence';
   }
@@ -171,6 +212,7 @@ export function composeCooldown(args: ComposeArgs): CooldownBreakdown {
     decoherenceMs: decoherence,
     heartMs: heart,
     tickCadenceMs: tickCadence,
+    expectancyMs: expectancy,
     finalMs: final,
     by,
     cooldownActive: final > 0,
@@ -208,6 +250,8 @@ export function formatCooldownTelemetry(b: CooldownBreakdown): string {
     } else {
       detail = ':settlement';
     }
+  } else if (b.by === 'expectancy') {
+    detail = ':negative_ev';
   }
   return `cooldown:${b.finalMs}ms|by=${b.by}${detail}`;
 }

@@ -297,6 +297,106 @@ describe('cooldown_composer — default HEART provider is heart_arbitrator (#100
   });
 });
 
+// ─── #1032: expectancy gate (negative Kelly EV → cooldown extension) ────────
+
+describe('cooldown_composer — expectancy gate (#1032)', () => {
+  beforeEach(() => _resetSafetyFloorState());
+
+  it('no extension when sampleCount < EXPECTANCY_MIN_SAMPLES', () => {
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      expectancyEdge: { fStar: -0.3, sampleCount: 10 },
+    });
+    expect(b.expectancyMs).toBe(0);
+    expect(b.by).toBe<BindingFloor>('zero');
+  });
+
+  it('no extension when fStar >= 0 (positive or break-even edge)', () => {
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      expectancyEdge: { fStar: 0.1, sampleCount: 40 },
+    });
+    expect(b.expectancyMs).toBe(0);
+  });
+
+  it('no extension when expectancyEdge is null', () => {
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      expectancyEdge: null,
+    });
+    expect(b.expectancyMs).toBe(0);
+  });
+
+  it('extension scales with baseFloor and |fStar| when sampleCount >= MIN_SAMPLES', () => {
+    // safety=0 (cold-start, no observations), tickCadence=1000ms → baseFloor=1000
+    // sampleCount=40 = 2×MIN(20) → sampleRamp=1 → expectancy = 0.4 × 1000 × 1 = 400
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 1000,
+      expectancyEdge: { fStar: -0.4, sampleCount: 40 },
+    });
+    expect(b.expectancyMs).toBe(400);
+    expect(b.tickCadenceMs).toBe(1000);
+    // tickCadence=1000 > expectancy=400 → tick_cadence is binding
+    expect(b.by).toBe<BindingFloor>('tick_cadence');
+    expect(b.finalMs).toBe(1000);
+  });
+
+  it('sampleRamp is < 1 when sampleCount is between MIN and 2×MIN', () => {
+    // sampleCount=30 = MIN(20)+10 → ramp = 10/20 = 0.5
+    // baseFloor=tickCadence=2000 → expectancy = 0.5 × 2000 × 0.5 = 500
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 2000,
+      expectancyEdge: { fStar: -0.5, sampleCount: 30 },
+    });
+    expect(b.expectancyMs).toBe(500);
+  });
+
+  it('expectancy binds finalMs when it exceeds all other floors', () => {
+    // safety=0, decoherence=0, heart=0, tickCadence=0 → all floors 0
+    // Warm safety to 100ms, sampleCount=40 → ramp=1
+    // fStar=-0.5, baseFloor=100 → expectancy = 0.5 × 100 = 50 < 100 → safety binds
+    // Try without safety: tickCadence=0, safety=0 → baseFloor=0 → expectancy=0
+    // Need baseFloor>0: use heartProvider=100
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      heartProvider: () => 100,
+      expectancyEdge: { fStar: -2, sampleCount: 40 },
+    });
+    // baseFloor = max(0, 0) = 0 because safety=0 and tick=0; heart is separate
+    // Actually baseFloor = max(safety, tickCadence) = max(0, 0) = 0
+    // So expectancy = 2 × 0 × 1 = 0; heart=100 binds
+    expect(b.heartMs).toBe(100);
+    expect(b.expectancyMs).toBe(0);
+    expect(b.by).toBe<BindingFloor>('heart');
+  });
+
+  it('expectancy binds when larger than safety and tick cadence', () => {
+    // safety=200ms (warmed), tickCadence=0
+    for (let i = 0; i < 60; i++) {
+      recordCloseAck(SYM, i * 1000);
+      recordFlatObserved(SYM, i * 1000 + 200);
+    }
+    // baseFloor = max(200, 0) = 200; fStar=-1.5, sampleCount=40→ramp=1
+    // expectancy = 1.5 × 200 × 1 = 300 > safety(200) → expectancy binds
+    const b = composeCooldown({
+      symbol: SYM,
+      tickCadenceMs: 0,
+      expectancyEdge: { fStar: -1.5, sampleCount: 40 },
+    });
+    expect(b.safetyMs).toBe(200);
+    expect(b.expectancyMs).toBe(300);
+    expect(b.finalMs).toBe(300);
+    expect(b.by).toBe<BindingFloor>('expectancy');
+    expect(formatCooldownTelemetry(b)).toBe('cooldown:300ms|by=expectancy:negative_ev');
+  });
+});
+
 // ─── #1009 sign-off criterion 1: literal-purity grep ───────────────────
 
 describe('cooldown_composer — literal-purity guard (#1009 sign-off criterion 1)', () => {
@@ -319,9 +419,13 @@ describe('cooldown_composer — literal-purity guard (#1009 sign-off criterion 1
     }
 
     // Allowed:
-    //   0 — Math.max(0, ...) clamp
+    //   0  — Math.max(0, ...) clamp and finiteNonNegative guard
+    //   1  — Math.min(1, ...) full-ramp clamp (sampleRamp ceiling, same
+    //         category as the 0-floor: normalisation, not a knob)
+    //   20 — EXPECTANCY_MIN_SAMPLES significance gate (P25 safety bound;
+    //         see #1032 and cooldown_composer.ts EXPECTANCY_MIN_SAMPLES comment)
     // Anything else would be a knob in costume.
-    const allowed = new Set(['0']);
+    const allowed = new Set(['0', '1', '20']);
     const offenders = found.filter((v) => !allowed.has(v));
     expect(offenders, `unexpected numeric literals in cooldown_composer.ts: ${offenders.join(', ')}`).toEqual([]);
   });
