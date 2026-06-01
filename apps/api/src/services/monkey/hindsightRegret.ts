@@ -1,9 +1,9 @@
 /**
  * hindsightRegret.ts — legibility-gated counterfactual PREDICTION ERROR.
  *
- * DESIGN HYPOTHESIS (operator-approved redesign of PR #1038, 2026-05-29).
- * Built cleanly, flag-gated OFF (MONKEY_HINDSIGHT_REGRET_LIVE), for operator
- * review — NOT a finished truth. Replaces the rejected v1 (fixed 30-min
+ * Operator-approved redesign of PR #1038 (2026-05-29). CANONICAL — always on
+ * (the former MONKEY_HINDSIGHT_REGRET_LIVE gate was removed). Replaces the
+ * rejected v1 (fixed 30-min
  * window + fixed dopamine caps + best-favourable-excursion target +
  * dopamine-only "pain") which was a knob dressed as chemistry.
  *
@@ -440,11 +440,7 @@ export function resolveHindsight(
   };
 }
 
-/**
- * Hindsight regret is CANONICAL — the kernel always learns the counterfactual
- * "if I'd held, I'd have earned the reward" signal. Not a knob; built to be
- * used. (Was gated behind MONKEY_HINDSIGHT_REGRET_LIVE; gate removed 2026-05-30.)
- */
-export function isHindsightRegretLive(): boolean {
-  return true;
-}
+// Hindsight regret is CANONICAL — the kernel always learns the counterfactual
+// "if I'd held, I'd have earned the reward" signal. Not a knob; built to be
+// used. The former MONKEY_HINDSIGHT_REGRET_LIVE env gate (an always-true
+// wrapper) was removed entirely — every call site is now unconditional.
