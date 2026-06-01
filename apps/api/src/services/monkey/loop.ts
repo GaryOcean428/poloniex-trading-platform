@@ -3641,7 +3641,7 @@ export class MonkeyKernel extends EventEmitter {
     // order-of-magnitude as the existing cross-agent tape-veto (0.20)
     // but tighter — we want STRONG tape signal before overriding.
     //
-    // Env: MONKEY_TAPE_OVERRIDE_LIVE (default true; kill switch only).
+    // UI flag MONKEY_TAPE_OVERRIDE_LIVE (monkey_feature_flags; default true; kill-switch toggle only).
     //
     // Phase 5 doctrine (2026-05-26): tape-override threshold replaced
     // by phi-derived. MONKEY_TAPE_OVERRIDE_THRESHOLD (was 0.40) removed.
@@ -3726,7 +3726,8 @@ export class MonkeyKernel extends EventEmitter {
     // Stage 2 stud topology). TS does not implement REVERSION yet.
 
     // MONKEY_SHORTS_LIVE — sequencing protection retained from #575.
-    // Orthogonal to agent-separation; flipped via env independently.
+    // Orthogonal to agent-separation; a plain UI toggle (monkey_feature_flags),
+    // snapshotted per tick into this.featureFlags.shortsLive.
     const SHORTS_LIVE = this.featureFlags.shortsLive;
     const sideShortRefused = sideCandidate === 'short' && !SHORTS_LIVE;
     if (sideShortRefused) {
@@ -4244,8 +4245,8 @@ export class MonkeyKernel extends EventEmitter {
         // The loss-side safety gates (hard SL, fast-adverse, slow-bleed)
         // still run — a price stop is not a time/tape stop. Default ON
         // (2026-05-20 operator directive: "close trades at its predicted
-        // or adjusted limit"); set MONKEY_BRACKET_EXIT_LIVE=false to
-        // disable as a kill-switch.
+        // or adjusted limit"); toggle MONKEY_BRACKET_EXIT_LIVE off in the UI
+        // (monkey_feature_flags) to disable as a kill-switch.
         const bracketExitLive = this.featureFlags.bracketExitLive;
         const hasBracket = (openRow.take_profit ?? null) !== null
           || (openRow.stop_loss ?? null) !== null;
@@ -4615,11 +4616,13 @@ export class MonkeyKernel extends EventEmitter {
         // both (a) the position is losing money, (b) basin signal supports
         // the OTHER side. Combined = "we were wrong, get out."
         //
-        // Env overrides (all conservative defaults):
+        // Live toggle: MONKEY_FAST_ADVERSE_LIVE — UI flag (monkey_feature_flags;
+        // default true; toggle off to disable), snapshotted into featureFlags.
+        // Numeric CALIBRATION env overrides remain env (observer-derived knobs
+        // out of scope for the UI control plane, all conservative defaults):
         //   MONKEY_FAST_ADVERSE_ROI_PCT  (default -0.30 — fire when ROI < -0.30%)
         //   MONKEY_FAST_ADVERSE_BASIN_FLOOR (default 0.10 — basin must be
         //                                    > 0.10 wrong-side; below = noise)
-        //   MONKEY_FAST_ADVERSE_LIVE  (default true; set false to disable)
         const fastAdverseLive = this.featureFlags.fastAdverseLive;
         const fastAdverseRoiPct =
           Number(process.env.MONKEY_FAST_ADVERSE_ROI_PCT) || -0.30;
@@ -4722,7 +4725,7 @@ export class MonkeyKernel extends EventEmitter {
         // through 0.334% adverse — SL gate held by design (lev=22 →
         // 7.3% ROI < 15% SL), time axis was uncovered. shouldSlowBleedExit
         // fires when held >= 60min AND |ROI| >= 0.5×laneSL AND tape adverse.
-        // Env: MONKEY_SLOW_BLEED_LIVE (default true; set false to disable).
+        // UI flag MONKEY_SLOW_BLEED_LIVE (monkey_feature_flags; default true; toggle off to disable).
         const slowBleedLive = this.featureFlags.slowBleedLive;
         if (!exitFired && slowBleedLive && entryTimeMs !== undefined) {
           const heldMs = Date.now() - entryTimeMs;
@@ -4880,8 +4883,8 @@ export class MonkeyKernel extends EventEmitter {
         // enforces it), so revising every tick can only improve the
         // bracket. Default ON (2026-05-20 operator directive: "close
         // trades at its predicted or adjusted limit" — the revision is
-        // the "adjusted" half); set MONKEY_BRACKET_EXTEND_LIVE=false to
-        // disable as a kill-switch.
+        // the "adjusted" half); toggle MONKEY_BRACKET_EXTEND_LIVE off in the UI
+        // (monkey_feature_flags) to disable as a kill-switch.
         const bracketExtendLive =
           this.featureFlags.bracketExtendLive;
         if (
@@ -8521,7 +8524,7 @@ export class MonkeyKernel extends EventEmitter {
       // the fee burden the rebate strategy was meant to avoid.
       //
       // Conservative gating:
-      //   1. Env flag MONKEY_MAKER_CLOSE_LIVE=true (default OFF, safe rollout)
+      //   1. UI flag MONKEY_MAKER_CLOSE_LIVE ON (monkey_feature_flags; default OFF, safe rollout)
       //   2. Single-chunk only (chunkSizes.length === 1) — multi-chunk maker
       //      close has unhandled partial-fill complexity, defer to follow-up
       //   3. Exit reason matches preservation pattern (regime_held_exit,
@@ -8925,7 +8928,7 @@ export class MonkeyKernel extends EventEmitter {
           perAgentTotals[agentLabel].qty += rowQty;
 
           // #827: record fill quality for symbol-scope analysis (best-effort, non-blocking).
-          // Derives entry order_type: scalp lane + SCALP_LIMIT_MAKER_LIVE env = maker
+          // Derives entry order_type: scalp lane + SCALP_LIMIT_MAKER_LIVE UI flag = maker
           // (the same gate that controls limit_maker routing). Safe default: taker.
           {
             const entryOrderType: 'maker' | 'taker' =
@@ -9309,7 +9312,7 @@ export class MonkeyKernel extends EventEmitter {
     //   active when |now - nextFundingTime| <= FUNDING_GATE_WINDOW_MIN (default 10 min)
     //
     // Bypass conditions:
-    //   - MONKEY_FUNDING_GATE_LIVE != 'true'  → gate disabled
+    //   - MONKEY_FUNDING_GATE_LIVE UI flag off → gate disabled
     //   - nextFundingTimeMs absent             → schedule unknown, fail-open
     //   - req.isDCAAdd                         → defending existing position
     //
@@ -9844,7 +9847,8 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
-    // Operator-toggleable scope: SCALP_LIMIT_MAKER_BROAD=false reverts
+    // Operator-toggleable scope: toggle SCALP_LIMIT_MAKER_BROAD off in the UI
+    // (monkey_feature_flags) to revert
     // to the original scalp-lane-only routing if broad-CHOP routing's
     // latency outweighs the rebate on the current symbol mix. The PR
     // #817 counterfactual was a single window; this lever lets you A/B
