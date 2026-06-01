@@ -10,6 +10,7 @@ import { pool } from '../db/connection.js';
 import { verifyPnl, checkNotionalConsistency } from './monkey/safePnlSql.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
+import { getCurrentExecutionMode } from './executionModeService.js';
 import { monitoringService } from './monitoringService.js';
 import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
@@ -81,6 +82,19 @@ class StateReconciliationService {
     };
 
     try {
+      // ── 0. Operator paper MANDATE ───────────────────────────────────────────
+      // When execution mode is not 'auto', the kernel is fully disengaged from
+      // the live exchange — the operator has taken over live positions. The
+      // reconciler MUST NOT adopt orphaned exchange positions (the operator's
+      // manual trades) or close ghost rows against the live account. Skip
+      // entirely; resume only in 'auto'.
+      const execMode = await getCurrentExecutionMode();
+      if (execMode !== 'auto') {
+        result.error = 'skipped_execution_mode_not_auto';
+        this.latestResults.set(userId, result);
+        return result;
+      }
+
       // ── 1. Credentials ──────────────────────────────────────────────────────
       const credentials = await apiCredentialsService.getCredentials(userId);
       if (!credentials) {

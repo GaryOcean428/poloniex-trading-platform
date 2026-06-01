@@ -15,6 +15,12 @@ vi.mock('../apiCredentialsService.js', () => ({
   },
 }));
 
+// Default 'auto' so the existing ghost/orphan tests run the full path.
+const getExecutionModeMock = vi.fn().mockResolvedValue('auto');
+vi.mock('../executionModeService.js', () => ({
+  getCurrentExecutionMode: (...a: unknown[]) => getExecutionModeMock(...a),
+}));
+
 const getAccountBillsMock = vi.fn().mockResolvedValue([]);
 vi.mock('../poloniexFuturesService.js', () => ({
   default: {
@@ -43,10 +49,36 @@ vi.mock('../monkey/kernel_bus.js', () => ({
   getKernelBus: () => ({ publish: publishMock }),
 }));
 
+describe('stateReconciliationService — operator paper MANDATE', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queryMock.mockReset();
+    getExecutionModeMock.mockResolvedValue('auto');
+  });
+
+  it('skips reconciliation (no adopt/close, no live read) when execution mode is not auto', async () => {
+    getExecutionModeMock.mockResolvedValue('paper_only');
+    const { stateReconciliationService } = await import('../stateReconciliationService.js');
+    const polo = (await import('../poloniexFuturesService.js')).default as unknown as {
+      getPositions: ReturnType<typeof vi.fn>;
+      getAccountBalance: ReturnType<typeof vi.fn>;
+    };
+    const res = await stateReconciliationService.reconcile('user-1');
+    expect(res.error).toBe('skipped_execution_mode_not_auto');
+    expect(res.orphans).toEqual([]);
+    expect(res.ghosts).toEqual([]);
+    // The kernel must not touch the live exchange in paper mode.
+    expect(polo.getPositions).not.toHaveBeenCalled();
+    expect(polo.getAccountBalance).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('stateReconciliationService ghost recovery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     queryMock.mockReset();
+    getExecutionModeMock.mockResolvedValue('auto');
     getAccountBillsMock.mockReset();
     getAccountBillsMock.mockResolvedValue([]);
   });

@@ -27,7 +27,7 @@ import { apiCache } from '../../utils/apiCache.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
 import { logger } from '../../utils/logger.js';
 import { apiCredentialsService } from '../apiCredentialsService.js';
-import { getCurrentExecutionMode } from '../executionModeService.js';
+import { getCurrentExecutionMode, type ExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
@@ -1249,6 +1249,12 @@ export class MonkeyKernel extends EventEmitter {
    * primary feedback channel; rotation is a structural signal.
    */
   private rotation: RotationState = makeRotationState();
+  /** Operator execution-mode MANDATE, refreshed once per tick from
+   *  agent_execution_mode. 'auto' = kernel may touch the live exchange;
+   *  'paper_only' = kernel trades its OWN paper book only and does NOT
+   *  open, close, adopt or reconcile any live positions (operator takes
+   *  over live); 'pause' = kill switch (no new orders at all). */
+  private executionMode: ExecutionMode = 'auto';
   /**
    * LIMIT_MAKER #793 (Class B #5) — pending post-only scalp orders that
    * have been placed but not yet observed as filled. Key: orderId.
@@ -2163,6 +2169,11 @@ export class MonkeyKernel extends EventEmitter {
     }
     this.tickInFlight = true;
     try {
+      // Refresh the operator execution-mode MANDATE once per tick (cached
+      // for the sync routing/close/reconcile gates). Fail-safe to the last
+      // known value on a transient read error — getCurrentExecutionMode
+      // itself fails CLOSED to 'pause' on DB failure.
+      try { this.executionMode = await getCurrentExecutionMode(); } catch { /* keep last */ }
       this.decayHindsightCachesOncePerTick();
       // LIMIT_MAKER #793 — cancel any stale post-only scalp orders before
       // running the per-symbol pipeline. Stale = older than
@@ -7537,6 +7548,13 @@ export class MonkeyKernel extends EventEmitter {
           L: { pnl: 0, qty: 0 },
         };
         if (rows.length === 0) {
+          // Operator paper MANDATE: with no matching open kernel-instance
+          // rows and the kernel disengaged from live, do NOT paper-close the
+          // bare tradeId — its origin is unknown and a live position would be
+          // booked as a phantom. Leave it for the operator.
+          if (this.executionMode !== 'auto') {
+            return { executed: false, orderId: null, reason: 'paper_mandate_live_position_untouched' };
+          }
           // #931 safe-pnl — compute from the row's own data.
           const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
@@ -7564,6 +7582,18 @@ export class MonkeyKernel extends EventEmitter {
         // accounts for the position's own entry/exit, so is correct per-row).
         let orderId: string | null = null;
         for (const row of rows) {
+          // Operator paper MANDATE: while executionMode != 'auto' the kernel
+          // is fully disengaged from live. A live-origin row (non-paper
+          // order_id) is the operator's to manage — NEVER paper-close it
+          // (that books phantom PnL and orphans the real exchange position).
+          // Leave it open and untouched.
+          const isPaperOrigin = !!(row.order_id && row.order_id.startsWith('paper-'));
+          if (this.executionMode !== 'auto' && !isPaperOrigin) {
+            logger.debug('[Monkey] paper MANDATE — skip live-origin row (operator-owned)', {
+              rowId: row.id, orderId: row.order_id, executionMode: this.executionMode,
+            });
+            continue;
+          }
           const closeOrderId = row.order_id ? `paper-close-${row.order_id}` : `paper-close-${row.id}`;
           let explicitPnl: number | null = null;
           if (row.order_id && row.order_id.startsWith('paper-')) {
@@ -10880,7 +10910,17 @@ export class MonkeyKernel extends EventEmitter {
    *   (see kernel_rotation.ts module header guard-note).
    */
   private shouldRouteOrdersToPaper(): boolean {
-    return isMonkeyPaperMode() || this.rotation.mode === 'paper';
+    // 2026-06-01 — operator paper MANDATE: in 'paper_only' the kernel fully
+    // disengages from the live exchange and trades its own paper book, so
+    // BOTH entries and closes route to paper here. ('pause' is NOT routed to
+    // paper — it blocks new orders entirely via the entry veto; existing
+    // live positions are left for the operator. See executeExit / reconciler
+    // gating which skip live-origin positions whenever executionMode != auto.)
+    return (
+      this.executionMode === 'paper_only' ||
+      isMonkeyPaperMode() ||
+      this.rotation.mode === 'paper'
+    );
   }
 
   /**
