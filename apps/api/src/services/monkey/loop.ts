@@ -252,6 +252,7 @@ import {
 } from './btc_beacon.js';
 import { recordLaneOutcome, weightedWinRate } from './time_of_day_winrate.js';
 import { observeFundingArb } from './funding_arb_observer.js';
+import { observeLiquidationCascade } from './liquidation_cascade_observer.js';
 import {
   evaluateCell,
   regimeToDirection,
@@ -2501,6 +2502,52 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
+    // #795 Class B #8: liquidation-cascade reversal entry signal (behind flag).
+    // Fetches the latest liquidation orders for this symbol, sums USD notional
+    // by side (long-liq vs short-liq) and feeds the rolling observer. When a
+    // cluster fires the signal is stored and applied to the entry threshold
+    // further down (see `cascadeModifier`). Fail-open: any error → no signal.
+    let liqCascadeSignal: { suggestedEntrySide: 'long' | 'short' | null } | null = null;
+    if (await isFeatureEnabled('MONKEY_LIQ_REVERSAL_LIVE')) {
+      try {
+        type LiqOrder = { side?: string; size?: string | number; price?: string | number; dealPrice?: string | number };
+        const liqResp = await poloniexFuturesService.getLiquidationOrders(symbol).catch(() => null) as
+          LiqOrder[] | { list?: LiqOrder[] } | null;
+        const liqOrders: LiqOrder[] = Array.isArray(liqResp)
+          ? liqResp
+          : ((liqResp as { list?: LiqOrder[] } | null)?.list ?? []);
+        let longLiqUsd = 0;
+        let shortLiqUsd = 0;
+        for (const o of liqOrders) {
+          const notional = Number(o.size ?? 0) * Number(o.price ?? o.dealPrice ?? 0);
+          if (!Number.isFinite(notional) || notional <= 0) continue;
+          if ((o.side ?? '').toLowerCase() === 'sell') {
+            // long position liquidated (forced sell) → contributes to long-liq pool
+            longLiqUsd += notional;
+          } else if ((o.side ?? '').toLowerCase() === 'buy') {
+            // short position liquidated (forced buy) → contributes to short-liq pool
+            shortLiqUsd += notional;
+          }
+        }
+        const cascade = observeLiquidationCascade(symbol, longLiqUsd, shortLiqUsd);
+        if (cascade.clusterFires && cascade.suggestedEntrySide != null) {
+          liqCascadeSignal = { suggestedEntrySide: cascade.suggestedEntrySide };
+          logger.debug('[liquidation_cascade] cluster detected', {
+            symbol,
+            dominantSide: cascade.dominantSide,
+            suggestedEntrySide: cascade.suggestedEntrySide,
+            totalNotional: cascade.totalNotional,
+            clusterThreshold: cascade.clusterThreshold,
+            n: cascade.n,
+          });
+        }
+      } catch (err) {
+        logger.warn('[liquidation_cascade] observer error (non-fatal)', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     const raw = await mlPredictionService.getTradingSignal(symbol, ohlcv, lastPrice);
     const mlSignal = String(raw?.signal ?? 'HOLD').toUpperCase();
     const mlStrength = Number(raw?.strength) || 0;
@@ -3300,12 +3347,29 @@ export class MonkeyKernel extends EventEmitter {
     } catch (_exemplarErr) {
       // fail open — exemplar failure must never block trading
     }
-    const entryThr = exemplarModifier === 0
+    let entryThr = exemplarModifier === 0
       ? entryThrAfterBtc
       : {
           value: entryThrAfterBtc.value * (1 + exemplarModifier),
           derivation: { ...entryThrAfterBtc.derivation, exemplarModifier },
         };
+    // #795 Class B #8 — cascade conviction boost. When the liquidation-cascade
+    // observer fires on the same side as the geometry candidate, lower the entry
+    // threshold by 15% (increases willingness to enter on confirmed reversion).
+    // Disagrees or null → no change. Fail-open by construction (liqCascadeSignal
+    // is null unless the flag is live AND a cluster fires).
+    const cascadeModifier: number =
+      (liqCascadeSignal?.suggestedEntrySide === sideCandidate) ? -0.15 : 0;
+    if (cascadeModifier !== 0) {
+      entryThr = {
+        value: entryThr.value * (1 + cascadeModifier),
+        derivation: {
+          ...entryThr.derivation,
+          cascadeModifier,
+          liqCascadeSide: liqCascadeSignal?.suggestedEntrySide,
+        },
+      };
+    }
     const entryConviction = hasEntrySignalConviction({
       basinDir,
       tapeTrend,
