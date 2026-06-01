@@ -5,6 +5,7 @@ import { getAccessToken } from '@/utils/auth';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { getBackendUrl } from '@/utils/environment';
 import ActiveStrategiesPanel from './ActiveStrategiesPanel';
+import KernelControlsCard from './KernelControlsCard';
 import KernelTelemetryPanel from './KernelTelemetryPanel';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import PerformanceAnalytics from './PerformanceAnalytics';
@@ -379,6 +380,11 @@ const AutonomousAgentDashboard: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Kernel Controls — operator FEATURE toggles (monkey_feature_flags).
+          The execution-mode card above is the safety MANDATE; this is the
+          per-feature control plane that replaced the Railway env vars. */}
+      <KernelControlsCard />
 
       {/* Emergency kill switch — surfaced while the kernel is trading
           live and the execution mode still permits live orders. */}
