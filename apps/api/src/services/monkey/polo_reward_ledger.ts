@@ -309,7 +309,6 @@ export type ExternalCloseRewardEligibility =
       eligible: false;
       /** Why the reward was declined (telemetry/debugging only). */
       reason:
-        | 'flag_off'
         | 'not_external_close'
         | 'no_agent'
         | 'no_bills_pnl'

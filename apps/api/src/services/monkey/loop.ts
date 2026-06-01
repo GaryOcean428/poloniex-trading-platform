@@ -20,6 +20,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 
 import { pool } from '../../db/connection.js';
 import { apiCache } from '../../utils/apiCache.js';
@@ -118,7 +119,12 @@ import {
 } from './kernel_predictions.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { recoveredOutcomeMatchesInstance } from './recovered_outcome_routing.js';
-import { logParityDiff } from './kernel_client.js';
+import {
+  callKShadowTick,
+  isKShadowEnabled,
+  logParityDiff,
+  type KShadowTickResponse,
+} from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
@@ -163,6 +169,7 @@ import {
   oceanTrailRetracement,
   oceanTrailTierIndex,
   observerFibCoefficient,
+  rewardRpeDeltas,
 } from './ocean_reward.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
@@ -189,10 +196,12 @@ import {
   shouldAggregateBleedExit,
   shouldAggregateHarvest,
   shouldBracketExit,
+  computeRegimeHeldProfitFloorPnl,
   shouldExtendBracket,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
+  shouldRegimeHeldProfitExit,
   shouldScalpExit,
   shouldSlowBleedExit,
   chooseLane,
@@ -218,6 +227,15 @@ import {
 } from './outcomeRingStats.js';
 import { runPeriodicPnlScan } from './pnlReconciliationPeriodic.js';
 import { startPredictionResidualJob } from './predictionResidualJob.js';
+import {
+  ingestRewardRpeLive,
+  isRewardRpeLiveEnabled,
+} from './rewardRpeEvidenceSync.js';
+import {
+  getRewardRpeReadinessTelemetry,
+  startRewardRpeReadinessJob,
+  stopRewardRpeReadinessJob,
+} from './rewardRpeReadiness.js';
 import {
   computePredictionChemistry,
   type PredictionChemistryDeltas,
@@ -359,6 +377,7 @@ const REWARD_HALF_LIFE_MS = 20 * 60_000;  // 20 min
 
 /** Max rewards retained; FIFO eviction. */
 const REWARD_QUEUE_MAX = 50;
+const REWARD_RPE_SIGMA_CACHE_TTL_MS = 60_000;
 
 /**
  * v0.8.7 regime-hysteresis — minimum number of consecutive ticks where
@@ -1107,6 +1126,8 @@ export class MonkeyKernel extends EventEmitter {
   private pnlScanTimer: ReturnType<typeof setInterval> | null = null;
   /** #941 Phase 2 prediction-residual scanner timer. Runs independent of tick(). */
   private residualScanTimer: ReturnType<typeof setInterval> | null = null;
+  /** Reward-RPE readiness/degradation scanner timer. */
+  private rewardRpeReadinessTimer: ReturnType<typeof setInterval> | null = null;
   /** #941 Phase 3 prediction-reward emitter timer. Refreshes the cached
    *  prediction-error chemistry deltas every 30s; the tick loop reads
    *  the cache and adds the deltas into computeNeurochemicals inputs. */
@@ -1141,6 +1162,11 @@ export class MonkeyKernel extends EventEmitter {
   private cachedHindsightNorepinephrine = 0;
   private cachedHindsightGaba = 0;
   private cachedHindsightEndorphin = 0;
+  private rewardRateEma = 0;
+  private serotoninDispositionEma = 0;
+  private rewardRateSamples = 0;
+  private rewardRpeSigmaResidualUsdt: number | undefined;
+  private rewardRpeSigmaResidualUsdtExpiresAt = 0;
   /** Targeted-GABA bindings: pattern key (premature_close:regime:side) →
    *  decaying weight. Not folded into global GABA; executive consumption is
    *  the follow-up surface that will read this per-pattern caution. */
@@ -1372,7 +1398,7 @@ export class MonkeyKernel extends EventEmitter {
    * /monkey/snapshot dashboard so the operator can see the veto rate
    * before/after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
-  * Per-symbol counts let the operator confirm the veto is
+   * Per-symbol counts let the operator confirm the veto is
    * actually firing on ETH (the over-trader) and not unintentionally
    * suppressing BTC entries where K has been profitable.
    */
@@ -1643,6 +1669,8 @@ export class MonkeyKernel extends EventEmitter {
     // Cadence is structural (matches kernel tick × 2).
     this.residualScanTimer = startPredictionResidualJob();
     this.residualScanTimer.unref?.();
+    this.rewardRpeReadinessTimer = startRewardRpeReadinessJob();
+    this.rewardRpeReadinessTimer.unref?.();
 
     // #941 Phase 3: prediction-reward emitter. Refreshes the cached
     // chemistry delta from residual rows every 30s (half the residual
@@ -1687,6 +1715,10 @@ export class MonkeyKernel extends EventEmitter {
     if (this.residualScanTimer) {
       clearInterval(this.residualScanTimer);
       this.residualScanTimer = null;
+    }
+    if (this.rewardRpeReadinessTimer) {
+      stopRewardRpeReadinessJob();
+      this.rewardRpeReadinessTimer = null;
     }
     if (this.predictionEmitterTimer) {
       clearInterval(this.predictionEmitterTimer);
@@ -1819,8 +1851,8 @@ export class MonkeyKernel extends EventEmitter {
 
   /**
    * 2026-05-16 — L-veto-over-K telemetry accessor. Returns the running
-  * total of K entries suppressed by L's high-conviction disagreeing
-  * vote, plus per-symbol counts. Used by the /monkey/snapshot
+   * total of K entries suppressed by L's high-conviction disagreeing
+   * vote, plus per-symbol counts. Used by the /monkey/snapshot
    * endpoint and the operator dashboard to confirm the veto fires
    * after flipping `L_VETO_OVER_K_ENABLED=true`.
    *
@@ -3699,6 +3731,18 @@ export class MonkeyKernel extends EventEmitter {
         const currentRoi = positionNotional > 0
           ? unrealizedPnl / (positionNotional / Math.max(1, leverage.value))
           : undefined;
+        let heldLaneObserverFloorRoi: number | undefined;
+        let heldLaneObserverFloorPromise: Promise<number> | undefined;
+        const getHeldLaneObserverFloor = async (): Promise<number> => {
+          if (heldLaneObserverFloorRoi === undefined) {
+            heldLaneObserverFloorPromise ??= getOutcomeRingStats({
+              agent: 'K',  // executive exit path is K-scoped (see L3076 entry agent)
+              lane: heldLane as LaneType,
+            }).then((ringForHeldLane) => computeObserverLossFloorRoi(ringForHeldLane));
+            heldLaneObserverFloorRoi = await heldLaneObserverFloorPromise;
+          }
+          return heldLaneObserverFloorRoi;
+        };
         const regimeChangeStreak = state.regimeChangeStreakByLane[heldLane] ?? 0;
         const convictionFailedStreak = state.convictionFailedStreakByLane[heldLane] ?? 0;
         const directionalDisagreementStreak =
@@ -3830,81 +3874,53 @@ export class MonkeyKernel extends EventEmitter {
         // (PR #792) governs entry posture; this rule governs the symmetric
         // exit posture on held positions when the regime has degraded toward
         // preservation-mandate cells.
-        //
-        // Threshold: any positive ROI (currentRoi > 0). The cell-tightness
-        // signal is qualitative ("the regime says preserve") — once any
-        // profit exists, take it rather than risk it evaporating into the
-        // bleeding chop. This is structurally distinct from the trailing
-        // harvest (giveback-based) and stale-bleed (negative-ROI duration)
-        // gates that operate without regime context.
-        // Fee-aware floor — REGIME-2 must clear round-trip taker on the
-        // realized close (close uses MARKET, so taker on at least the
-        // exit; assume taker on both legs as conservative baseline when
-        // entry routing isn't known here). Poloniex futures taker = 0.075%
-        // notional one-side. Base threshold = notional × (2 × taker + 3bps slip).
-        //
-        // TIME-DECAY: fresh positions need full floor (prevents fee-only
-        // closes). Aged positions get a relaxed floor (prevents stuck-in-
-        // no-man's-land where a small profit sits open for 20+ minutes
-        // waiting for the full floor to clear). After REGIME_HELD_FEE_DECAY_S
-        // (default 300s = 5 min) the floor scales linearly toward 0 at
-        // REGIME_HELD_FEE_FLOOR_ZERO_S (default 900s = 15 min). User
-        // observation 2026-05-19 08:50: Agent T ETH positions held 20-30
-        // min unable to fire REGIME-2 because the full floor never cleared.
-        // Observer-derived fee/slip floor (replaces hardcoded
-        // TAKER_FEE_FRAC + FEE_SAFETY_BPS — P1 violation).
-        // Use rolling upper-tercile of observed (kernel_pnl - realized_pnl)
-        // per notional once we have MIN_SAMPLES observations; cold-start
-        // falls back to the env-tunable SAFETY_BOUND.
-        //
-        // Master toggle MONKEY_FEE_FLOOR_LIVE (default true):
-        //   true  — apply the floor (legacy fee-aware behavior)
-        //   false — floor is 0; ANY positive PnL clears the gate.
-        //
-        // Set to `false` under fee-free trading (operator's Poloniex tier
-        // pays zero on both maker and taker per CSV verification 2026-05-19).
-        // The floor was originally calibrated against ~0.18% round-trip
-        // taker fees + slip buffer; at zero fees, ANY positive ROI is net
-        // positive and the gate is just blocking legitimate small wins.
-        const feeFloorLive = process.env.MONKEY_FEE_FLOOR_LIVE !== 'false';
-        const effectiveCostFrac = !feeFloorLive ? 0 : (() => {
+        // Floor: pure observer/reward learning. REGIME-2 no longer treats
+        // "any positive" as enough, because tiny green exits can sit too
+        // close to the zero/breakdown line and teach artificial wins. It
+        // must clear the greater of:
+        //   1. rolling realized cost/slip from prior closes, and
+        //   2. the same outcome-ring loss floor used by profit harvest.
+        // Both self-relax from lived rewards; no fee-decay/operator knobs.
+        const effectiveCostFrac = (() => {
           const n = this.rollingEffectiveCostFrac.length;
-          // 2026-05-25 strip — fee-floor cold default is purely
-          // observer-derived. Cold start (n < min samples) → 0,
-          // letting chemistry learn from any fee losses naturally.
           if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return 0;
-          // Upper tercile of observed costs — conservatively assumes
-          // worst-case slip from the rolling distribution rather than
-          // the median (which would underestimate on noisy days).
           const sorted = [...this.rollingEffectiveCostFrac].sort((a, b) => a - b);
           const terciIdx = Math.min(n - 1, Math.floor(n * 0.67));
           return sorted[terciIdx] ?? 0;
         })();
-        const baseMinProfitablePnl =
-          positionNotional > 0
-            ? positionNotional * effectiveCostFrac
-            : Number.POSITIVE_INFINITY;
-        // envNumber respects 0 as "disable decay grace period" instead of
-        // falsy-defaulting to 300. Bug fixed 2026-05-19 — see envNumber helper.
-        const feeDecayStartS = envNumber('REGIME_HELD_FEE_DECAY_S', 300);
-        const feeDecayZeroS = envNumber('REGIME_HELD_FEE_FLOOR_ZERO_S', 900);
-        const decayFraction = (() => {
-          if (heldDurationS === undefined || heldDurationS <= feeDecayStartS) return 1.0;
-          if (heldDurationS >= feeDecayZeroS) return 0.0;
-          // Linear ramp from 1.0 at feeDecayStartS to 0.0 at feeDecayZeroS.
-          return 1.0 - (heldDurationS - feeDecayStartS) / (feeDecayZeroS - feeDecayStartS);
-        })();
-        const minProfitablePnl = baseMinProfitablePnl * decayFraction;
-        const profitClearsFees =
-          unrealizedPnl !== undefined && unrealizedPnl > minProfitablePnl;
+        const regimeHeldExitLive = process.env.REGIME_HELD_EXIT_LIVE === 'true';
+        let observerLossFloorRoi = 0;
+        let minProfitablePnl = Number.POSITIVE_INFINITY;
+        let regimeHeldProfit: ReturnType<typeof shouldRegimeHeldProfitExit> | undefined;
         if (
           !exitFired
-          && process.env.REGIME_HELD_EXIT_LIVE === 'true'
+          && regimeHeldExitLive
           && cellAction !== null
           && cellAction.harvestTightness === 'tight'
           && currentRoi !== undefined
           && currentRoi > 0
-          && profitClearsFees
+        ) {
+          observerLossFloorRoi = await getHeldLaneObserverFloor();
+          minProfitablePnl = computeRegimeHeldProfitFloorPnl(
+            positionNotional,
+            effectiveCostFrac,
+            observerLossFloorRoi,
+          );
+          regimeHeldProfit = shouldRegimeHeldProfitExit({
+            cellHarvestTightness: cellAction.harvestTightness,
+            currentRoi,
+            unrealizedPnlUsdt: unrealizedPnl,
+            positionNotionalUsdt: positionNotional,
+            effectiveCostFrac,
+            observerLossFloorRoi,
+          });
+        }
+        if (
+          !exitFired
+          && regimeHeldExitLive
+          && cellAction !== null
+          && currentRoi !== undefined
+          && regimeHeldProfit?.value === true
         ) {
           const roiPct = (currentRoi * 100).toFixed(3);
           const ageS = heldDurationS !== undefined ? `${heldDurationS.toFixed(0)}s` : 'unknown';
@@ -3912,8 +3928,9 @@ export class MonkeyKernel extends EventEmitter {
           reason =
             `regime_held_exit: cell ${cellAction.label}, ROI ${roiPct}% — `
             + `preservation-mandate cell + profitable position → take profit now `
-            + `(pnl=$${unrealizedPnl?.toFixed(4)} > fees=$${minProfitablePnl.toFixed(4)} `
-            + `[decay=${decayFraction.toFixed(2)} age=${ageS}])`;
+            + `(pnl=$${unrealizedPnl?.toFixed(4)} > floor=$${minProfitablePnl.toFixed(4)} `
+            + `[observerLossFloorRoi=${(observerLossFloorRoi * 100).toFixed(4)}% `
+            + `cost=${(effectiveCostFrac * 100).toFixed(4)}% age=${ageS}])`;
           exitFired = true;
           derivation.scalp = {
             exitTypeBit: 6,  // REGIME-2 regime-aware held exit
@@ -3928,6 +3945,8 @@ export class MonkeyKernel extends EventEmitter {
             cellHarvestTightness: cellAction.harvestTightness,
             currentRoi,
             unrealizedPnl,
+            observerLossFloorRoi,
+            minProfitablePnl,
           };
         } else if (cellAction !== null) {
           // Telemetry — record the would-fire condition each tick so the
@@ -3939,12 +3958,13 @@ export class MonkeyKernel extends EventEmitter {
             cellHarvestTightness: cellAction.harvestTightness,
             currentRoi: currentRoi ?? null,
             reason:
-              process.env.REGIME_HELD_EXIT_LIVE !== 'true' ? 'flag_off'
+              !regimeHeldExitLive ? 'flag_off'
               : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
               : currentRoi === undefined ? 'roi_unknown'
               : currentRoi <= 0 ? 'not_profitable'
-              : !profitClearsFees ? 'below_fee_floor'
-              : 'unknown',
+              : regimeHeldProfit?.reason ?? 'below_profit_floor',
+            observerLossFloorRoi,
+            minProfitablePnl,
           };
         }
 
@@ -4145,11 +4165,7 @@ export class MonkeyKernel extends EventEmitter {
           // is below the kernel's own observed loss-magnitude floor so
           // winners run to commensurate size. Pure observer; uses ring
           // we may have already fetched for sizing.
-          const ringForHarvest = await getOutcomeRingStats({
-            agent: 'K',  // executive harvest path is K-scoped (see L3076 entry agent)
-            lane: heldLane as LaneType,
-          });
-          const observerLossFloorRoi = computeObserverLossFloorRoi(ringForHarvest);
+          const observerLossFloorRoi = await getHeldLaneObserverFloor();
           const harvest = shouldProfitHarvest(
             unrealizedPnl,
             lanePeak,
@@ -6270,6 +6286,108 @@ export class MonkeyKernel extends EventEmitter {
       logger.debug('[Monkey] decision insert failed (fail-soft)', {
         err: err instanceof Error ? err.message : String(err),
       });
+    }
+
+    // Issue #710 — K-shadow parity fanout.
+    // Fire-and-forget: call Python's /monkey/k-shadow/tick with the same
+    // inputs TS just decided on, and persist both decisions to
+    // kernel_parity_log so the cutover gate can measure parity.
+    // Passing `kappa: state.kappa` seeds Python's ephemeral state at the
+    // LIVE TS kappa, preventing py_kappa from pinning at the cold-start
+    // EMA plateau (~64.11, issue #710).
+    // Never blocks the TS tick — all errors are soft-fails.
+    if (isKShadowEnabled()) {
+      const tickId = randomUUID();
+      const symbolTimestamp = ohlcv.length > 0
+        ? new Date(ohlcv[ohlcv.length - 1].timestamp * 1000).toISOString()
+        : new Date().toISOString();
+      const tsDecisionMs = Date.now();
+      // Derive ts_side from the TS geometric direction (mirrors Python response side).
+      const tsSide: 'long' | 'short' | null =
+        direction === 'long' || direction === 'short' ? direction : null;
+      // Map dominant regimeWeight to ordinal for parity comparison:
+      //   quantum=0, equilibrium=1, efficient=2.
+      // Ties default to the first-matched channel (quantum→0) — an intentional
+      // deterministic tie-break that mirrors the Python _regime_to_ordinal
+      // fallback. Ties are extremely rare in practice (three floating-point
+      // weights rarely collide), and the parity-log delta_kappa column is the
+      // meaningful signal, not the regime ordinal alone.
+      const rw = regimeWeights as { quantum: number; efficient: number; equilibrium: number };
+      const rwMax = Math.max(rw.quantum, rw.efficient, rw.equilibrium);
+      const tsR: 0 | 1 | 2 | null =
+        rw.quantum === rwMax ? 0
+        : rw.equilibrium === rwMax ? 1
+        : rw.efficient === rwMax ? 2
+        : null;
+
+      void (async () => {
+        let pyResp: KShadowTickResponse | null = null;
+        let pyError: string | null = null;
+        try {
+          pyResp = await callKShadowTick({
+            instance_id: this.instanceId,
+            inputs: {
+              symbol,
+              ohlcv: ohlcv.map((c) => ({
+                timestamp: c.timestamp,
+                open: c.open,
+                high: c.high,
+                low: c.low,
+                close: c.close,
+                volume: c.volume,
+              })),
+              account: {
+                equity_fraction: equityFraction,
+                margin_fraction: marginFraction,
+                open_positions: typeof openPositions === 'number' ? openPositions : 0,
+                available_equity: availableEquity,
+                exchange_held_side: exchangeHeldSide ?? null,
+              },
+              bank_size: bankSize,
+              sovereignty,
+              max_leverage: maxLevBoundary,
+              min_notional: minNotional,
+              size_fraction: effectiveSizeFraction,
+            },
+            kappa: state.kappa,
+          });
+          if (pyResp.error) {
+            pyError = pyResp.error;
+          }
+        } catch (fetchErr) {
+          pyError = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        }
+
+        try {
+          await pool.query(
+            `INSERT INTO kernel_parity_log
+               (tick_id, symbol, symbol_timestamp,
+                ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R, ts_regime, ts_decision_ms,
+                py_action, py_side, py_phi, py_kappa, py_kappa_cold, py_M, py_Gamma, py_R, py_regime, py_decision_ms,
+                py_error)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+            [
+              tickId, symbol, symbolTimestamp,
+              action, tsSide, phi, state.kappa, null, bv, tsR, regimeReading.regime, tsDecisionMs,
+              pyResp && !pyResp.error ? pyResp.action : null,
+              pyResp && !pyResp.error ? pyResp.side : null,
+              pyResp && !pyResp.error ? pyResp.phi : null,
+              pyResp && !pyResp.error ? pyResp.kappa : null,
+              pyResp && !pyResp.error ? (pyResp.kappa_cold ?? null) : null,
+              pyResp && !pyResp.error ? pyResp.M : null,
+              pyResp && !pyResp.error ? pyResp.Gamma : null,
+              pyResp && !pyResp.error ? pyResp.R : null,
+              pyResp && !pyResp.error ? pyResp.regime : null,
+              pyResp ? pyResp.decided_at_ms : null,
+              pyError,
+            ],
+          );
+        } catch (dbErr) {
+          logger.debug('[Monkey] k-shadow parity log insert failed (fail-soft)', {
+            err: dbErr instanceof Error ? dbErr.message : String(dbErr),
+          });
+        }
+      })();
     }
 
     // Identity crystallization (§3.4 Pillar 3): after 50 ticks, start
@@ -10150,12 +10268,58 @@ export class MonkeyKernel extends EventEmitter {
       // Push an authoritative reward event using the real Polo realized value.
       // This makes the reward channel consume autonomous_trades.pnl (now = Polo realized).
       // LIVED ONLY 5: this 'polo_authoritative_close' path carries explicit provenance and will receive hard asserts in pushReward.
+      let predictedPnlFrac: number | undefined;
+      let sigmaResidual: number | undefined;
+      const sideSign: -1 | 1 = side === 'long' ? 1 : -1;
+      const symState = this.symbolStates.get(symbol);
+      const lastExp = symState?.lastExpectation ?? null;
+      const warpExpectationSign: -1 | 0 | 1 =
+        lastExp?.direction === 'long' ? 1 : lastExp?.direction === 'short' ? -1 : 0;
+      const warpConfidence = Math.max(0, Math.min(1, lastExp?.confidence ?? 0));
+      const legibility = warpExpectationSign === sideSign ? warpConfidence : 0;
+      const coherence = Math.max(0, symState?.coherenceStreak ?? 0);
+      const regimePersistence = coherence / (coherence + 1);
+      try {
+        let sigmaUsdt = this.rewardRpeSigmaResidualUsdt;
+        const now = Date.now();
+        if (now >= this.rewardRpeSigmaResidualUsdtExpiresAt) {
+          const sigmaRes = await pool.query<{ sigma_usdt: string | number | null }>(
+            `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(residual_usdt)) AS sigma_usdt
+               FROM kernel_outcome_residuals
+              WHERE evaluated_at >= NOW() - INTERVAL '24 hours'`,
+          );
+          const queriedSigmaUsdt = Number(sigmaRes.rows[0]?.sigma_usdt ?? NaN);
+          this.rewardRpeSigmaResidualUsdtExpiresAt = now + REWARD_RPE_SIGMA_CACHE_TTL_MS;
+          if (Number.isFinite(queriedSigmaUsdt) && queriedSigmaUsdt > 0) {
+            sigmaUsdt = queriedSigmaUsdt;
+            this.rewardRpeSigmaResidualUsdt = sigmaUsdt;
+          } else {
+            sigmaUsdt = undefined;
+            this.rewardRpeSigmaResidualUsdt = undefined;
+          }
+        }
+        if (sigmaUsdt !== undefined && Number.isFinite(sigmaUsdt) && sigmaUsdt > 0 && marginUsdt > 0) {
+          sigmaResidual = sigmaUsdt / marginUsdt;
+          if (warpExpectationSign !== 0 && warpConfidence > 0) {
+            predictedPnlFrac = warpExpectationSign * warpConfidence * sigmaResidual;
+          }
+        }
+      } catch (err) {
+        logger.warn('[Monkey] reward-rpe context sigma query failed (fail-closed)', {
+          symbol,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
       this.pushReward({
         source: 'polo_authoritative_close',
         symbol,
         realizedPnlUsdt: poloRealized,
         marginUsdt, // #992: realistic scale so TS + Py observer_fib see correct pnl_frac
         kappaAtExit: undefined,
+        predictedPnlFrac,
+        sigmaResidual,
+        legibility,
+        regimePersistence,
       });
       // #1009 PR2: HEART chain observer fed from the polo-authoritative
       // close surface. Mirror of `pushReward({source: 'polo_authoritative_close'})`
@@ -10217,6 +10381,10 @@ export class MonkeyKernel extends EventEmitter {
         realizedPnlUsdt: poloRealized,
         marginUsdt, // #992: correct scale for Py autonomic observer_fib + NC
         kappaAtExit: undefined,
+        predictedPnlFrac,
+        sigmaResidual,
+        legibility,
+        regimePersistence,
       });
     } catch (err) {
       // Promoted from debug → warn 2026-05-28: silent debug suppressed the
@@ -10248,6 +10416,10 @@ export class MonkeyKernel extends EventEmitter {
     realizedPnlUsdt: number;
     marginUsdt: number;
     kappaAtExit?: number;
+    predictedPnlFrac?: number;
+    sigmaResidual?: number;
+    legibility?: number;
+    regimePersistence?: number;
     /** Which agent generated the outcome. Defaults to 'K' for
      *  back-compat with pre-2026-05-16 callsites that didn't pass it. */
     agent?: AgentLabel;
@@ -10365,10 +10537,10 @@ export class MonkeyKernel extends EventEmitter {
       if (symState.pnlFracHistory.length > 200) symState.pnlFracHistory.shift();
     }
     const oceanCoeff = observerFibCoefficient(pnlFrac, symState ? symState.pnlFracHistory : []);
-    const dop = pnlFrac > 0
+    const legacyDop = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.5 * oceanCoeff
       : -Math.tanh(-pnlFracNormalized) * 0.1;
-    const ser = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 * oceanCoeff : 0;
+    const legacySer = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 * oceanCoeff : 0;
 
     // κ-proximity width: observer-derived from the rolling distribution
     // of kappaAtExit values across recent rewards. Replaces the magic
@@ -10405,9 +10577,75 @@ export class MonkeyKernel extends EventEmitter {
         kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - KAPPA_STAR));
       }
     }
-    const endo = pnlFrac > 0
+    const legacyEndo = pnlFrac > 0
       ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim * oceanCoeff
       : 0;
+    const rewardRpeLive = isRewardRpeLiveEnabled();
+    this.rewardRateSamples += 1;
+    const emaAlpha = 2 / (Math.min(this.rewardRateSamples, 200) + 1);
+    const rewardRateSample = input.realizedPnlUsdt > 0 ? 1 : 0;
+    this.rewardRateEma = ((1 - emaAlpha) * this.rewardRateEma) + (emaAlpha * rewardRateSample);
+    const tonicBaseline = Math.max(1e-9, this.rewardRateEma);
+    if (typeof input.regimePersistence === 'number' && Number.isFinite(input.regimePersistence)) {
+      const rp = Math.max(0, Math.min(1, input.regimePersistence));
+      this.serotoninDispositionEma = ((1 - emaAlpha) * this.serotoninDispositionEma) + (emaAlpha * rp);
+    }
+    const proposed = rewardRpeDeltas({
+      pnlFrac,
+      predictedPnlFrac: Number(input.predictedPnlFrac),
+      sigmaResidual: Number(input.sigmaResidual),
+      tonicBaseline,
+      serotoninDisposition: Math.max(1e-9, this.serotoninDispositionEma),
+      legibility: Number(input.legibility ?? 0),
+    });
+    const rewardRpePayload = {
+      ts: new Date().toISOString(),
+      source: input.source,
+      substrate: 'ts',
+      symbol: input.symbol,
+      realized_pnl_frac: pnlFrac,
+      predicted_pnl_frac: Number(input.predictedPnlFrac),
+      sigma_residual: Number(input.sigmaResidual),
+      phasic_rpe: proposed.phasicRpe,
+      legibility: Number(input.legibility ?? 0),
+      regime: null,
+      regime_persisted: input.regimePersistence,
+      valid: proposed.valid,
+      legacy_dop: legacyDop,
+      legacy_ser: legacySer,
+      legacy_endo: legacyEndo,
+      proposed_dop: proposed.dopamineDelta,
+      proposed_ser: proposed.serotoninDelta,
+      proposed_endo: proposed.endorphinDelta,
+      tonic_baseline: tonicBaseline,
+    };
+    logger.info(`[${this.label}] reward-rpe live`, rewardRpePayload);
+    void ingestRewardRpeLive(rewardRpePayload);
+    if (!proposed.valid) {
+      logger.info(`[${this.label}] reward-rpe live zero-delta (invalid prediction/residual)`, {
+        source: input.source,
+        symbol: input.symbol,
+      });
+    }
+    const rewardRpeTonicOnly = rewardRpeLive && getRewardRpeReadinessTelemetry().liveDegradationFlagged;
+    let dop = legacyDop;
+    let ser = legacySer;
+    let endo = legacyEndo;
+    if (rewardRpeLive) {
+      if (rewardRpeTonicOnly) {
+        dop = tonicBaseline;
+        ser = 0;
+        endo = 0;
+      } else if (proposed.valid) {
+        dop = proposed.dopamineDelta;
+        ser = proposed.serotoninDelta;
+        endo = proposed.endorphinDelta;
+      } else {
+        dop = legacyDop;
+        ser = legacySer;
+        endo = legacyEndo;
+      }
+    }
 
     this.pendingRewards.push({
       source: input.source,

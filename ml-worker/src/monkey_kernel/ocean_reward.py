@@ -59,8 +59,8 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
     Replaces the external hardcoded 1% Fib floor (never fired at real
     kernel scale ~0.04% MAD). Uses own realized pnl_frac distribution
     (exact median + MAD from motivators.py transcendence block).
-    Positive deviation from own history now yields positive chemistry.
-    Cold-start or non-positive deviation -> 0. Structural (no knob).
+    Deviation magnitude from own history maps to the structural Fib tiers.
+    Cold-start positive pnl still yields gentle tier-1 ramp-up.
     """
     import math
     _EPS = 1e-12
@@ -83,11 +83,10 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
 
     if mad < _EPS:
         return 0
-    z = (pnl_frac - median) / mad
-    if z <= 0.0:
-        return 0
+    z = max(0.0, (pnl_frac - median) / mad)
 
-    # Structural mapping (positive z-deviation → Fib tiers)
+    # Structural mapping (positive z-deviation → Fib tiers; one-sided so
+    # below-median wins get min tier-1, not magnitude-scaled same as above)
     if z < 0.5: return 1
     if z < 1.0: return 2
     if z < 1.5: return 3
@@ -96,6 +95,54 @@ def observer_fib_coefficient(pnl_frac: float, history: list[float]) -> int:
     if z < 4.0: return 13
     if z < 5.0: return 21
     return 34
+
+
+def reward_rpe_deltas(
+    *,
+    pnl_frac: float,
+    predicted_pnl_frac: float,
+    sigma_residual: float,
+    tonic_baseline: float,
+    serotonin_disposition: float,
+    legibility: float,
+) -> dict[str, float]:
+    """Prediction-error reward chemistry transform.
+
+    Structural-only transform:
+      dopamine      = tonic + tanh(RPE)
+      norepinephrine= tanh(|RPE|)
+      acetylcholine = tanh(|RPE|) * legibility
+      serotonin     = slow disposition (externally updated EMA input)
+      endorphin     = relief on better-than-predicted bad outcomes
+    """
+    if not all(
+        isinstance(v, (int, float)) and math.isfinite(v)
+        for v in (
+            pnl_frac,
+            predicted_pnl_frac,
+            sigma_residual,
+            tonic_baseline,
+            serotonin_disposition,
+            legibility,
+        )
+    ):
+        return {"valid": 0.0}
+    sigma = max(abs(float(sigma_residual)), 1e-12)
+    rpe = (float(pnl_frac) - float(predicted_pnl_frac)) / sigma
+    abs_rpe = abs(rpe)
+    leg = max(0.0, min(1.0, float(legibility)))
+    ser = max(0.0, min(1.0, float(serotonin_disposition)))
+    better_than_predicted = max(0.0, float(pnl_frac) - float(predicted_pnl_frac))
+    relief = better_than_predicted if predicted_pnl_frac < 0.0 else 0.0
+    return {
+        "valid": 1.0,
+        "phasic_rpe": float(rpe),
+        "dopamine_delta": float(float(tonic_baseline) + math.tanh(rpe)),
+        "norepinephrine_delta": float(math.tanh(abs_rpe)),
+        "acetylcholine_delta": float(math.tanh(abs_rpe) * leg),
+        "serotonin_delta": float(ser),
+        "endorphin_delta": float(math.tanh(relief)),
+    }
 
 
 def observer_fibonacci_reward_tier(pnl_frac: float, history: list[float] | None = None) -> int:
@@ -168,6 +215,7 @@ __all__ = [
     "observer_fib_coefficient",
     "fibonacci_reward_tier",
     "observer_fibonacci_reward_tier",
+    "reward_rpe_deltas",
     "TRAIL_TIERS",
     "ocean_trail_retracement",
     "ocean_trail_tier_index",

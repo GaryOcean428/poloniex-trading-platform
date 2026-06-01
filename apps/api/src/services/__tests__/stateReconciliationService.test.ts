@@ -101,7 +101,7 @@ describe('stateReconciliationService ghost recovery', () => {
     expect(publishMock).not.toHaveBeenCalled();
   });
 
-  // ── Flag ON: external close fires exactly one bills-authoritative reward ───
+  // ── External-close reward: fires exactly one bills-authoritative reward ──
   it('publishes exactly one external-close reward with the bills magnitude', async () => {
     const entryMs = Date.parse('2026-05-27T08:02:13Z');
     // Two PNL bill rows in the close window → Σ = −1.5 (authoritative).
@@ -160,7 +160,7 @@ describe('stateReconciliationService ghost recovery', () => {
     expect(ev.payload.marginUsdt).not.toBe(5);
   });
 
-  // ── Flag ON but real margin unavailable → decline (decline-over-guess) ────
+  // ── Real margin unavailable → decline (decline-over-guess) ──────────────
   it('declines (no publish) when leverage is missing → real margin unavailable', async () => {
     const entryMs = Date.parse('2026-05-27T08:02:13Z');
     getAccountBillsMock.mockResolvedValue([
@@ -204,7 +204,7 @@ describe('stateReconciliationService ghost recovery', () => {
     expect(publishMock).not.toHaveBeenCalled();
   });
 
-  // ── Flag ON: a kernel-own late close is NOT double-rewarded ───────────────
+  // ── A kernel-own late close is NOT double-rewarded ───────────────────────
   it('does NOT reward a kernel-own late-landing close (post_close_race)', async () => {
     const entryMs = Date.parse('2026-05-27T08:02:13Z');
     getAccountBillsMock.mockResolvedValue([

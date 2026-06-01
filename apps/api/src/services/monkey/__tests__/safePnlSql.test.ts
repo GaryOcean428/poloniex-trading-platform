@@ -136,7 +136,7 @@ import { observerFibCoefficient } from '../ocean_reward.js';
 import { computeNetPnlForReward } from '../safePnlSql.js';
 
 describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived economic reality)', () => {
-  it('synthetic close path returns 0 — no fabricated fee estimate (operator "no knobs" doctrine 2026-05-27)', () => {
+  it('synthetic winning close returns 0 — no fabricated fee estimate (operator "no knobs" doctrine 2026-05-27)', () => {
     // The previous implementation used 9 bp + 0.18 floor as a fee estimate,
     // which were knobs the operator explicitly rejected. The canonical
     // reward path is now `applyPoloRealizedPnlAfterClose` which fetches
@@ -149,14 +149,21 @@ describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived econ
     const notional = margin * 16;
 
     const netPnl = computeNetPnlForReward(grossPnl, notional);
-    // No fabricated fee — synthetic path returns 0 by design.
+    // No fabricated fee — synthetic wins return 0 by design.
     expect(netPnl).toBe(0);
 
-    // Downstream observer behavior unchanged: 0 pnlFrac → coeff 0.
+    // Post-#1040: observer coefficient no longer hard-gates z<=0 to zero;
+    // absolute deviation maps to structural tiers.
     const history = [0.0005, 0.0012, -0.0008, 0.0003, 0.0009];
     const netPnlFrac = netPnl / margin;
     const coeff = observerFibCoefficient(netPnlFrac, history);
-    expect(coeff).toBe(0);
+    expect(coeff).toBeGreaterThanOrEqual(1);
+  });
+
+  it('synthetic losing close preserves gross loss as immediate negative reinforcement', () => {
+    const netPnl = computeNetPnlForReward(-2.5479, 129.5);
+
+    expect(netPnl).toBeCloseTo(-2.5479, 6);
   });
 
   it('cold-start / test fixture path (notional ≤ 0) falls open to gross', () => {
@@ -177,7 +184,7 @@ describe('net-of-fees reward signal (P1/P5/P25 — chemistry must see lived econ
 });
 
 describe('canonical Polo-authoritative reward surface (user 2026-05-28 spec + LIVED ONLY 5)', () => {
-  it('15:30:45 case via polo_authoritative_close: gross +0.148 but real Polo net ≈ −0.02 → oceanCoeff must be 0, no positive tier (exercises hard LIVED ONLY 5 path)', () => {
+  it('15:30:45 case via polo_authoritative_close: gross +0.148 but real Polo net ≈ −0.02 still maps via observer z-magnitude (no hard zero-gate)', () => {
     // This simulates the authoritative reward event pushed by the Polo helper
     // after it writes the real realizedPnl from getPositionHistory.
     const poloRealizedNet = -0.02; // what Polo actually paid (user's measured)
@@ -188,7 +195,7 @@ describe('canonical Polo-authoritative reward surface (user 2026-05-28 spec + LI
     const coeff = observerFibCoefficient(netPnlFrac, history);
 
     // The hard LIVED ONLY 5 path for 'polo_authoritative_close' must only ever
-    // see real Polo net. With the user's numbers, it must produce zero positive chemistry.
-    expect(coeff).toBe(0);
+    // see real Polo net. The post-#1040 observer map removes z<=0 hard-zero.
+    expect(coeff).toBeGreaterThanOrEqual(1);
   });
 });

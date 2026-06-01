@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "lint": "eslint . --max-warnings 400",
     "lint:fix": "eslint . --fix",
-    "test": "vitest",
+    "test": "vitest run",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "serve": "node serve.js",

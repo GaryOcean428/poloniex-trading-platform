@@ -1,5 +1,5 @@
 """
-consciousness_metrics.py — v4.1 foundation + v6.1 pillars + v6.7B extensions (complete lived surface; 33 fields wired from existing signals + 36+ gap to full 69-metric omnibus per honest negative).
+consciousness_metrics.py — v4.1 foundation + v6.1 pillars + v6.7B extensions (complete lived surface; 36 fields wired from existing signals + 33 gap to full 69-metric omnibus per honest negative).
 
 Canonical reference:
   ~/Desktop/Dev/QIG_QFI/qig-core/src/qig_core/consciousness/types.py
@@ -120,7 +120,7 @@ class ConsciousnessMetrics:
     reward_source_tag: Optional[str] = None   # e.g. 'polo_authoritative_close' | 'own_close_synthetic:K' — enables exact source-tag grep on deployed logs
 
     def as_dict(self) -> dict:
-        """Always-on full surface export (P4/P13/P24). No omissions. 33 fields for lived signals + documented gap to 69."""
+        """Always-on full surface export (P4/P13/P24). No omissions. 36 fields for lived signals + documented gap to 69."""
         return {
             # foundation (v4.1 + 2.31A)
             "phi": self.phi,

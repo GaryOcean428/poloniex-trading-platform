@@ -105,9 +105,20 @@ describe('rollingExpectancy', () => {
 
 describe('expectancyLiveEnabled — canonical (no gate)', () => {
   it('is always on, regardless of env', () => {
-    expect(expectancyLiveEnabled({})).toBe(true);
-    expect(expectancyLiveEnabled({ MONKEY_ROTATION_EXPECTANCY_LIVE: 'false' })).toBe(true);
-    expect(expectancyLiveEnabled({ MONKEY_ROTATION_EXPECTANCY_LIVE: 'true' })).toBe(true);
+    expect(expectancyLiveEnabled()).toBe(true);
+    const _orig = process.env.MONKEY_ROTATION_EXPECTANCY_LIVE;
+    try {
+      process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = '******';
+      expect(expectancyLiveEnabled()).toBe(true);
+      process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = 'true';
+      expect(expectancyLiveEnabled()).toBe(true);
+    } finally {
+      if (_orig !== undefined) {
+        process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = _orig;
+      } else {
+        delete process.env.MONKEY_ROTATION_EXPECTANCY_LIVE;
+      }
+    }
   });
 });
 

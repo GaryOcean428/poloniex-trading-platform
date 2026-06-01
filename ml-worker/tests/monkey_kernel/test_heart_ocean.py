@@ -37,7 +37,7 @@ class TestHeartColdStart:
     def test_empty_returns_anchor_mode(self) -> None:
         h = HeartMonitor().read()
         assert h.mode == "ANCHOR"
-        assert h.kappa == KAPPA_STAR
+        assert h.kappa == KAPPA_STAR()
         assert h.kappa_offset == 0.0
         assert h.hrv == 0.0
         assert h.sample_count == 0
@@ -55,7 +55,7 @@ class TestHeartMode:
         assert m.read().mode == "LOGIC"
 
     def test_kappa_at_star_yields_anchor(self) -> None:
-        m = HeartMonitor(); m.append(KAPPA_STAR, 0.0)
+        m = HeartMonitor(); m.append(KAPPA_STAR(), 0.0)
         assert m.read().mode == "ANCHOR"
 
 

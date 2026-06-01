@@ -123,11 +123,12 @@ export function computeNetPnlForReward(
   // that produces chemistry from now on.
   //
   // This function (called for the immediate synthetic-close path) now
-  // returns 0 when an authoritative Polo notional context exists — the
-  // chemistry waits for the Polo-authoritative event rather than
-  // fabricating a fee estimate. The pre-Polo synthetic push therefore
-  // produces no chemistry delta; it's a placeholder that the
-  // authoritative event will replace within seconds.
+  // suppresses synthetic WINS when an authoritative Polo notional context
+  // exists — the chemistry waits for the Polo-authoritative event rather
+  // than fabricating a fee estimate. Synthetic LOSSES remain valid lower
+  // bounds on lived net PnL (fees/funding can only make them worse), so
+  // they must keep feeding immediate negative reinforcement instead of
+  // dead-zeroing the learning channel while Polo history catches up.
   //
   // Cold-start / test fixtures (no notional → notionalUsdt ≤ 0) fall
   // open to gross so harness code that doesn't thread a notional keeps
@@ -136,7 +137,7 @@ export function computeNetPnlForReward(
   if (!Number.isFinite(notionalUsdt) || notionalUsdt <= 0) {
     return grossPnlUsdt;
   }
-  return 0;
+  return grossPnlUsdt < 0 ? grossPnlUsdt : 0;
 }
 
 /**

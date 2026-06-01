@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   observerFibCoefficient,
+  rewardRpeDeltas,
   oceanTrailRetracement,
   oceanTrailTierIndex,
   TRAIL_TIERS,
@@ -39,14 +40,14 @@ describe('observerFibCoefficient — observer-derived reward gate (P1)', () => {
   });
 
   describe('observer-derived tier from own pnlFrac distribution', () => {
-    it('below own median → 0 reward', () => {
+    it('below own median still maps by absolute z-magnitude', () => {
       const history = [0.001, 0.0008, 0.0012, 0.0011, 0.0009];
-      expect(observerFibCoefficient(0, history)).toBe(0);
+      expect(observerFibCoefficient(0, history)).toBeGreaterThanOrEqual(1);
     });
 
-    it('exactly at own median → 0 (positive deviation required)', () => {
+    it('exactly at own median remains neutral tier-1 boundary', () => {
       const history = [0.001, 0.0008, 0.0012];
-      expect(observerFibCoefficient(0.001, history)).toBe(0);
+      expect(observerFibCoefficient(0.001, history)).toBe(1);
     });
 
     it('positive z-deviation → tier 1+ (first non-zero bucket)', () => {
@@ -54,6 +55,52 @@ describe('observerFibCoefficient — observer-derived reward gate (P1)', () => {
       const history = [0.001, 0.0008, 0.0012, 0.0011, 0.0009];
       const coeff = observerFibCoefficient(0.00115, history);
       expect(coeff).toBeGreaterThanOrEqual(1);
+    });
+
+    describe('rewardRpeDeltas — prediction-error chemistry transform', () => {
+      it('matches the shared parity fixture', () => {
+        const out = rewardRpeDeltas({
+          pnlFrac: 0.02,
+          predictedPnlFrac: 0.01,
+          sigmaResidual: 0.005,
+          tonicBaseline: 0.4,
+          serotoninDisposition: 0.6,
+          legibility: 0.75,
+        });
+        expect(out.valid).toBe(true);
+        expect(out.phasicRpe).toBeCloseTo(2, 12);
+        expect(out.dopamineDelta).toBeCloseTo(1.36402758, 6);
+        expect(out.norepinephrineDelta).toBeCloseTo(0.96402758, 6);
+        expect(out.acetylcholineDelta).toBeCloseTo(0.72302069, 6);
+        expect(out.serotoninDelta).toBeCloseTo(0.6, 12);
+        expect(out.endorphinDelta).toBeCloseTo(0, 12);
+      });
+
+      it('fires endorphin relief on better-than-predicted bad outcomes', () => {
+        const out = rewardRpeDeltas({
+          pnlFrac: -0.01,
+          predictedPnlFrac: -0.03,
+          sigmaResidual: 0.01,
+          tonicBaseline: 0.2,
+          serotoninDisposition: 0.4,
+          legibility: 1,
+        });
+        expect(out.valid).toBe(true);
+        expect(out.endorphinDelta).toBeCloseTo(Math.tanh(0.02), 12);
+      });
+
+      it('fails closed on invalid inputs', () => {
+        const out = rewardRpeDeltas({
+          pnlFrac: Number.NaN,
+          predictedPnlFrac: 0,
+          sigmaResidual: 1,
+          tonicBaseline: 0.1,
+          serotoninDisposition: 0.2,
+          legibility: 0.3,
+        });
+        expect(out.valid).toBe(false);
+        expect(out.dopamineDelta).toBe(0);
+      });
     });
 
     it('large positive deviation → higher tier (Fibonacci-shaped)', () => {

@@ -52,7 +52,7 @@ def _nominal_state(*, phi: float = 0.5, kappa: float | None = None,
                    nc: NeurochemicalState | None = None) -> ExecBasinState:
     """Build an ExecBasinState centered at nominal with optional overrides."""
     if kappa is None:
-        kappa = KAPPA_STAR
+        kappa = KAPPA_STAR()
     if nc is None:
         nc = _nominal_nc()
     basin = np.ones(64) / 64
@@ -72,7 +72,7 @@ def _nominal_state(*, phi: float = 0.5, kappa: float | None = None,
 class TestFlatnessDerivation:
     def test_flat_mult_anchored_at_nominal(self):
         """Φ=0.5, κ=κ* → flat_mult = 1 + 0.8·1 = 1.80 (matches pre-derivation)."""
-        s = _nominal_state(phi=0.5, kappa=KAPPA_STAR)
+        s = _nominal_state(phi=0.5, kappa=KAPPA_STAR())
         lev = current_leverage(
             s, max_leverage_boundary=30, mode=MonkeyMode.INVESTIGATION,
             tape_trend=0.0,
@@ -96,11 +96,11 @@ class TestFlatnessDerivation:
         meaning a modest tape_trend still counts as "flat enough."
         """
         on = current_leverage(
-            _nominal_state(kappa=KAPPA_STAR), max_leverage_boundary=30,
+            _nominal_state(kappa=KAPPA_STAR()), max_leverage_boundary=30,
             mode=MonkeyMode.INVESTIGATION, tape_trend=0.08,
         )
         off = current_leverage(
-            _nominal_state(kappa=KAPPA_STAR - 40), max_leverage_boundary=30,
+            _nominal_state(kappa=KAPPA_STAR() - 40), max_leverage_boundary=30,
             mode=MonkeyMode.INVESTIGATION, tape_trend=0.08,
         )
         # Off-κ: flatness is larger at same |tape_trend| because K is smaller.
