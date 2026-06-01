@@ -497,22 +497,13 @@ export function observerConvictionStreakRequired(
   return Math.max(CONVICTION_STREAK_FLOOR, Math.min(CONVICTION_STREAK_CAP, scaled));
 }
 
-/**
- * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
- * entry-order placement only. Exit orders (scalp_exit, auto_flatten,
- * hard SL, rejust exits) are NOT gated; existing positions must close
- * cleanly during deploy/incident response. Default false (no pause).
- *
- * Reads at order-placement time (live, not cached at startup) so the
- * operator can flip the env var on Railway without redeploying.
- */
-function isTradingPaused(): boolean {
-  return process.env.MONKEY_TRADING_PAUSED === 'true';
-}
-
-function isMonkeyPaperMode(): boolean {
-  return process.env.MONKEY_PAPER_MODE === 'true';
-}
+// Kill switch + paper routing are CANONICAL on the agent_execution_mode
+// tri-state (this.executionMode, fetched per-tick from the DB). 'pause' gates
+// entry-order placement only — exits (scalp_exit, auto_flatten, hard SL, rejust
+// exits) are NOT gated so open positions close cleanly. 'paper_only' routes
+// both entries and closes to the paper book (see shouldRouteOrdersToPaper).
+// The former MONKEY_TRADING_PAUSED / MONKEY_PAPER_MODE / MONKEY_EXECUTE env
+// knobs were folded into this tri-state and removed.
 
 // ─── L-veto-over-K (Option A) ─────────────────────────────────────
 //
@@ -1470,7 +1461,9 @@ export class MonkeyKernel extends EventEmitter {
 
   /**
    * Start Monkey's heartbeat — the 60s tick that drives all live
-   * execution. MONKEY_EXECUTE gates whether ticks place real orders.
+   * execution. The agent_execution_mode tri-state (this.executionMode)
+   * gates whether ticks place real orders ('auto'), paper orders
+   * ('paper_only'), or suppress entries ('pause').
    */
   async start(): Promise<void> {
     for (const sym of this.symbols) {
@@ -1638,7 +1631,7 @@ export class MonkeyKernel extends EventEmitter {
       tickMs: this.tickMs,
       sizeFraction: this.sizeFraction,
       symbols: this.symbols,
-      mode: process.env.MONKEY_EXECUTE === 'true' ? 'EXECUTE' : 'OBSERVE',
+      mode: this.executionMode,
       bankSize: await resonanceBank.bankSize(),
       sovereignty: await resonanceBank.sovereignty(),
     });
@@ -4684,7 +4677,8 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
+    // 6b. EXECUTE — kernel always evaluates; executionMode routes the order
+    //     ('auto'=live, 'paper_only'=paper) and 'pause' suppresses entries.
     //
     // Post agent-separation (K vs M) + Turtle control arm (T): the arbiter
     // is N-agent. T is conditionally included only when account equity is
@@ -4988,17 +4982,18 @@ export class MonkeyKernel extends EventEmitter {
       reason += ` | consensus.${consensusOverride.verdict}`;
     }
 
-    if (process.env.MONKEY_EXECUTE === 'true') {
+    // Kernel always evaluates entries; 'pause' suppresses placement below and
+    // 'paper_only' routes to the paper book (executeEntry/shouldRouteOrdersToPaper).
+    {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
-        // v0.8.7 kill switch — pause new entries (including DCA pyramids)
-        // when MONKEY_TRADING_PAUSED=true on Railway. Exits remain
-        // active so open positions can close cleanly.
-        if (isTradingPaused()) {
-          reason += ' | trading_paused: MONKEY_TRADING_PAUSED=true (entry suppressed; exits unaffected)';
+        // Kill switch — 'pause' suppresses new entries (including DCA pyramids).
+        // Exits remain active so open positions can close cleanly.
+        if (this.executionMode === 'pause') {
+          reason += ' | trading_paused: executionMode=pause (entry suppressed; exits unaffected)';
           (derivation as Record<string, unknown>).tradingPausedSkipped = {
             agent: 'K',
             action,
-            reason: 'MONKEY_TRADING_PAUSED env',
+            reason: 'executionMode=pause',
           };
         } else if (lVeto?.vetoed) {
           // 2026-05-16 L-veto-over-K — high-conviction L vote suppresses
@@ -5292,14 +5287,14 @@ export class MonkeyKernel extends EventEmitter {
             delete state.directionalDisagreementStreakByLane[reversalLane];
             delete state.heldSideByLane[reversalLane];
             delete state.entryTimeMsByLane[reversalLane];
-            // v0.8.7 kill switch — close on the reverse path proceeded
+            // Kill switch — the close on the reverse path proceeded
             // (exits unaffected); skip the new-entry leg when paused.
-            if (isTradingPaused()) {
+            if (this.executionMode === 'pause') {
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | trading_paused: new ${newSide} entry suppressed`;
               (derivation as Record<string, unknown>).tradingPausedSkipped = {
                 agent: 'K',
                 action,
-                reason: 'MONKEY_TRADING_PAUSED env (reverse-reopen leg)',
+                reason: 'executionMode=pause (reverse-reopen leg)',
               };
             } else if (lVeto?.vetoed) {
               // 2026-05-16 L-veto-over-K — close already executed; the
@@ -5419,8 +5414,7 @@ export class MonkeyKernel extends EventEmitter {
         modeCanEnter: MODE_PROFILES[mode].canEnter,
         sideShortRefused,
         sizeValue: size.value,
-        executeEnabled: process.env.MONKEY_EXECUTE === 'true',
-        tradingPaused: isTradingPaused(),
+        tradingPaused: this.executionMode === 'pause',
         lVetoed: Boolean(lVeto?.vetoed),
         cappedMargin,
         entryRejectCode: kEntryRejectCode,
@@ -5452,7 +5446,7 @@ export class MonkeyKernel extends EventEmitter {
       state.recentBusEvents, 'M', state.sessionTicks,
     );
     const mRiskMod = riskModulator(state.agentStates.M);
-    if (process.env.MONKEY_EXECUTE === 'true' && arbiterAllocation.m > 0) {
+    if (arbiterAllocation.m > 0) {
       const mOpenMargin = await this.sumOpenAgentMargin(symbol, 'M');
       const mHeadroom = computeAgentHeadroom(arbiterAllocation.m, mOpenMargin);
       if (mHeadroom <= 0) {
@@ -5557,9 +5551,9 @@ export class MonkeyKernel extends EventEmitter {
         (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
         && clampedSize > 0
       ) {
-        // v0.8.7 kill switch — pause new entries from Agent M.
-        if (isTradingPaused()) {
-          logger.info('[AgentM] entry suppressed by MONKEY_TRADING_PAUSED', {
+        // Kill switch — 'pause' suppresses new entries from Agent M.
+        if (this.executionMode === 'pause') {
+          logger.info('[AgentM] entry suppressed by executionMode=pause', {
             symbol, side: mDecision.action,
           });
           (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
@@ -5614,7 +5608,8 @@ export class MonkeyKernel extends EventEmitter {
     // mid-trade — the equity gate blocks new entries / pyramids, not
     // exits.
     const tAlloc = arbiterAllocationMany.T ?? 0;
-    if (process.env.MONKEY_EXECUTE === 'true') {
+    // Kernel always evaluates Agent T entries; 'pause' suppresses placement below.
+    {
       const tState = this.turtleStates.get(symbol) ?? newTurtleState();
       const tInputs: TurtleAgentInputs = {
         symbol,
@@ -5679,10 +5674,10 @@ export class MonkeyKernel extends EventEmitter {
           || tDecision.action === 'pyramid_long'
           || tDecision.action === 'pyramid_short')
         && tDecision.sizeUsdt > 0
-        && isTradingPaused()
+        && this.executionMode === 'pause'
       ) {
         (derivation as Record<string, unknown>).agentTTradingPausedSkipped = true;
-        logger.info('[AgentT] entry suppressed by MONKEY_TRADING_PAUSED', {
+        logger.info('[AgentT] entry suppressed by executionMode=pause', {
           symbol, action: tDecision.action,
         });
       }
@@ -5692,9 +5687,9 @@ export class MonkeyKernel extends EventEmitter {
           || tDecision.action === 'pyramid_long'
           || tDecision.action === 'pyramid_short')
         && tDecision.sizeUsdt > 0
-        // v0.8.7 kill switch — pause Agent T entries (including pyramids)
-        // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
-        && !isTradingPaused()
+        // Kill switch — 'pause' suppresses Agent T entries (including pyramids).
+        // Exits below are unaffected.
+        && this.executionMode !== 'pause'
       ) {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
@@ -5840,8 +5835,7 @@ export class MonkeyKernel extends EventEmitter {
     const lRiskMod = riskModulator(state.agentStates.L);
     const lAlloc = arbiterAllocationMany.L ?? 0;
     if (
-      process.env.MONKEY_EXECUTE === 'true'
-      && lAlloc > 0
+      lAlloc > 0
       // 2026-05-13 — warmup gate bumped to match recalibrated
       // longWindow (480). 480 ticks × 30s ≈ 4h. K/M/T continue
       // trading during L's warmup.
@@ -5946,9 +5940,9 @@ export class MonkeyKernel extends EventEmitter {
         && (lDecision.action === 'enter_long' || lDecision.action === 'enter_short')
         && lAlloc > 0
       ) {
-        // v0.8.7 kill switch — pause Agent L entries.
-        if (isTradingPaused()) {
-          logger.info('[AgentL] entry suppressed by MONKEY_TRADING_PAUSED', {
+        // Kill switch — 'pause' suppresses Agent L entries.
+        if (this.executionMode === 'pause') {
+          logger.info('[AgentL] entry suppressed by executionMode=pause', {
             symbol, action: lDecision.action,
           });
           (derivation as Record<string, unknown>).agentLTradingPausedSkipped = true;
@@ -6130,10 +6124,7 @@ export class MonkeyKernel extends EventEmitter {
     //
     // Threshold default 0.003 (0.3% on aggregate notional ≈ 4-5%
     // ROI at 14× margin). Env-tunable.
-    if (
-      process.env.MONKEY_EXECUTE === 'true'
-      && !isTradingPaused()
-    ) {
+    if (this.executionMode !== 'pause') {
       try {
         await this.forceHarvestAgentLStack(symbol, lastPrice);
       } catch (err) {
@@ -8427,7 +8418,8 @@ export class MonkeyKernel extends EventEmitter {
    * veto — treat veto as the expected "she decided but kernel blocked"
    * outcome, log it, and continue the tick.
    *
-   * This is gated by process.env.MONKEY_EXECUTE='true' in loop.ts.
+   * Order placement is routed live vs paper by shouldRouteOrdersToPaper()
+   * (executionMode); 'pause' suppresses entries upstream at each agent block.
    * v0.3 order surface: market IOC, no SL/TP (managed loop covers those
    * the same way liveSignalEngine relies on it).
    */
@@ -8788,8 +8780,8 @@ export class MonkeyKernel extends EventEmitter {
     // so the `paper_only && isLiveOrder` block in checkExecutionMode could
     // NEVER fire → the kernel kept opening LIVE positions while the UI
     // showed paper (operator-MANDATE violation, confirmed in prod 06-01).
-    // `!routeToPaper` is the true "this order goes live" predicate (env
-    // MONKEY_PAPER_MODE + internal paper-rotation), captured once at the top
+    // `!routeToPaper` is the true "this order goes live" predicate
+    // (executionMode='paper_only' + internal paper-rotation), captured once at the top
     // of executeEntry so the veto and the actual routing can't diverge. The
     // veto is ENTRY-ONLY, so paper_only now blocks new LIVE ENTRIES while
     // closes of existing real positions still route real (no orphaned positions).
@@ -10786,8 +10778,8 @@ export class MonkeyKernel extends EventEmitter {
    * THE CAPITAL FIREWALL GATE. Decide whether placeOrder calls route to
    * the paper simulator instead of the real exchange. Two paths reach
    * this:
-   *   1. The global `MONKEY_PAPER_MODE=true` env (back-compat, applies
-   *      to ALL kernels — used historically for whole-kernel dry runs).
+   *   1. executionMode === 'paper_only' (the operator paper MANDATE — the
+   *      whole kernel disengages from live and trades its paper book).
    *   2. This kernel's rotation state has been demoted to 'paper'
    *      (per-kernel capital firewall — kernel_rotation.ts).
    * Either path routes the same way through `paperPlaceOrder`, so the
@@ -10815,7 +10807,6 @@ export class MonkeyKernel extends EventEmitter {
     // gating which skip live-origin positions whenever executionMode != auto.)
     return (
       this.executionMode === 'paper_only' ||
-      isMonkeyPaperMode() ||
       this.rotation.mode === 'paper'
     );
   }

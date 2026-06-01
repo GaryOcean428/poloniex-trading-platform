@@ -1,142 +1,93 @@
 /**
- * killSwitch.test.ts — v0.8.7 MONKEY_TRADING_PAUSED env var kill switch.
+ * killSwitch.test.ts — the operator kill switch on the agent_execution_mode
+ * tri-state (executionMode === 'pause').
  *
  * Gates entry-order placement only:
  *   * enter_long, enter_short
  *   * DCA pyramid adds (Agent K and Agent T)
  *   * Reverse-reopen leg (the close still proceeds)
- *   * Agent M entries
+ *   * Agent M / L entries
  *
  * Does NOT gate exit-order placement — existing positions must close
  * cleanly during deploy / incident response (scalp_exit, auto_flatten,
  * hard SL, rejust exits all proceed normally).
  *
- * Read at order-placement time (live, not cached at startup) so the
- * operator can flip the env var on Railway without redeploying.
+ * The former MONKEY_TRADING_PAUSED env var was folded into this tri-state:
+ * loop.ts reads this.executionMode (fetched per-tick from agent_execution_mode)
+ * so the operator flips it from the UI without redeploying.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-const ENV_KEY = 'MONKEY_TRADING_PAUSED';
+type ExecutionMode = 'auto' | 'paper_only' | 'pause';
 
-describe('MONKEY_TRADING_PAUSED kill switch — env var semantics', () => {
-  let savedEnv: string | undefined;
+// Mirror of the production gate: loop.ts suppresses new entries when
+// this.executionMode === 'pause'. This test pins that contract so a refactor
+// can't accidentally break the kill switch.
+const isPaused = (mode: ExecutionMode): boolean => mode === 'pause';
 
-  beforeEach(() => {
-    savedEnv = process.env[ENV_KEY];
-    delete process.env[ENV_KEY];
+describe("executionMode='pause' kill switch — mode semantics", () => {
+  it("'auto' is unpaused", () => {
+    expect(isPaused('auto')).toBe(false);
   });
 
-  afterEach(() => {
-    if (savedEnv !== undefined) {
-      process.env[ENV_KEY] = savedEnv;
-    } else {
-      delete process.env[ENV_KEY];
-    }
+  it("'paper_only' is unpaused (kernel trades its paper book)", () => {
+    expect(isPaused('paper_only')).toBe(false);
   });
 
-  // We exercise the helper isTradingPaused via an inline mirror of the
-  // semantics. The actual production helper is a module-private const
-  // in loop.ts; the contract is "process.env.MONKEY_TRADING_PAUSED ===
-  // 'true' returns true". This test pins that contract so a refactor
-  // can't accidentally break the kill switch.
-  const isTradingPaused = (): boolean =>
-    process.env[ENV_KEY] === 'true';
-
-  it('default (env unset) is unpaused', () => {
-    expect(isTradingPaused()).toBe(false);
-  });
-
-  it('"true" pauses entries', () => {
-    process.env[ENV_KEY] = 'true';
-    expect(isTradingPaused()).toBe(true);
-  });
-
-  it('"false" does not pause', () => {
-    process.env[ENV_KEY] = 'false';
-    expect(isTradingPaused()).toBe(false);
-  });
-
-  it('any other value does not pause (strict "true" comparison)', () => {
-    process.env[ENV_KEY] = '1';
-    expect(isTradingPaused()).toBe(false);
-    process.env[ENV_KEY] = 'TRUE';
-    expect(isTradingPaused()).toBe(false);
-    process.env[ENV_KEY] = 'yes';
-    expect(isTradingPaused()).toBe(false);
-  });
-
-  it('toggling at runtime takes effect immediately (not cached)', () => {
-    expect(isTradingPaused()).toBe(false);
-    process.env[ENV_KEY] = 'true';
-    expect(isTradingPaused()).toBe(true);
-    process.env[ENV_KEY] = 'false';
-    expect(isTradingPaused()).toBe(false);
-    delete process.env[ENV_KEY];
-    expect(isTradingPaused()).toBe(false);
+  it("'pause' pauses entries", () => {
+    expect(isPaused('pause')).toBe(true);
   });
 });
 
-describe('MONKEY_TRADING_PAUSED kill switch — gating contract', () => {
+describe("executionMode='pause' kill switch — gating contract", () => {
   // The kill switch contract is implemented inline in loop.ts at every
-  // entry-order placement site. These tests pin the contract by
-  // replicating the gate logic and asserting the action is
-  // suppressed / allowed correctly. The integration-level test
-  // (loop.ts processSymbol) is exercised by the live tape on Railway.
-
-  let savedEnv: string | undefined;
-  beforeEach(() => {
-    savedEnv = process.env[ENV_KEY];
-  });
-  afterEach(() => {
-    if (savedEnv !== undefined) {
-      process.env[ENV_KEY] = savedEnv;
-    } else {
-      delete process.env[ENV_KEY];
-    }
-  });
-
-  const tryEnter = (action: string, paused: boolean): { suppressed: boolean } => {
-    process.env[ENV_KEY] = paused ? 'true' : 'false';
+  // entry-order placement site. These tests pin the contract by replicating
+  // the gate logic and asserting the action is suppressed / allowed correctly.
+  // The integration-level test (loop.ts processSymbol) is exercised by the live
+  // tape on Railway.
+  const tryEnter = (action: string, mode: ExecutionMode): { suppressed: boolean } => {
     const isEntry = action === 'enter_long' || action === 'enter_short'
       || action === 'pyramid_long' || action === 'pyramid_short';
-    const suppressed = isEntry && process.env[ENV_KEY] === 'true';
-    return { suppressed };
+    return { suppressed: isEntry && mode === 'pause' };
   };
 
   it('entry actions suppressed when paused', () => {
-    expect(tryEnter('enter_long', true).suppressed).toBe(true);
-    expect(tryEnter('enter_short', true).suppressed).toBe(true);
-    expect(tryEnter('pyramid_long', true).suppressed).toBe(true);
-    expect(tryEnter('pyramid_short', true).suppressed).toBe(true);
+    expect(tryEnter('enter_long', 'pause').suppressed).toBe(true);
+    expect(tryEnter('enter_short', 'pause').suppressed).toBe(true);
+    expect(tryEnter('pyramid_long', 'pause').suppressed).toBe(true);
+    expect(tryEnter('pyramid_short', 'pause').suppressed).toBe(true);
   });
 
-  it('entry actions allowed when unpaused', () => {
-    expect(tryEnter('enter_long', false).suppressed).toBe(false);
-    expect(tryEnter('enter_short', false).suppressed).toBe(false);
-    expect(tryEnter('pyramid_long', false).suppressed).toBe(false);
-    expect(tryEnter('pyramid_short', false).suppressed).toBe(false);
+  it('entry actions allowed in auto and paper_only', () => {
+    for (const mode of ['auto', 'paper_only'] as const) {
+      expect(tryEnter('enter_long', mode).suppressed).toBe(false);
+      expect(tryEnter('enter_short', mode).suppressed).toBe(false);
+      expect(tryEnter('pyramid_long', mode).suppressed).toBe(false);
+      expect(tryEnter('pyramid_short', mode).suppressed).toBe(false);
+    }
   });
 
-  it('exit actions never suppressed (regardless of pause state)', () => {
+  it('exit actions never suppressed (regardless of mode)', () => {
     // The contract: scalp_exit / auto_flatten / exit_stop / exit_donchian
-    // / hard_sl / rejust_exit / override_reverse all flow through their
-    // own close paths which the kill switch does NOT gate.
-    expect(tryEnter('scalp_exit', true).suppressed).toBe(false);
-    expect(tryEnter('scalp_exit', false).suppressed).toBe(false);
-    expect(tryEnter('auto_flatten', true).suppressed).toBe(false);
-    expect(tryEnter('exit_stop', true).suppressed).toBe(false);
-    expect(tryEnter('exit_donchian', true).suppressed).toBe(false);
+    // / hard_sl / rejust_exit / override_reverse all flow through their own
+    // close paths which the kill switch does NOT gate.
+    for (const mode of ['auto', 'paper_only', 'pause'] as const) {
+      expect(tryEnter('scalp_exit', mode).suppressed).toBe(false);
+      expect(tryEnter('auto_flatten', mode).suppressed).toBe(false);
+      expect(tryEnter('exit_stop', mode).suppressed).toBe(false);
+      expect(tryEnter('exit_donchian', mode).suppressed).toBe(false);
+    }
   });
 
   it('reverse close proceeds, reopen leg suppressed when paused', () => {
-    // The reverse path is two-phase: close (always proceeds) then
-    // reopen (gated). The contract surfaces "trading_paused: new <side>
-    // entry suppressed" in the reason string when paused.
-    process.env[ENV_KEY] = 'true';
+    // The reverse path is two-phase: close (always proceeds) then reopen
+    // (gated). The contract surfaces "trading_paused: new <side> entry
+    // suppressed" in the reason string when paused.
     const action = 'reverse_long';
+    const mode: ExecutionMode = 'pause';
     const closeFires = action === 'reverse_long' || action === 'reverse_short';
-    const reopenSuppressed = (action === 'reverse_long' || action === 'reverse_short')
-      && process.env[ENV_KEY] === 'true';
+    const reopenSuppressed =
+      (action === 'reverse_long' || action === 'reverse_short') && mode === 'pause';
     expect(closeFires).toBe(true);
     expect(reopenSuppressed).toBe(true);
   });

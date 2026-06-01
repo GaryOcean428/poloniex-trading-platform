@@ -38,8 +38,7 @@ import { logger } from '../../utils/logger.js';
  *   mode           — mode profile blocks entry
  *   short_refused  — short side while MONKEY_SHORTS_LIVE=false
  *   min_notional   — sized below the exchange minimum notional
- *   observe_only   — MONKEY_EXECUTE != true
- *   trading_paused — MONKEY_TRADING_PAUSED kill switch
+ *   trading_paused — executionMode === 'pause' (operator kill switch)
  *   l_veto         — agent L vetoed K's entry
  *   arbiter_zero   — K's arbiter capital share was zero
  *   exec:<code>    — executeEntry rejected (margin headroom, funding…)
@@ -58,8 +57,7 @@ export interface GateFacts {
   sideShortRefused: boolean;
   /** Derived entry margin before capping. <= 0 means below min notional. */
   sizeValue: number;
-  /** MONKEY_EXECUTE === 'true'. */
-  executeEnabled: boolean;
+  /** executionMode === 'pause' (the operator kill switch). */
   tradingPaused: boolean;
   lVetoed: boolean;
   /** K margin after the arbiter share cap × chop size factor. */
@@ -80,7 +78,6 @@ export function resolveEntryGate(f: GateFacts): EntryGate {
   if (!f.modeCanEnter) return 'mode';
   if (f.sideShortRefused) return 'short_refused';
   if (f.sizeValue <= 0) return 'min_notional';
-  if (!f.executeEnabled) return 'observe_only';
   if (f.tradingPaused) return 'trading_paused';
   if (f.lVetoed) return 'l_veto';
   if (f.cappedMargin <= 0) return 'arbiter_zero';
