@@ -283,7 +283,7 @@ class AutonomicKernel:
             "serotonin_delta": 0.0,
             "n": 0.0,
         }
-        # 2026-05-29 hindsight (MONKEY_HINDSIGHT_REGRET_LIVE — DESIGN HYPOTHESIS).
+        # 2026-05-29 hindsight (CANONICAL — always on).
         # The legibility-gated counterfactual-regret NT vector resolved on the
         # TS side (loop.ts owns the watches) is fanned out here so the Py
         # chemistry surface (which drives executive sizing + survives restarts)

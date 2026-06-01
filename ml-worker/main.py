@@ -1132,8 +1132,8 @@ async def monkey_autonomic_prediction_reward(request: Request):
 
 @app.post("/monkey/autonomic/hindsight")
 async def monkey_autonomic_hindsight(request: Request):
-    """Push the resolved hindsight NT vector (MONKEY_HINDSIGHT_REGRET_LIVE —
-    DESIGN HYPOTHESIS). The legibility-gated counterfactual-regret signal is
+    """Push the resolved hindsight NT vector (hindsight is CANONICAL — always
+    on). The legibility-gated counterfactual-regret signal is
     resolved TS-side (loop.ts owns the watches); this fans the decayed E6 NT
     deltas to the Py chemistry surface so it stays in parity. REPLACES (does
     not append); non-GABA channels fold additively into chemistry on each

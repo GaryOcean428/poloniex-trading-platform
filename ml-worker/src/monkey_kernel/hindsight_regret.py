@@ -4,10 +4,10 @@ Python parity for apps/api/src/services/monkey/hindsightRegret.ts. Identical
 formula, derivation, source labels, and fail-closed behaviour. See the TS
 module's header for the full design rationale; this docstring summarises.
 
-DESIGN HYPOTHESIS (operator-approved redesign of PR #1038, 2026-05-29),
-flag-gated OFF (MONKEY_HINDSIGHT_REGRET_LIVE), for operator review — NOT a
-finished truth. Replaces the rejected v1 (fixed 30-min window + fixed dopamine
-caps + best-favourable-excursion + dopamine-only pain).
+Operator-approved redesign of PR #1038 (2026-05-29). CANONICAL — always on
+(the former MONKEY_HINDSIGHT_REGRET_LIVE gate was removed). Replaces the
+rejected v1 (fixed 30-min window + fixed dopamine caps + best-favourable-
+excursion + dopamine-only pain).
 
 The signal is a legibility-gated counterfactual PREDICTION ERROR scaled by the
 kernel's OWN outcome distribution (median+MAD z-score — the observer scale
@@ -336,10 +336,9 @@ def resolve_hindsight(
     )
 
 
-def is_hindsight_regret_live() -> bool:
-    """Hindsight regret is CANONICAL — always on. Not a knob; built to be used.
-    (Was gated behind MONKEY_HINDSIGHT_REGRET_LIVE; gate removed 2026-05-30.)"""
-    return True
+# Hindsight regret is CANONICAL — always on. Not a knob; built to be used.
+# The former MONKEY_HINDSIGHT_REGRET_LIVE env gate (an always-true wrapper) was
+# removed entirely; no production code path was ever conditional on it.
 
 
 __all__ = [
@@ -355,5 +354,4 @@ __all__ = [
     "derive_magnitude",
     "gaba_target_key",
     "resolve_hindsight",
-    "is_hindsight_regret_live",
 ]
