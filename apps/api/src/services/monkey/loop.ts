@@ -173,6 +173,12 @@ import {
   type RegimeReading,
 } from './regime.js';
 import {
+  getCellActionLabel as getRegimeCellActionLabel,
+  getRegimeAuthority,
+  phaseSuppressEntry,
+  type RegimeAuthority,
+} from './regime_authority.js';
+import {
   detectStrongest as detectStrongestCandlePattern,
   hammerAgainstLongSl,
   patternSignalScalar,
@@ -252,7 +258,10 @@ import {
   type BtcBeaconReading,
 } from './btc_beacon.js';
 import { recordLaneOutcome, weightedWinRate } from './time_of_day_winrate.js';
-import { observeFundingArb } from './funding_arb_observer.js';
+import {
+  observeFundingArbWithReturns,
+  type FundingArbReading,
+} from './funding_arb_observer.js';
 import { observeLiquidationCascade } from './liquidation_cascade_observer.js';
 import {
   evaluateCell,
@@ -306,6 +315,15 @@ import { isFeatureEnabled } from './feature_flags.js';
 
 /** Entry modifier safety cap — maximum entry threshold adjustment from any single signal. P25 safety bound. */
 const ENTRY_MODIFIER_SAFETY_CAP = 0.15;
+
+/**
+ * ARBL = Arb-Leg safety cap.
+ * Maximum fraction of available equity allocated to the funding-arb
+ * paired position (both legs combined). P25 safety bound — hardcoded
+ * because it is a structural exposure ceiling, not an operational threshold.
+ * No knob; operator cannot tune this via UI.
+ */
+const ARBL_POSITION_SAFETY_CAP = 0.10;
 
 /** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -1322,6 +1340,29 @@ export class MonkeyKernel extends EventEmitter {
     string,
     { rate: number; atMs: number; nextFundingTimeMs?: number }
   > = new Map();
+  /**
+   * Latest mark price per symbol — populated at the start of each
+   * processSymbol tick. Consumed by the funding-arb execution block
+   * (BTC tick) when it needs the ETH price to size the ETH leg.
+   */
+  private latestMarkPriceBySymbol: Map<string, number> = new Map();
+  /**
+   * Active funding-arb paired position (#794 Class B #7).
+   * Set when a BTC/ETH paired entry is placed; cleared when the pair
+   * is exited (gap closed / timeout / drawdown). Only one arb position
+   * is held at a time.
+   */
+  private activeFundingArbPosition: {
+    direction: 'long_btc_short_eth' | 'short_btc_long_eth';
+    entryGap: number;
+    entryZScore: number;
+    openAtMs: number;
+    btcEntry: number;
+    ethEntry: number;
+    btcQty: number;
+    ethQty: number;
+    betaAtEntry: number;
+  } | null = null;
   /**
    * REGIME-3 — per-(symbol,side) timestamp of the last close (any PnL).
    * Consumed by the entry-path cooldown veto to break post-close tilt.
@@ -2422,6 +2463,10 @@ export class MonkeyKernel extends EventEmitter {
     const lastPrice = Number(ohlcv[ohlcv.length - 1].close);
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
 
+    // Cache latest mark price for cross-symbol consumers (funding-arb
+    // ETH leg sizing during BTC tick, etc.).
+    this.latestMarkPriceBySymbol.set(symbol, lastPrice);
+
     // QIG-FR v4 Problem 4 — score the kernel's RAW directional
     // predictions recorded ~SCORE_HORIZON ticks ago against where price
     // actually moved. Runs before this tick records its own. Pure
@@ -2479,18 +2524,41 @@ export class MonkeyKernel extends EventEmitter {
     // Funding-arb #794 (Class B #7) — push this symbol's latest rate
     // into the cross-symbol cache. When both BTC and ETH have fresh
     // (< 2 min) observations, observe the pair into the arb observer
-    // and log signal if it fires. Telemetry-first wire-in.
+    // and log signal if it fires. Log-returns from OHLCV are passed for
+    // observer-derived beta estimation (OLS ETH/BTC returns regression).
+    // The reading is captured for the execution block below (after account
+    // context is fetched), where the FUNDING_ARB_LIVE flag is checked.
+    let fundingArbReadingThisTick: FundingArbReading | null = null;
     if (Number.isFinite(fundingRate8h) && fundingRate8h !== 0) {
       this.latestFundingBySymbol.set(symbol, {
         rate: fundingRate8h,
         atMs: Date.now(),
         nextFundingTimeMs,
       });
-      const btc = this.latestFundingBySymbol.get('BTC_USDT_PERP');
-      const eth = this.latestFundingBySymbol.get('ETH_USDT_PERP');
+      // Compute single-period log-return for this symbol to feed the beta observer.
+      const prevClose = ohlcv.length >= 2 ? Number(ohlcv[ohlcv.length - 2]?.close ?? 0) : 0;
+      const symbolLogReturn = prevClose > 0 && lastPrice > 0
+        ? Math.log(lastPrice / prevClose)
+        : undefined;
+      // Store this symbol's return in the funding cache for the cross-symbol
+      // pair computation (we need both BTC and ETH returns on the same tick).
+      if (symbolLogReturn !== undefined) {
+        const existing = this.latestFundingBySymbol.get(symbol);
+        if (existing) {
+          (existing as typeof existing & { logReturn?: number }).logReturn = symbolLogReturn;
+        }
+      }
+      const btcEntry = this.latestFundingBySymbol.get('BTC_USDT_PERP') as
+        ({ rate: number; atMs: number; nextFundingTimeMs?: number } & { logReturn?: number }) | undefined;
+      const ethEntry = this.latestFundingBySymbol.get('ETH_USDT_PERP') as
+        ({ rate: number; atMs: number; nextFundingTimeMs?: number } & { logReturn?: number }) | undefined;
       const now = Date.now();
-      if (btc && eth && (now - btc.atMs) < 120_000 && (now - eth.atMs) < 120_000) {
-        const reading = observeFundingArb(btc.rate, eth.rate);
+      if (btcEntry && ethEntry && (now - btcEntry.atMs) < 120_000 && (now - ethEntry.atMs) < 120_000) {
+        const reading = observeFundingArbWithReturns(
+          btcEntry.rate, ethEntry.rate,
+          btcEntry.logReturn, ethEntry.logReturn,
+        );
+        fundingArbReadingThisTick = reading;
         if (reading.signalFires) {
           logger.info('[Monkey] FUNDING_ARB signal fires', {
             symbol_triggered: symbol,
@@ -2500,6 +2568,7 @@ export class MonkeyKernel extends EventEmitter {
             zScore: reading.zScore,
             zUpperTercile: reading.zUpperTercile,
             suggestedDirection: reading.suggestedDirection,
+            betaEthVsBtc: reading.betaEthVsBtc.toFixed(3),
             samples: reading.n,
           });
         }
@@ -2611,6 +2680,247 @@ export class MonkeyKernel extends EventEmitter {
       heldSide: exchangeHeldSide,
       availableEquity,
     } = await this.fetchAccountContext(symbol);
+
+    // Funding-arb #794 — execution block (paired entry + exit) when FUNDING_ARB_LIVE
+    // flag is enabled. Runs for BTC and ETH ticks; entry only fires on BTC tick to
+    // avoid double-placement. Exit conditions checked on both ticks. Fail-open: any
+    // error skips this tick's arb check without affecting the main loop.
+    if (
+      (symbol === 'BTC_USDT_PERP' || symbol === 'ETH_USDT_PERP') &&
+      (fundingArbReadingThisTick !== null || this.activeFundingArbPosition !== null) &&
+      await isFeatureEnabled('FUNDING_ARB_LIVE')
+    ) {
+      try {
+        let arbCreds: { apiKey: string; apiSecret: string; passphrase?: string } | null = null;
+        try {
+          const userRow = await pool.query(
+            `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+          );
+          const arbUserId = String(
+            (userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '',
+          );
+          if (arbUserId) arbCreds = await apiCredentialsService.getCredentials(arbUserId, 'poloniex');
+        } catch { /* skip arb execution this tick */ }
+
+        const isHedge = this.positionDirectionMode === 'HEDGE';
+        const btcPrice = this.latestMarkPriceBySymbol.get('BTC_USDT_PERP') ?? 0;
+        const ethPrice = this.latestMarkPriceBySymbol.get('ETH_USDT_PERP') ?? 0;
+
+        // EXIT — check on both BTC and ETH ticks when a paired position is active.
+        if (
+          this.activeFundingArbPosition !== null &&
+          fundingArbReadingThisTick !== null &&
+          btcPrice > 0 && ethPrice > 0
+        ) {
+          const pos = this.activeFundingArbPosition;
+          const reading = fundingArbReadingThisTick;
+
+          // Exit cond 1: gap closed (spread mean-reverted).
+          // Threshold: half the upper-tercile band (observer-derived proportionality).
+          const gapClosedThreshold = reading.zUpperTercile * reading.stdGap * 0.5;
+          const gapClosed = Math.abs(reading.currentGap) < gapClosedThreshold;
+
+          // Exit cond 2: hold duration exceeded 8h (one funding cycle).
+          // SAFETY_BOUND: 28800000ms (8h) fallback; observer-derived from
+          // nextFundingTimeMs history in a future improvement (P25 note).
+          const ARBL_MAX_HOLD_MS = 28_800_000;  // SAFETY_BOUND: 8h = one funding cycle
+          const holdExpired = Date.now() - pos.openAtMs > ARBL_MAX_HOLD_MS;
+
+          // Exit cond 3: excessive drawdown on either leg.
+          // Threshold = zUpperTercile × 0.3 (observer-derived proportionality).
+          const drawdownThreshold = reading.zUpperTercile * 0.3;
+          const btcLossRatio = pos.direction === 'long_btc_short_eth'
+            ? (pos.btcEntry - btcPrice) / pos.btcEntry   // long BTC loses when price falls
+            : (btcPrice - pos.btcEntry) / pos.btcEntry;  // short BTC loses when price rises
+          const ethLossRatio = pos.direction === 'long_btc_short_eth'
+            ? (ethPrice - pos.ethEntry) / pos.ethEntry   // short ETH loses when price rises
+            : (pos.ethEntry - ethPrice) / pos.ethEntry;  // long ETH loses when price falls
+          const drawdownTriggered =
+            btcLossRatio > drawdownThreshold || ethLossRatio > drawdownThreshold;
+
+          const exitReason = gapClosed ? 'arb_gap_closed'
+            : holdExpired ? 'arb_hold_expired'
+            : drawdownTriggered
+              ? `arb_drawdown:btc=${btcLossRatio.toFixed(4)},eth=${ethLossRatio.toFixed(4)}`
+            : null;
+
+          if (exitReason !== null && arbCreds) {
+            const btcCloseSide: 'buy' | 'sell' =
+              pos.direction === 'long_btc_short_eth' ? 'sell' : 'buy';
+            const ethCloseSide: 'buy' | 'sell' =
+              pos.direction === 'long_btc_short_eth' ? 'buy' : 'sell';
+            const btcClosePosSide: 'LONG' | 'SHORT' | undefined = isHedge
+              ? (pos.direction === 'long_btc_short_eth' ? 'LONG' : 'SHORT') : undefined;
+            const ethClosePosSide: 'LONG' | 'SHORT' | undefined = isHedge
+              ? (pos.direction === 'long_btc_short_eth' ? 'SHORT' : 'LONG') : undefined;
+            let btcLotSize = 0; let ethLotSize = 0;
+            try {
+              const [bPrec, ePrec] = await Promise.all([
+                getPrecisions('BTC_USDT_PERP'), getPrecisions('ETH_USDT_PERP'),
+              ]);
+              btcLotSize = bPrec?.lotSize ?? 0;
+              ethLotSize = ePrec?.lotSize ?? 0;
+            } catch { /* use raw */ }
+            const btcCloseQty = btcLotSize > 0
+              ? Math.floor(pos.btcQty / btcLotSize) * btcLotSize : pos.btcQty;
+            const ethCloseQty = ethLotSize > 0
+              ? Math.floor(pos.ethQty / ethLotSize) * ethLotSize : pos.ethQty;
+            try {
+              await Promise.all([
+                btcCloseQty > 0 ? poloniexFuturesService.placeOrder(arbCreds, {
+                  symbol: 'BTC_USDT_PERP', side: btcCloseSide, type: 'market',
+                  size: btcCloseQty, lotSize: btcLotSize, reduceOnly: !isHedge,
+                }, {
+                  positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+                  ...(btcClosePosSide ? { posSide: btcClosePosSide } : {}),
+                }) : Promise.resolve(null),
+                ethCloseQty > 0 ? poloniexFuturesService.placeOrder(arbCreds, {
+                  symbol: 'ETH_USDT_PERP', side: ethCloseSide, type: 'market',
+                  size: ethCloseQty, lotSize: ethLotSize, reduceOnly: !isHedge,
+                }, {
+                  positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+                  ...(ethClosePosSide ? { posSide: ethClosePosSide } : {}),
+                }) : Promise.resolve(null),
+              ]);
+              logger.info('[Monkey] FUNDING_ARB exit placed', {
+                symbol_triggered: symbol, exitReason,
+                direction: pos.direction,
+                holdMs: Date.now() - pos.openAtMs,
+                btcCloseQty, ethCloseQty,
+                currentGap: reading.currentGap,
+                gapClosedThreshold: gapClosedThreshold.toFixed(8),
+              });
+            } catch (closeErr) {
+              logger.error('[Monkey] FUNDING_ARB exit order failed', {
+                symbol, exitReason,
+                err: closeErr instanceof Error ? closeErr.message : String(closeErr),
+              });
+            } finally {
+              // Clear regardless of close success to prevent infinite retry storm.
+              this.activeFundingArbPosition = null;
+            }
+          }
+        }
+
+        // ENTRY — BTC tick only; signal fires; no active arb position.
+        if (
+          symbol === 'BTC_USDT_PERP' &&
+          fundingArbReadingThisTick !== null &&
+          fundingArbReadingThisTick.signalFires &&
+          this.activeFundingArbPosition === null &&
+          arbCreds !== null &&
+          availableEquity > 0 &&
+          btcPrice > 0 && ethPrice > 0
+        ) {
+          const reading = fundingArbReadingThisTick;
+          // ARBL_POSITION_SAFETY_CAP (0.10) is a P25 safety bound — structural
+          // ceiling on the fraction of equity allocated to the arb overlay.
+          const arbCapitalUsdt = ARBL_POSITION_SAFETY_CAP * availableEquity;
+          const btcLegUsdt = arbCapitalUsdt / 2;
+          const ethLegUsdt = (arbCapitalUsdt / 2) * reading.betaEthVsBtc;
+          let btcLotSize = 0; let ethLotSize = 0;
+          try {
+            const [bPrec, ePrec] = await Promise.all([
+              getPrecisions('BTC_USDT_PERP'), getPrecisions('ETH_USDT_PERP'),
+            ]);
+            btcLotSize = bPrec?.lotSize ?? 0;
+            ethLotSize = ePrec?.lotSize ?? 0;
+          } catch { /* use raw */ }
+          const btcRawQty = btcLegUsdt / btcPrice;
+          const ethRawQty = ethLegUsdt / ethPrice;
+          const btcQty = btcLotSize > 0
+            ? Math.floor(btcRawQty / btcLotSize) * btcLotSize : btcRawQty;
+          const ethQty = ethLotSize > 0
+            ? Math.floor(ethRawQty / ethLotSize) * ethLotSize : ethRawQty;
+          // SAFETY_BOUND: $1 minimum notional guard.
+          const MIN_ARB_NOTIONAL = 1.0;  // SAFETY_BOUND
+          if (btcQty * btcPrice < MIN_ARB_NOTIONAL || ethQty * ethPrice < MIN_ARB_NOTIONAL) {
+            logger.debug('[Monkey] FUNDING_ARB entry skipped — below min notional', {
+              btcNotional: (btcQty * btcPrice).toFixed(2),
+              ethNotional: (ethQty * ethPrice).toFixed(2),
+              arbCapitalUsdt: arbCapitalUsdt.toFixed(2),
+            });
+          } else {
+            // direction: long_btc_short_eth → BUY BTC, SELL ETH
+            //            short_btc_long_eth → SELL BTC, BUY ETH
+            const btcEntrySide: 'buy' | 'sell' =
+              reading.suggestedDirection === 'long_btc_short_eth' ? 'buy' : 'sell';
+            const ethEntrySide: 'buy' | 'sell' =
+              reading.suggestedDirection === 'long_btc_short_eth' ? 'sell' : 'buy';
+            const btcEntryPosSide: 'LONG' | 'SHORT' | undefined = isHedge
+              ? (reading.suggestedDirection === 'long_btc_short_eth' ? 'LONG' : 'SHORT')
+              : undefined;
+            const ethEntryPosSide: 'LONG' | 'SHORT' | undefined = isHedge
+              ? (reading.suggestedDirection === 'long_btc_short_eth' ? 'SHORT' : 'LONG')
+              : undefined;
+            try {
+              // Leverage=1: arb is a carry trade, not a directional bet.
+              await Promise.all([
+                poloniexFuturesService.setLeverage(
+                  arbCreds, 'BTC_USDT_PERP', 1,
+                  btcEntryPosSide ? { posSide: btcEntryPosSide } : {},
+                ).catch(() => null),
+                poloniexFuturesService.setLeverage(
+                  arbCreds, 'ETH_USDT_PERP', 1,
+                  ethEntryPosSide ? { posSide: ethEntryPosSide } : {},
+                ).catch(() => null),
+              ]);
+              const [btcRes, ethRes] = await Promise.all([
+                poloniexFuturesService.placeOrder(arbCreds, {
+                  symbol: 'BTC_USDT_PERP', side: btcEntrySide, type: 'market',
+                  size: btcQty, lotSize: btcLotSize,
+                }, {
+                  positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+                  ...(btcEntryPosSide ? { posSide: btcEntryPosSide } : {}),
+                }),
+                poloniexFuturesService.placeOrder(arbCreds, {
+                  symbol: 'ETH_USDT_PERP', side: ethEntrySide, type: 'market',
+                  size: ethQty, lotSize: ethLotSize,
+                }, {
+                  positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+                  ...(ethEntryPosSide ? { posSide: ethEntryPosSide } : {}),
+                }),
+              ]);
+              const btcOrderId = btcRes?.ordId ?? btcRes?.orderId ?? btcRes?.id ?? null;
+              const ethOrderId = ethRes?.ordId ?? ethRes?.orderId ?? ethRes?.id ?? null;
+              if (btcOrderId || ethOrderId) {
+                this.activeFundingArbPosition = {
+                  direction: reading.suggestedDirection!,
+                  entryGap: reading.currentGap,
+                  entryZScore: reading.zScore,
+                  openAtMs: Date.now(),
+                  btcEntry: btcPrice,
+                  ethEntry: ethPrice,
+                  btcQty,
+                  ethQty,
+                  betaAtEntry: reading.betaEthVsBtc,
+                };
+                logger.info('[Monkey] FUNDING_ARB entry placed', {
+                  direction: reading.suggestedDirection,
+                  btcOrderId, ethOrderId,
+                  btcQty, ethQty, btcPrice, ethPrice,
+                  betaAtEntry: reading.betaEthVsBtc.toFixed(3),
+                  arbCapitalUsdt: arbCapitalUsdt.toFixed(2),
+                  zScore: reading.zScore.toFixed(3),
+                  zUpperTercile: reading.zUpperTercile.toFixed(3),
+                });
+              }
+            } catch (entryErr) {
+              logger.error('[Monkey] FUNDING_ARB entry order failed', {
+                symbol, direction: reading.suggestedDirection,
+                err: entryErr instanceof Error ? entryErr.message : String(entryErr),
+              });
+            }
+          }
+        }
+      } catch (arbErr) {
+        // Fail-open: arb execution errors must never crash the main loop.
+        logger.warn('[Monkey] FUNDING_ARB execution block error', {
+          symbol, err: arbErr instanceof Error ? arbErr.message : String(arbErr),
+        });
+      }
+    }
+
 
     // Operator risk profile — only `max_leverage` is enforced (audited
     // 15× safety ceiling, applied as a clamp on `maxLevBoundary` below).
@@ -3068,6 +3378,30 @@ export class MonkeyKernel extends EventEmitter {
       basin,
     ]);
 
+    // REGIME-1 #766 — Two-layer regime authority shadow-log.
+    // Always evaluated (even when REGIME_COMPOSITIONAL_LIVE=false) for evidence
+    // collection. Only phaseSuppressEntry enforcement is gated on the live flag.
+    const regimeAuthority: RegimeAuthority = getRegimeAuthority(
+      regimeWeights,
+      regimeReading,
+    );
+    {
+      const legacyCell = regimeReading.regime;
+      const compositionalCell = getRegimeCellActionLabel(regimeAuthority);
+      if (legacyCell !== regimeAuthority.direction) {
+        logger.debug('[Monkey] REGIME_AUTHORITY shadow-log phase×direction', {
+          symbol,
+          phase: regimeAuthority.phase,
+          phaseConf: regimeAuthority.phaseConfidence.toFixed(3),
+          direction: regimeAuthority.direction,
+          dirConf: regimeAuthority.directionConfidence.toFixed(3),
+          legacyCell,
+          compositionalCell,
+          isWarmup: regimeAuthority.isWarmup,
+        });
+      }
+    }
+
     // Hindsight / counterfactual-regret evaluation (CANONICAL — always on).
     // Advance any active watches for this symbol with the fresh price + live
     // regime: track the horizon-end counterfactual pnl and whether the regime
@@ -3351,12 +3685,17 @@ export class MonkeyKernel extends EventEmitter {
     } catch (_exemplarErr) {
       // fail open — exemplar failure must never block trading
     }
-    let entryThr = exemplarModifier === 0
-      ? entryThrAfterBtc
-      : {
-          value: entryThrAfterBtc.value * (1 + exemplarModifier),
-          derivation: { ...entryThrAfterBtc.derivation, exemplarModifier },
-        };
+    // Explicit type: entryThr is reassigned through several derivation shapes
+    // (btc adds a BtcBeaconReading object; exemplar + cascade add numbers). It
+    // is only ever read as `.value` (number) and `.derivation` (telemetry), so
+    // a permissive derivation value type unifies all variants.
+    let entryThr: { value: number; derivation: Record<string, number | BtcBeaconReading | null> } =
+      exemplarModifier === 0
+        ? entryThrAfterBtc
+        : {
+            value: entryThrAfterBtc.value * (1 + exemplarModifier),
+            derivation: { ...entryThrAfterBtc.derivation, exemplarModifier },
+          };
     // #795 Class B #8 — cascade conviction boost. When the liquidation-cascade
     // observer fires on the same side as the geometry candidate, lower the entry
     // threshold proportionally to cascade intensity (observer-derived, P25 compliant).
@@ -3374,7 +3713,10 @@ export class MonkeyKernel extends EventEmitter {
         derivation: {
           ...entryThr.derivation,
           cascadeModifier,
-          liqCascadeSide: liqCascadeSignal?.suggestedEntrySide,
+          // Side encoded numerically (1=long, −1=short, 0=none): the
+          // ExecutiveDecision derivation is Record<string, number>.
+          liqCascadeSide: liqCascadeSignal?.suggestedEntrySide === 'long' ? 1
+            : liqCascadeSignal?.suggestedEntrySide === 'short' ? -1 : 0,
         },
       };
     }
@@ -4526,7 +4868,9 @@ export class MonkeyKernel extends EventEmitter {
       // The reduction is observer-derived from the regime classifier's
       // own confidence (P1: no hardcoded knob) — deeper chop → smaller
       // entry, floored at 0.2× as a SAFETY_BOUND.
-      const suppressionResult = chopSuppressEntry(regimeReading, positionLane);
+      const suppressionResult = cellLive
+        ? phaseSuppressEntry(regimeAuthority, positionLane)
+        : chopSuppressEntry(regimeReading, positionLane);
       chopSizeFactor = suppressionResult.suppressed
         ? Math.max(0.2, 1 - suppressionResult.confidence)
         : 1.0;
@@ -4701,7 +5045,9 @@ export class MonkeyKernel extends EventEmitter {
       }
     } else {
       action = 'hold';
-      const chopSuppressionForLane = chopSuppressEntry(regimeReading, positionLane);
+      const chopSuppressionForLane = cellLive
+        ? phaseSuppressEntry(regimeAuthority, positionLane)
+        : chopSuppressEntry(regimeReading, positionLane);
       const chopSuppressed = chopSuppressionForLane.suppressed;
       const chopThresholdForLane = positionLane === 'trend'
         ? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT
@@ -4726,7 +5072,9 @@ export class MonkeyKernel extends EventEmitter {
     // this tick AND whether it actually blocked entry. ``active`` reads
     // the regime classifier output; ``blocked`` is true only when the
     // suspension would have flipped a would-be entry into a hold.
-    const chopTelemetry = chopSuppressEntry(regimeReading, positionLane);
+    const chopTelemetry = cellLive
+      ? phaseSuppressEntry(regimeAuthority, positionLane)
+      : chopSuppressEntry(regimeReading, positionLane);
     derivation.chopSuppression = {
       active: chopTelemetry.suppressed,
       regime: regimeReading.regime,
@@ -6578,7 +6926,7 @@ export class MonkeyKernel extends EventEmitter {
   private async getKellyRollingStats(
     agent: string,
     lane?: LaneType,
-  ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
+  ): Promise<{ winRate: number; avgWin: number; avgLoss: number; sampleCount: number } | null> {
     return getKellyRollingStats(agent, lane);
   }
 
@@ -8417,7 +8765,10 @@ export class MonkeyKernel extends EventEmitter {
               fillPrice: markPrice,
               restingMs: null,
               outcomePnl: rowPnl,
-              tradeId: Number(row.id) || null,
+              // autonomous_trades.id is a UUID string — pass it as-is (the old
+              // Number(row.id) coerced every UUID to NaN→null, so the trade
+              // linkage was never recorded).
+              tradeId: row.id != null ? String(row.id) : null,
             }).catch(() => {}); // never throws — telemetry must not affect trading
           }
 

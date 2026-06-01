@@ -75,6 +75,7 @@ TTL_PHI_HISTORY: int = 86400
 TTL_BASIN_HISTORY: int = 86400
 TTL_WORKING_MEMORY_BUBBLES: int = 15 * 60       # 15min default lifetime
 TTL_BUS_EVENTS: int = 7 * 86400                 # 7d forensic tail
+TTL_SENSATIONS: int = 60                        # 60s; sensations are per-tick ephemeral
 
 # List caps per directive
 MAX_INTERVENTION_HISTORY: int = 1000
@@ -552,6 +553,22 @@ class PersistentMemory:
             if len(out) >= limit:
                 break
         return out
+
+    # ── Sensations: per-tick canonical vector ─────────────────────
+
+    def save_sensations(self, symbol: str, snapshot: dict[str, Any]) -> bool:
+        """Write-through after compute_sensations() in tick.py.
+
+        Key: kernel_sensations:{instance_id} (governance surface reads this).
+        TTL 60s — sensations are per-tick ephemeral; a stale read after
+        kernel restart should expire quickly so the governance surface
+        shows 'empty' rather than a ghost snapshot.
+        """
+        return self._set_json(
+            f"kernel_sensations:{self.instance_id}",
+            snapshot,
+            TTL_SENSATIONS,
+        )
 
     # ── Test/diagnostic helpers ─────────────────────────────────
 

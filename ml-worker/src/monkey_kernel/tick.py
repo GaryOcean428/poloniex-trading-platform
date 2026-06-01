@@ -726,6 +726,14 @@ def run_tick(
         phi_delta=phi - last_phi,
         phi_history=state.phi_history,
     )
+    # SENSE-1a #767 — Persist canonical sensation vector to Redis.
+    # Best-effort: never blocks the tick. Governance surface reads
+    # kernel_sensations:{instance_id} with a 60s TTL.
+    if persistence is not None:
+        try:
+            persistence.save_sensations(inputs.symbol, asdict(sen))
+        except Exception as _sen_persist_err:  # noqa: BLE001
+            pass  # persistence failures never block trading
     # Tier 2 cognitive emotions (Layer 2B). basin_distance is the
     # Fisher-Rao distance from current basin to identity — same scalar
     # already computed by sensations.drift; reuse to avoid recompute.

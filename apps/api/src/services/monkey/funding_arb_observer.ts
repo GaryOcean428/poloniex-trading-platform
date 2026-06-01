@@ -31,6 +31,10 @@ export interface FundingSample {
   gap: number;
   /** Observation timestamp (ms). */
   atMs: number;
+  /** 1-period log-return of BTC at observation time (optional). */
+  btcReturn?: number;
+  /** 1-period log-return of ETH at observation time (optional). */
+  ethReturn?: number;
 }
 
 export interface FundingArbReading {
@@ -62,6 +66,12 @@ export interface FundingArbReading {
   /** True until n >= MIN_SAMPLES. All derived values are still
    *  computed but signalFires is forced false. */
   warmup: boolean;
+  /** OLS regression beta of ETH log-returns vs BTC log-returns, derived
+   *  from samples with observed price returns. When fewer than MIN_SAMPLES
+   *  have returns: 1.0 (delta-neutral 1:1 default). Clamped to [0.5, 2.0]
+   *  (P25 safety bounds). Used by the execution layer for delta-neutral
+   *  sizing of the ETH leg. Fully observer-derived — no hardcoded ratio. */
+  betaEthVsBtc: number;
 }
 
 const _samples: FundingSample[] = [];
@@ -83,6 +93,25 @@ export function observeFundingArb(
 }
 
 /**
+ * Push a new funding sample with optional price log-returns for beta
+ * estimation. Preferred over observeFundingArb when caller has
+ * single-period log-returns available (btcReturn = log(btcClose/btcPrev),
+ * ethReturn = log(ethClose/ethPrev)).
+ */
+export function observeFundingArbWithReturns(
+  btcFunding: number,
+  ethFunding: number,
+  btcReturn?: number,
+  ethReturn?: number,
+  atMs: number = Date.now(),
+): FundingArbReading {
+  const gap = ethFunding - btcFunding;
+  _samples.push({ btcFunding, ethFunding, gap, atMs, btcReturn, ethReturn });
+  if (_samples.length > MAX_HISTORY) _samples.shift();
+  return computeFundingArb(_samples);
+}
+
+/**
  * Compute the funding-arb reading from a sample buffer. Pure derivation —
  * exposed for testability. The mean/std/tercile use the gap distribution
  * directly (no smoothing); they capture the funding-rate volatility
@@ -97,7 +126,7 @@ export function computeFundingArb(
       btcFunding: 0, ethFunding: 0, currentGap: 0,
       meanGap: 0, stdGap: 0, zScore: 0, zUpperTercile: 0,
       signalFires: false, suggestedDirection: null,
-      n: 0, warmup: true,
+      n: 0, warmup: true, betaEthVsBtc: 1.0,
     };
   }
   const latest = samples[n - 1]!;
@@ -122,13 +151,39 @@ export function computeFundingArb(
     // long btc (receives less rich rate). Net = earn the difference.
     suggestedDirection = zScore > 0 ? 'long_btc_short_eth' : 'short_btc_long_eth';
   }
+
+  // OLS beta of ETH log-returns vs BTC log-returns for delta-neutral sizing.
+  // beta = cov(ethR, btcR) / var(btcR) over samples that have both returns.
+  // Fully observer-derived — no hardcoded ratio (QIG-pure, P5).
+  // When insufficient return pairs exist: default to 1.0 (1:1 delta neutral).
+  const returnPairs = samples.filter(
+    (s): s is FundingSample & { btcReturn: number; ethReturn: number } =>
+      s.btcReturn !== undefined && s.ethReturn !== undefined &&
+      Number.isFinite(s.btcReturn) && Number.isFinite(s.ethReturn),
+  );
+  let betaEthVsBtc = 1.0;  // P25 safety default: 1:1 when insufficient data
+  if (returnPairs.length >= MIN_SAMPLES) {
+    const btcRets = returnPairs.map((s) => s.btcReturn);
+    const ethRets = returnPairs.map((s) => s.ethReturn);
+    const btcMean = btcRets.reduce((a, b) => a + b, 0) / btcRets.length;
+    const ethMean = ethRets.reduce((a, b) => a + b, 0) / ethRets.length;
+    const cov = btcRets.reduce((a, x, i) =>
+      a + (x - btcMean) * (ethRets[i]! - ethMean), 0) / btcRets.length;
+    const varBtc = btcRets.reduce((a, x) => a + (x - btcMean) ** 2, 0) / btcRets.length;
+    if (varBtc > 1e-12) {
+      // SAFETY_BOUND: clamp beta to [0.5, 2.0] — prevents degenerate
+      // sizing from short-window outliers (P25-compliant safety bound).
+      betaEthVsBtc = Math.max(0.5, Math.min(2.0, cov / varBtc));
+    }
+  }
+
   return {
     btcFunding: latest.btcFunding,
     ethFunding: latest.ethFunding,
     currentGap: latest.gap,
     meanGap, stdGap, zScore, zUpperTercile,
     signalFires, suggestedDirection,
-    n, warmup,
+    n, warmup, betaEthVsBtc,
   };
 }
 
