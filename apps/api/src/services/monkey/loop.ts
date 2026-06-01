@@ -7505,7 +7505,15 @@ export class MonkeyKernel extends EventEmitter {
     // #931 exit-attribution: gate name (e.g. 'conviction_failed', 'bracket_sl');
     // defaults to exitReason for back-compat at call-sites we haven't migrated.
     const exitGate = req.exitGate ?? exitReason;
-    if (this.shouldRouteOrdersToPaper()) {
+    // 2026-06-01 — operator MANDATE: the kernel must NEVER place a live close
+    // when it is disengaged from the exchange. ANY non-'auto' execution mode
+    // (paper_only AND pause) routes the close through the paper-close branch,
+    // which skips live-origin rows entirely — the operator owns every live
+    // position. Previously only `shouldRouteOrdersToPaper()` (paper_only) was
+    // checked here, so under 'pause' the kernel still hit the LIVE reduceOnly
+    // path and closed an operator position for a loss. Live closes happen ONLY
+    // in 'auto'.
+    if (this.executionMode !== 'auto' || this.shouldRouteOrdersToPaper()) {
       if (!Number.isFinite(markPrice) || markPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping close', {
           symbol,
