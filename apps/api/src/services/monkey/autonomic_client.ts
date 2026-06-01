@@ -194,7 +194,7 @@ export async function callAutonomicPredictionReward(req: {
 
 /**
  * Fan the resolved hindsight NT vector to the Py autonomic surface
- * (MONKEY_HINDSIGHT_REGRET_LIVE — DESIGN HYPOTHESIS). Mirrors
+ * (hindsight is CANONICAL — always on). Mirrors
  * callAutonomicPredictionReward: best-effort, non-fatal, REPLACES the Py
  * cached hindsight vector. Keeps the Py chemistry (which drives executive
  * sizing + survives restarts) in parity with the TS fold. */

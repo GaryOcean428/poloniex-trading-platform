@@ -1,9 +1,9 @@
 /**
  * hindsightRegret.ts — legibility-gated counterfactual PREDICTION ERROR.
  *
- * DESIGN HYPOTHESIS (operator-approved redesign of PR #1038, 2026-05-29).
- * Built cleanly, flag-gated OFF (MONKEY_HINDSIGHT_REGRET_LIVE), for operator
- * review — NOT a finished truth. Replaces the rejected v1 (fixed 30-min
+ * Operator-approved redesign of PR #1038 (2026-05-29). CANONICAL — always on
+ * (the former MONKEY_HINDSIGHT_REGRET_LIVE gate was removed). Replaces the
+ * rejected v1 (fixed 30-min
  * window + fixed dopamine caps + best-favourable-excursion target +
  * dopamine-only "pain") which was a knob dressed as chemistry.
  *

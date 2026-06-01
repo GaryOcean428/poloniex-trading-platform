@@ -60,7 +60,7 @@
  *
  * This module implements the LIVE/PAPER state machine + the
  * 5-consecutive-loss demotion trigger + WR-based auto-promotion, plus
- * (flag-gated, issue #1032) an expectancy-based chronic demote and a
+ * (canonical, issue #1032) an expectancy-based chronic demote and a
  * profit-shaped promotion gate.
  *
  * The state machine is INSTANCE-LOCAL: each MonkeyKernel owns its own
@@ -330,12 +330,11 @@ export interface RotationPeerSnapshot {
   rollingWinRate: number;        // NaN if no samples yet
   rollingSampleCount: number;
   /** Per-trade realized expectancy (edge), issue #1032. NaN if no
-   *  samples yet. Used by the expectancy-gated membership criterion;
-   *  ignored entirely when MONKEY_ROTATION_EXPECTANCY_LIVE is off. */
+   *  samples yet. Used by the expectancy-gated membership criterion. */
   rollingExpectancy?: number;
   /** Loss:win VALUE ratio |avgLoss|/avgWin, issue #1032. NaN / Infinity
    *  per rollingExpectancy semantics. Used as the cohort-relative bar
-   *  in the expectancy promotion gate; ignored when the flag is off. */
+   *  in the expectancy promotion gate. */
   rollingLossWinRatio?: number;
 }
 
@@ -408,8 +407,9 @@ function withinExpectancyBand(mine: number, best: number): boolean {
  * yet its expectancy sits far below the best live peer's.
  *
  * Fires (returns a reason string) iff:
- *   0. expectancyLive is true (flag MONKEY_ROTATION_EXPECTANCY_LIVE).
- *      When false this ALWAYS returns null — behaviour is unchanged.
+ *   0. expectancyLive is true. This is CANONICAL (always true in the live
+ *      kernel); the parameter is retained only so the pure function stays
+ *      testable in isolation (false ⇒ always returns null).
  *   1. The candidate is currently LIVE.
  *   2. The candidate has ≥ ROTATION_WR_MIN_SAMPLES closes (no demote on
  *      noise).
@@ -480,7 +480,7 @@ export function applyChronicDemote(
  *   4. The candidate's rolling WR must be within
  *      ROTATION_PROMOTION_WR_GAP of the BEST live peer's WR.
  *
- * When `expectancyLive` is true (flag MONKEY_ROTATION_EXPECTANCY_LIVE),
+ * When `expectancyLive` is true (CANONICAL — always true in the live kernel),
  * an ADDITIONAL profit-shaped gate is layered on top of the WR gate:
  *   5. The candidate's expectancy must be within ROTATION_EXPECTANCY_BAND
  *      of the best live peer's expectancy, AND

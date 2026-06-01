@@ -212,7 +212,7 @@ export interface NeurochemicalInputs {
   /** As above — peak-state reward on strong-regime wins. */
   rewardEndorphinDelta?: number;
   /**
-   * 2026-05-29 (hindsight, MONKEY_HINDSIGHT_REGRET_LIVE — DESIGN HYPOTHESIS):
+   * 2026-05-29 (hindsight — CANONICAL, always on):
    * additive ACh / NE / GABA reward deltas from the hindsight NT vector. The
    * trade-outcome reward channel only carries dop/ser/endo; the hindsight
    * signal also wants to bind cues (ACh↑), mark salience (NE↑), and apply

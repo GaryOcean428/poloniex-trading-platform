@@ -12,8 +12,7 @@
  *   - fail-closed                → invalid price/margin → zero vector
  *
  * Hindsight is CANONICAL (always on) — the former MONKEY_HINDSIGHT_REGRET_LIVE
- * env gate was removed; there is no off path to test.
- *   - flag OFF                   → isHindsightRegretLive() false by default
+ * env gate was removed entirely; there is no off path to test.
  *
  * The FIXTURES block is shared verbatim with the Python parity test
  * (test_hindsight_regret.py) so TS↔Py outputs are asserted equal within
