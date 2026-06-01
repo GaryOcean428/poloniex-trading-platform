@@ -8844,8 +8844,20 @@ export class MonkeyKernel extends EventEmitter {
     // 2026-05-13 — pass monkeyMode through so risk kernel's headroom
     // check is regime-conditional (35% reserve EXPLORATION, 15% INTEGRATION).
     const monkeyMode = symState?.lastMode ?? undefined;
+    // 2026-06-01 (paper_only MANDATE fix): `isLive` is the flag
+    // checkExecutionMode uses to decide whether THIS order would hit the
+    // live exchange — so it MUST describe the order's actual routing, not
+    // the mode. The prior `mode === 'auto'` was circular: when the operator
+    // set execution mode = 'paper_only', isLive was false by construction,
+    // so the `paper_only && isLiveOrder` block in checkExecutionMode could
+    // NEVER fire → the kernel kept opening LIVE positions while the UI
+    // showed paper (operator-MANDATE violation, confirmed in prod 06-01).
+    // `!shouldRouteOrdersToPaper()` is the true "this order goes live"
+    // predicate (env MONKEY_PAPER_MODE + internal paper-rotation). The veto
+    // is ENTRY-ONLY, so paper_only now blocks new LIVE ENTRIES while closes
+    // of existing real positions still route real (no orphaned positions).
     const kernelContext: KernelContext = {
-      isLive: mode === 'auto', mode, symbolMaxLeverage,
+      isLive: !this.shouldRouteOrdersToPaper(), mode, symbolMaxLeverage,
       monkeyMode: monkeyMode ?? undefined,
     };
     const decision = evaluatePreTradeVetoes(order, kernelState, kernelContext);
