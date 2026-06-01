@@ -2312,6 +2312,39 @@ export class MonkeyKernel extends EventEmitter {
     }
   }
 
+  /** Snapshot all DB-backed feature flags into `this.featureFlags` once per tick.
+   *  Uses getBoolFlag (15s cache) so this is a cache-hit in steady state.
+   *  Fail-soft: any thrown error is caught by the tick() caller. */
+  private async refreshFeatureFlags(): Promise<void> {
+    const [
+      shortsLive, marketIntelLive, fundingGateLive, makerCloseLive,
+      lVetoOverK, bracketExitLive, bracketExtendLive, slowBleedLive,
+      fastAdverseLive, tapeOverrideLive, regimeCompositionalLive,
+      regimeHeldExitLive, scalpLimitMakerLive, scalpLimitMakerBroad,
+    ] = await Promise.all([
+      getBoolFlag('MONKEY_SHORTS_LIVE',         false),
+      getBoolFlag('MONKEY_MARKET_INTEL_LIVE',   false),
+      getBoolFlag('MONKEY_FUNDING_GATE_LIVE',   false),
+      getBoolFlag('MONKEY_MAKER_CLOSE_LIVE',    false),
+      getBoolFlag('L_VETO_OVER_K_ENABLED',      false),
+      getBoolFlag('MONKEY_BRACKET_EXIT_LIVE',   true),
+      getBoolFlag('MONKEY_BRACKET_EXTEND_LIVE', true),
+      getBoolFlag('MONKEY_SLOW_BLEED_LIVE',     true),
+      getBoolFlag('MONKEY_FAST_ADVERSE_LIVE',   true),
+      getBoolFlag('MONKEY_TAPE_OVERRIDE_LIVE',  true),
+      getBoolFlag('REGIME_COMPOSITIONAL_LIVE',  false),
+      getBoolFlag('REGIME_HELD_EXIT_LIVE',      false),
+      getBoolFlag('SCALP_LIMIT_MAKER_LIVE',     false),
+      getBoolFlag('SCALP_LIMIT_MAKER_BROAD',    true),
+    ]);
+    this.featureFlags = {
+      shortsLive, marketIntelLive, fundingGateLive, makerCloseLive,
+      lVetoOverK, bracketExitLive, bracketExtendLive, slowBleedLive,
+      fastAdverseLive, tapeOverrideLive, regimeCompositionalLive,
+      regimeHeldExitLive, scalpLimitMakerLive, scalpLimitMakerBroad,
+    };
+  }
+
   private decayHindsightCachesOncePerTick(): void {
     const HINDSIGHT_HALF_LIFE_MS = 20 * 60 * 1000;
     const decay = Math.pow(0.5, this.tickMs / HINDSIGHT_HALF_LIFE_MS);
@@ -5396,7 +5429,7 @@ export class MonkeyKernel extends EventEmitter {
     // with K's side. If so, K's entry is suppressed (the executeEntry
     // call is skipped) — exits, harvest, scalp_exit are NOT affected.
     let lVeto: LVetoEvaluation | null = null;
-    const lVetoEnabled = isLVetoOverKEnabled();
+    const lVetoEnabled = this.featureFlags.lVetoOverK;
     const kProposingEntry =
       action === 'enter_long' ||
       action === 'enter_short' ||

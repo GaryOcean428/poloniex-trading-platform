@@ -102,6 +102,9 @@ def _all_repo_code_sources() -> list[Path]:
         ".pytest_cache",
         "__tests__",
         "tests",
+        ".venv",
+        "venv",
+        ".venv_test",
     }
     return sorted(
         p for p in _REPO_ROOT.rglob("*")
