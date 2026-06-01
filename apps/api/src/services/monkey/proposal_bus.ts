@@ -10,10 +10,10 @@
  *
  * Channel: `monkey:consensus:proposal`
  *
- * Flag: CONSENSUS_PROPOSAL_BUS_LIVE — default off. When off, neither
- * publisher nor subscriber connects (no Redis traffic). When on,
- * proposals stream across the bus and recent peer proposals are
- * available via getRecentPeerProposal().
+ * Flag: CONSENSUS_PROPOSAL_BUS_LIVE — default ON (explicit 'false' disables;
+ * matches the Python side). When off, neither publisher nor subscriber
+ * connects (no Redis traffic). When on, proposals stream across the bus and
+ * recent peer proposals are available via getRecentPeerProposal().
  *
  * Fail-soft: any Redis error logs at debug and returns silently. A
  * dead Redis never blocks a tick.
@@ -48,7 +48,12 @@ export interface ProposalEvent {
 }
 
 function consensusBusLive(): boolean {
-  return process.env.CONSENSUS_PROPOSAL_BUS_LIVE === 'true';
+  // Default ON (explicit 'false' disables) so it MATCHES the Python side
+  // (proposal_bus.py / canonical_invariant.py both default on). The previous
+  // TS default-off was an inverted-default split: with the var unset, Py
+  // published proposals that TS never subscribed to. Symmetric consensus
+  // requires both sides cross-observe — keep them aligned.
+  return process.env.CONSENSUS_PROPOSAL_BUS_LIVE !== 'false';
 }
 
 let _publisher: RedisClientType | null = null;

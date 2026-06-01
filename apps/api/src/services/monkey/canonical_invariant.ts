@@ -174,7 +174,9 @@ export function doctrineFieldCount(): number {
 }
 
 function canonicalInvariantBusLive(): boolean {
-  return process.env.CONSENSUS_PROPOSAL_BUS_LIVE === 'true';
+  // Default ON to match the Python side (see proposal_bus.ts) — symmetric
+  // consensus; the previous default-off was an inverted-default split.
+  return process.env.CONSENSUS_PROPOSAL_BUS_LIVE !== 'false';
 }
 
 let _publisher: RedisClientType | null = null;
