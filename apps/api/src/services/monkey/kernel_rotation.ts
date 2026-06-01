@@ -60,7 +60,7 @@
  *
  * This module implements the LIVE/PAPER state machine + the
  * 5-consecutive-loss demotion trigger + WR-based auto-promotion, plus
- * (flag-gated, issue #1032) an expectancy-based chronic demote and a
+ * (canonical, issue #1032) an expectancy-based chronic demote and a
  * profit-shaped promotion gate.
  *
  * The state machine is INSTANCE-LOCAL: each MonkeyKernel owns its own
@@ -137,23 +137,13 @@ export const ROTATION_EXPECTANCY_BAND = 0.10;
  */
 export const ROTATION_TARGET_LOSS_WIN_RATIO = 1 / 8;
 
-/**
- * Historical env-flag name for the chronic-expectancy membership criterion.
- * The expectancy firewall is now CANONICAL (always on); this constant is
- * retained for reference/telemetry only. `expectancyLiveEnabled()` ignores
- * this env var and always returns `true`.
- */
-export const ROTATION_EXPECTANCY_FLAG = 'MONKEY_ROTATION_EXPECTANCY_LIVE';
-
-/**
- * The expectancy-membership capital firewall is CANONICAL — always on. It's how
- * the kernel governs its own capital (negative-EV bleeders route to paper while
- * the kernel keeps ticking blind), not an operator dial. Built to be used.
- * (Was gated behind MONKEY_ROTATION_EXPECTANCY_LIVE; gate removed 2026-05-30.)
- */
-export function expectancyLiveEnabled(): boolean {
-  return true;
-}
+// The expectancy-membership capital firewall is CANONICAL — always on. It's how
+// the kernel governs its own capital (negative-EV bleeders route to paper while
+// the kernel keeps ticking blind), not an operator dial. The former
+// MONKEY_ROTATION_EXPECTANCY_LIVE env gate (an always-true wrapper) was removed
+// entirely; callers pass `expectancyLive = true` unconditionally. The internal
+// `expectancyLive` parameter is retained only as a pure-function input so the
+// demote/promote helpers stay testable in isolation.
 
 export type KernelOperationalMode = 'live' | 'paper';
 
@@ -340,12 +330,11 @@ export interface RotationPeerSnapshot {
   rollingWinRate: number;        // NaN if no samples yet
   rollingSampleCount: number;
   /** Per-trade realized expectancy (edge), issue #1032. NaN if no
-   *  samples yet. Used by the expectancy-gated membership criterion;
-   *  ignored entirely when MONKEY_ROTATION_EXPECTANCY_LIVE is off. */
+   *  samples yet. Used by the expectancy-gated membership criterion. */
   rollingExpectancy?: number;
   /** Loss:win VALUE ratio |avgLoss|/avgWin, issue #1032. NaN / Infinity
    *  per rollingExpectancy semantics. Used as the cohort-relative bar
-   *  in the expectancy promotion gate; ignored when the flag is off. */
+   *  in the expectancy promotion gate. */
   rollingLossWinRatio?: number;
 }
 
@@ -418,8 +407,9 @@ function withinExpectancyBand(mine: number, best: number): boolean {
  * yet its expectancy sits far below the best live peer's.
  *
  * Fires (returns a reason string) iff:
- *   0. expectancyLive is true (flag MONKEY_ROTATION_EXPECTANCY_LIVE).
- *      When false this ALWAYS returns null — behaviour is unchanged.
+ *   0. expectancyLive is true. This is CANONICAL (always true in the live
+ *      kernel); the parameter is retained only so the pure function stays
+ *      testable in isolation (false ⇒ always returns null).
  *   1. The candidate is currently LIVE.
  *   2. The candidate has ≥ ROTATION_WR_MIN_SAMPLES closes (no demote on
  *      noise).
@@ -490,7 +480,7 @@ export function applyChronicDemote(
  *   4. The candidate's rolling WR must be within
  *      ROTATION_PROMOTION_WR_GAP of the BEST live peer's WR.
  *
- * When `expectancyLive` is true (flag MONKEY_ROTATION_EXPECTANCY_LIVE),
+ * When `expectancyLive` is true (CANONICAL — always true in the live kernel),
  * an ADDITIONAL profit-shaped gate is layered on top of the WR gate:
  *   5. The candidate's expectancy must be within ROTATION_EXPECTANCY_BAND
  *      of the best live peer's expectancy, AND

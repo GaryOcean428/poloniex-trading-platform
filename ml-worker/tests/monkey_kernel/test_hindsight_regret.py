@@ -38,7 +38,6 @@ from monkey_kernel.hindsight_regret import (  # noqa: E402
     gaba_target_key,
     is_continuation_legible,
     is_eligible_for_regret,
-    is_hindsight_regret_live,
     legibility_strength,
     median_and_mad,
     resolve_hindsight,
@@ -246,14 +245,6 @@ def test_derive_magnitude_none_below_min_or_zero_mad():
 
 def test_gaba_target_defaults_unknown_regime():
     assert gaba_target_key(legible_short_bundle(regime_at_close="")) == "premature_close:unknown:short"
-
-
-def test_hindsight_is_canonical_no_gate(monkeypatch):
-    # Hindsight is always on — not env-gated.
-    monkeypatch.delenv("MONKEY_HINDSIGHT_REGRET_LIVE", raising=False)
-    assert is_hindsight_regret_live() is True
-    monkeypatch.setenv("MONKEY_HINDSIGHT_REGRET_LIVE", "false")
-    assert is_hindsight_regret_live() is True
 
 
 # ───────────────────────── TS↔Py fixture-level parity ─────────────────────────

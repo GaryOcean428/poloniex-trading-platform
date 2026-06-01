@@ -27,7 +27,7 @@ import { apiCache } from '../../utils/apiCache.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
 import { logger } from '../../utils/logger.js';
 import { apiCredentialsService } from '../apiCredentialsService.js';
-import { getCurrentExecutionMode } from '../executionModeService.js';
+import { getCurrentExecutionMode, type ExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
@@ -119,19 +119,13 @@ import {
 } from './kernel_predictions.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { recoveredOutcomeMatchesInstance } from './recovered_outcome_routing.js';
-import {
-  callKShadowTick,
-  isKShadowEnabled,
-  logParityDiff,
-  type KShadowTickResponse,
-} from './kernel_client.js';
+import { logParityDiff } from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import {
   applyChronicDemote,
-  expectancyLiveEnabled,
   makeRotationState,
   promoteToLive,
   recordClose as recordRotationClose,
@@ -243,7 +237,6 @@ import {
 import {
   counterfactualPnlUsdt,
   resolveHindsight,
-  isHindsightRegretLive,
   type CloseSenseBundle,
   type CounterfactualOutcome,
 } from './hindsightRegret.js';
@@ -504,22 +497,14 @@ export function observerConvictionStreakRequired(
   return Math.max(CONVICTION_STREAK_FLOOR, Math.min(CONVICTION_STREAK_CAP, scaled));
 }
 
-/**
- * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
- * entry-order placement only. Exit orders (scalp_exit, auto_flatten,
- * hard SL, rejust exits) are NOT gated; existing positions must close
- * cleanly during deploy/incident response. Default false (no pause).
- *
- * Reads at order-placement time (live, not cached at startup) so the
- * operator can flip the env var on Railway without redeploying.
- */
-function isTradingPaused(): boolean {
-  return process.env.MONKEY_TRADING_PAUSED === 'true';
-}
-
-function isMonkeyPaperMode(): boolean {
-  return process.env.MONKEY_PAPER_MODE === 'true';
-}
+// Kill switch + paper routing are CANONICAL on the agent_execution_mode
+// tri-state (this.executionMode, fetched per-tick from the DB). 'pause'
+// suppresses new entries AND discretionary profit-harvest (the Agent L sweep);
+// risk-management exits (scalp_exit, auto_flatten, hard SL, rejust) are NOT
+// gated so open positions still close cleanly. 'paper_only' routes both entries
+// and closes to the paper book (see shouldRouteOrdersToPaper). The former
+// MONKEY_TRADING_PAUSED / MONKEY_PAPER_MODE / MONKEY_EXECUTE env knobs were
+// folded into this tri-state and removed.
 
 // ─── L-veto-over-K (Option A) ─────────────────────────────────────
 //
@@ -878,7 +863,7 @@ interface SymbolState {
     tapeTrend: number;
     computedAtMs: number;
   } | null;
-  /** 2026-05-29 hindsight (flag-gated): the most recent qig-warp expectation
+  /** 2026-05-29 hindsight: the most recent qig-warp expectation
    *  decision computed for this symbol (entry path), kept so the hindsight
    *  legibility gate at close time can read the kernel's own latest forecast
    *  direction + confidence + observed regime-persistence horizon. Null until
@@ -1136,8 +1121,8 @@ export class MonkeyKernel extends EventEmitter {
    *  predictionEmitterTimer. Null until the first emitter pass. */
   private cachedPredictionChemistry: PredictionChemistryDeltas | null = null;
   /**
-   * Hindsight / counterfactual-regret subsystem (MONKEY_HINDSIGHT_REGRET_LIVE,
-   * default OFF; DESIGN HYPOTHESIS for operator review — see hindsightRegret.ts).
+   * Hindsight / counterfactual-regret subsystem (CANONICAL — always on;
+   * see hindsightRegret.ts).
    *
    * After a KERNEL-OWNED close we keep watching the symbol until the derived
    * HORIZON elapses (observer-derived regime-persistence window — NOT a fixed
@@ -1249,6 +1234,12 @@ export class MonkeyKernel extends EventEmitter {
    * primary feedback channel; rotation is a structural signal.
    */
   private rotation: RotationState = makeRotationState();
+  /** Operator execution-mode MANDATE, refreshed once per tick from
+   *  agent_execution_mode. 'auto' = kernel may touch the live exchange;
+   *  'paper_only' = kernel trades its OWN paper book only and does NOT
+   *  open, close, adopt or reconcile any live positions (operator takes
+   *  over live); 'pause' = kill switch (no new orders at all). */
+  private executionMode: ExecutionMode = 'auto';
   /**
    * LIMIT_MAKER #793 (Class B #5) — pending post-only scalp orders that
    * have been placed but not yet observed as filled. Key: orderId.
@@ -1471,7 +1462,9 @@ export class MonkeyKernel extends EventEmitter {
 
   /**
    * Start Monkey's heartbeat — the 60s tick that drives all live
-   * execution. MONKEY_EXECUTE gates whether ticks place real orders.
+   * execution. The agent_execution_mode tri-state (this.executionMode)
+   * gates whether ticks place real orders ('auto'), paper orders
+   * ('paper_only'), or suppress entries ('pause').
    */
   async start(): Promise<void> {
     for (const sym of this.symbols) {
@@ -1639,7 +1632,7 @@ export class MonkeyKernel extends EventEmitter {
       tickMs: this.tickMs,
       sizeFraction: this.sizeFraction,
       symbols: this.symbols,
-      mode: process.env.MONKEY_EXECUTE === 'true' ? 'EXECUTE' : 'OBSERVE',
+      mode: this.executionMode,
       bankSize: await resonanceBank.bankSize(),
       sovereignty: await resonanceBank.sovereignty(),
     });
@@ -2163,12 +2156,22 @@ export class MonkeyKernel extends EventEmitter {
     }
     this.tickInFlight = true;
     try {
+      // Refresh the operator execution-mode MANDATE once per tick (cached
+      // for the sync routing/close/reconcile gates). Fail-safe to the last
+      // known value on a transient read error — getCurrentExecutionMode
+      // itself fails CLOSED to 'pause' on DB failure.
+      try { this.executionMode = await getCurrentExecutionMode(); } catch { /* keep last */ }
       this.decayHindsightCachesOncePerTick();
       // LIMIT_MAKER #793 — cancel any stale post-only scalp orders before
       // running the per-symbol pipeline. Stale = older than
       // LIMIT_MAKER_STALE_MS (2 min). Errors are non-fatal — the next
       // tick retries cancel.
-      try { await this.cancelStaleLimitMakers(); } catch { /* non-fatal */ }
+      // Operator MANDATE: only touch the live exchange in 'auto'. When the
+      // operator has taken over (paper_only / pause) the kernel must not even
+      // cancel resting orders — it is fully disengaged from the live account.
+      if (this.executionMode === 'auto') {
+        try { await this.cancelStaleLimitMakers(); } catch { /* non-fatal */ }
+      }
       for (const sym of this.symbols) {
         try {
           await this.processSymbol(sym);
@@ -2184,7 +2187,6 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   private decayHindsightCachesOncePerTick(): void {
-    if (!isHindsightRegretLive()) return;
     const HINDSIGHT_HALF_LIFE_MS = 20 * 60 * 1000;
     const decay = Math.pow(0.5, this.tickMs / HINDSIGHT_HALF_LIFE_MS);
     this.cachedHindsightDopamine *= decay;
@@ -2684,7 +2686,7 @@ export class MonkeyKernel extends EventEmitter {
     const predDop = predChem?.dopamineDelta ?? 0;
     const predSer = predChem?.serotoninDelta ?? 0;
 
-    // Hindsight / counterfactual-regret NT vector (flag-gated, default OFF).
+    // Hindsight / counterfactual-regret NT vector (CANONICAL — always on).
     // The `cachedHindsight*` caches accumulate the resolved E6 NT deltas
     // (evaluateHindsightWatches). tick() decays them ONCE before the per-symbol
     // loop so all symbols see the same vector for a kernel tick (no symbol-order
@@ -2698,7 +2700,7 @@ export class MonkeyKernel extends EventEmitter {
     let hindsightAch = 0;
     let hindsightNe = 0;
     let hindsightEndo = 0;
-    if (isHindsightRegretLive()) {
+    {
       hindsightDop = this.cachedHindsightDopamine;
       hindsightSer = this.cachedHindsightSerotonin;
       hindsightAch = this.cachedHindsightAcetylcholine;
@@ -2741,6 +2743,10 @@ export class MonkeyKernel extends EventEmitter {
         trajectorySelfSimilarityHistory: state.fHealthHistory,
         modeTransitionTimesMs: state.modeTransitionTimesMs,
         nowMs: Date.now(),
+        // Per-tick cadence so ser's mode-thrash rate is a true transitions-
+        // per-tick density (not a ratio of two HISTORY_MAX-capped arrays,
+        // which pinned serBase at 0 — see neurochemistry.ts serotonin note).
+        tickIntervalMs: this.tickMs,
         kappaHistory: state.kappaHistory,
         externalCouplingHistory: state.externalCouplingHistory,
       },
@@ -3000,14 +3006,12 @@ export class MonkeyKernel extends EventEmitter {
       basin,
     ]);
 
-    // Hindsight / counterfactual-regret evaluation (flag-gated, default OFF).
+    // Hindsight / counterfactual-regret evaluation (CANONICAL — always on).
     // Advance any active watches for this symbol with the fresh price + live
     // regime: track the horizon-end counterfactual pnl and whether the regime
     // observed at close still holds. Resolve the watches whose derived horizon
     // has elapsed into the E6 NT vector. Best-effort; never throws into tick.
-    if (isHindsightRegretLive()) {
-      this.evaluateHindsightWatches(symbol, lastPrice, String(regimeReading.regime));
-    }
+    this.evaluateHindsightWatches(symbol, lastPrice, String(regimeReading.regime));
 
     // Phase B — geometry-derived TP/SL bracket. Recompute each tick from
     // the current φ, regime confidence and ATR(14); stash on symbol state
@@ -4485,10 +4489,8 @@ export class MonkeyKernel extends EventEmitter {
         } catch (err) {
           expectationDecision = null;
         }
-        // 2026-05-29 hindsight (flag-gated): persist the kernel's latest
-        // qig-warp forecast so the close-time legibility gate can read it.
-        // Stored regardless of the flag (cheap, no behavioural effect when
-        // the flag is OFF — nothing reads it).
+        // 2026-05-29 hindsight: persist the kernel's latest qig-warp forecast
+        // so the close-time legibility gate can read it.
         if (expectationDecision !== null) {
           state.lastExpectation = {
             direction: expectationDecision.expectation_direction,
@@ -4676,7 +4678,8 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
+    // 6b. EXECUTE — kernel always evaluates; executionMode routes the order
+    //     ('auto'=live, 'paper_only'=paper) and 'pause' suppresses entries.
     //
     // Post agent-separation (K vs M) + Turtle control arm (T): the arbiter
     // is N-agent. T is conditionally included only when account equity is
@@ -4980,17 +4983,18 @@ export class MonkeyKernel extends EventEmitter {
       reason += ` | consensus.${consensusOverride.verdict}`;
     }
 
-    if (process.env.MONKEY_EXECUTE === 'true') {
+    // Kernel always evaluates entries; 'pause' suppresses placement below and
+    // 'paper_only' routes to the paper book (executeEntry/shouldRouteOrdersToPaper).
+    {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
-        // v0.8.7 kill switch — pause new entries (including DCA pyramids)
-        // when MONKEY_TRADING_PAUSED=true on Railway. Exits remain
-        // active so open positions can close cleanly.
-        if (isTradingPaused()) {
-          reason += ' | trading_paused: MONKEY_TRADING_PAUSED=true (entry suppressed; exits unaffected)';
+        // Kill switch — 'pause' suppresses new entries (including DCA pyramids).
+        // Exits remain active so open positions can close cleanly.
+        if (this.executionMode === 'pause') {
+          reason += ' | trading_paused: executionMode=pause (entry suppressed; exits unaffected)';
           (derivation as Record<string, unknown>).tradingPausedSkipped = {
             agent: 'K',
             action,
-            reason: 'MONKEY_TRADING_PAUSED env',
+            reason: 'executionMode=pause',
           };
         } else if (lVeto?.vetoed) {
           // 2026-05-16 L-veto-over-K — high-conviction L vote suppresses
@@ -5284,14 +5288,14 @@ export class MonkeyKernel extends EventEmitter {
             delete state.directionalDisagreementStreakByLane[reversalLane];
             delete state.heldSideByLane[reversalLane];
             delete state.entryTimeMsByLane[reversalLane];
-            // v0.8.7 kill switch — close on the reverse path proceeded
+            // Kill switch — the close on the reverse path proceeded
             // (exits unaffected); skip the new-entry leg when paused.
-            if (isTradingPaused()) {
+            if (this.executionMode === 'pause') {
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | trading_paused: new ${newSide} entry suppressed`;
               (derivation as Record<string, unknown>).tradingPausedSkipped = {
                 agent: 'K',
                 action,
-                reason: 'MONKEY_TRADING_PAUSED env (reverse-reopen leg)',
+                reason: 'executionMode=pause (reverse-reopen leg)',
               };
             } else if (lVeto?.vetoed) {
               // 2026-05-16 L-veto-over-K — close already executed; the
@@ -5411,8 +5415,7 @@ export class MonkeyKernel extends EventEmitter {
         modeCanEnter: MODE_PROFILES[mode].canEnter,
         sideShortRefused,
         sizeValue: size.value,
-        executeEnabled: process.env.MONKEY_EXECUTE === 'true',
-        tradingPaused: isTradingPaused(),
+        tradingPaused: this.executionMode === 'pause',
         lVetoed: Boolean(lVeto?.vetoed),
         cappedMargin,
         entryRejectCode: kEntryRejectCode,
@@ -5444,7 +5447,7 @@ export class MonkeyKernel extends EventEmitter {
       state.recentBusEvents, 'M', state.sessionTicks,
     );
     const mRiskMod = riskModulator(state.agentStates.M);
-    if (process.env.MONKEY_EXECUTE === 'true' && arbiterAllocation.m > 0) {
+    if (arbiterAllocation.m > 0) {
       const mOpenMargin = await this.sumOpenAgentMargin(symbol, 'M');
       const mHeadroom = computeAgentHeadroom(arbiterAllocation.m, mOpenMargin);
       if (mHeadroom <= 0) {
@@ -5549,9 +5552,9 @@ export class MonkeyKernel extends EventEmitter {
         (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
         && clampedSize > 0
       ) {
-        // v0.8.7 kill switch — pause new entries from Agent M.
-        if (isTradingPaused()) {
-          logger.info('[AgentM] entry suppressed by MONKEY_TRADING_PAUSED', {
+        // Kill switch — 'pause' suppresses new entries from Agent M.
+        if (this.executionMode === 'pause') {
+          logger.info('[AgentM] entry suppressed by executionMode=pause', {
             symbol, side: mDecision.action,
           });
           (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
@@ -5606,7 +5609,8 @@ export class MonkeyKernel extends EventEmitter {
     // mid-trade — the equity gate blocks new entries / pyramids, not
     // exits.
     const tAlloc = arbiterAllocationMany.T ?? 0;
-    if (process.env.MONKEY_EXECUTE === 'true') {
+    // Kernel always evaluates Agent T entries; 'pause' suppresses placement below.
+    {
       const tState = this.turtleStates.get(symbol) ?? newTurtleState();
       const tInputs: TurtleAgentInputs = {
         symbol,
@@ -5671,10 +5675,10 @@ export class MonkeyKernel extends EventEmitter {
           || tDecision.action === 'pyramid_long'
           || tDecision.action === 'pyramid_short')
         && tDecision.sizeUsdt > 0
-        && isTradingPaused()
+        && this.executionMode === 'pause'
       ) {
         (derivation as Record<string, unknown>).agentTTradingPausedSkipped = true;
-        logger.info('[AgentT] entry suppressed by MONKEY_TRADING_PAUSED', {
+        logger.info('[AgentT] entry suppressed by executionMode=pause', {
           symbol, action: tDecision.action,
         });
       }
@@ -5684,9 +5688,9 @@ export class MonkeyKernel extends EventEmitter {
           || tDecision.action === 'pyramid_long'
           || tDecision.action === 'pyramid_short')
         && tDecision.sizeUsdt > 0
-        // v0.8.7 kill switch — pause Agent T entries (including pyramids)
-        // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
-        && !isTradingPaused()
+        // Kill switch — 'pause' suppresses Agent T entries (including pyramids).
+        // Exits below are unaffected.
+        && this.executionMode !== 'pause'
       ) {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
@@ -5832,8 +5836,7 @@ export class MonkeyKernel extends EventEmitter {
     const lRiskMod = riskModulator(state.agentStates.L);
     const lAlloc = arbiterAllocationMany.L ?? 0;
     if (
-      process.env.MONKEY_EXECUTE === 'true'
-      && lAlloc > 0
+      lAlloc > 0
       // 2026-05-13 — warmup gate bumped to match recalibrated
       // longWindow (480). 480 ticks × 30s ≈ 4h. K/M/T continue
       // trading during L's warmup.
@@ -5938,9 +5941,9 @@ export class MonkeyKernel extends EventEmitter {
         && (lDecision.action === 'enter_long' || lDecision.action === 'enter_short')
         && lAlloc > 0
       ) {
-        // v0.8.7 kill switch — pause Agent L entries.
-        if (isTradingPaused()) {
-          logger.info('[AgentL] entry suppressed by MONKEY_TRADING_PAUSED', {
+        // Kill switch — 'pause' suppresses Agent L entries.
+        if (this.executionMode === 'pause') {
+          logger.info('[AgentL] entry suppressed by executionMode=pause', {
             symbol, action: lDecision.action,
           });
           (derivation as Record<string, unknown>).agentLTradingPausedSkipped = true;
@@ -6122,10 +6125,7 @@ export class MonkeyKernel extends EventEmitter {
     //
     // Threshold default 0.003 (0.3% on aggregate notional ≈ 4-5%
     // ROI at 14× margin). Env-tunable.
-    if (
-      process.env.MONKEY_EXECUTE === 'true'
-      && !isTradingPaused()
-    ) {
+    if (this.executionMode !== 'pause') {
       try {
         await this.forceHarvestAgentLStack(symbol, lastPrice);
       } catch (err) {
@@ -6286,108 +6286,6 @@ export class MonkeyKernel extends EventEmitter {
       logger.debug('[Monkey] decision insert failed (fail-soft)', {
         err: err instanceof Error ? err.message : String(err),
       });
-    }
-
-    // Issue #710 — K-shadow parity fanout.
-    // Fire-and-forget: call Python's /monkey/k-shadow/tick with the same
-    // inputs TS just decided on, and persist both decisions to
-    // kernel_parity_log so the cutover gate can measure parity.
-    // Passing `kappa: state.kappa` seeds Python's ephemeral state at the
-    // LIVE TS kappa, preventing py_kappa from pinning at the cold-start
-    // EMA plateau (~64.11, issue #710).
-    // Never blocks the TS tick — all errors are soft-fails.
-    if (isKShadowEnabled()) {
-      const tickId = randomUUID();
-      const symbolTimestamp = ohlcv.length > 0
-        ? new Date(ohlcv[ohlcv.length - 1].timestamp * 1000).toISOString()
-        : new Date().toISOString();
-      const tsDecisionMs = Date.now();
-      // Derive ts_side from the TS geometric direction (mirrors Python response side).
-      const tsSide: 'long' | 'short' | null =
-        direction === 'long' || direction === 'short' ? direction : null;
-      // Map dominant regimeWeight to ordinal for parity comparison:
-      //   quantum=0, equilibrium=1, efficient=2.
-      // Ties default to the first-matched channel (quantum→0) — an intentional
-      // deterministic tie-break that mirrors the Python _regime_to_ordinal
-      // fallback. Ties are extremely rare in practice (three floating-point
-      // weights rarely collide), and the parity-log delta_kappa column is the
-      // meaningful signal, not the regime ordinal alone.
-      const rw = regimeWeights as { quantum: number; efficient: number; equilibrium: number };
-      const rwMax = Math.max(rw.quantum, rw.efficient, rw.equilibrium);
-      const tsR: 0 | 1 | 2 | null =
-        rw.quantum === rwMax ? 0
-        : rw.equilibrium === rwMax ? 1
-        : rw.efficient === rwMax ? 2
-        : null;
-
-      void (async () => {
-        let pyResp: KShadowTickResponse | null = null;
-        let pyError: string | null = null;
-        try {
-          pyResp = await callKShadowTick({
-            instance_id: this.instanceId,
-            inputs: {
-              symbol,
-              ohlcv: ohlcv.map((c) => ({
-                timestamp: c.timestamp,
-                open: c.open,
-                high: c.high,
-                low: c.low,
-                close: c.close,
-                volume: c.volume,
-              })),
-              account: {
-                equity_fraction: equityFraction,
-                margin_fraction: marginFraction,
-                open_positions: typeof openPositions === 'number' ? openPositions : 0,
-                available_equity: availableEquity,
-                exchange_held_side: exchangeHeldSide ?? null,
-              },
-              bank_size: bankSize,
-              sovereignty,
-              max_leverage: maxLevBoundary,
-              min_notional: minNotional,
-              size_fraction: effectiveSizeFraction,
-            },
-            kappa: state.kappa,
-          });
-          if (pyResp.error) {
-            pyError = pyResp.error;
-          }
-        } catch (fetchErr) {
-          pyError = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-        }
-
-        try {
-          await pool.query(
-            `INSERT INTO kernel_parity_log
-               (tick_id, symbol, symbol_timestamp,
-                ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R, ts_regime, ts_decision_ms,
-                py_action, py_side, py_phi, py_kappa, py_kappa_cold, py_M, py_Gamma, py_R, py_regime, py_decision_ms,
-                py_error)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
-            [
-              tickId, symbol, symbolTimestamp,
-              action, tsSide, phi, state.kappa, null, bv, tsR, regimeReading.regime, tsDecisionMs,
-              pyResp && !pyResp.error ? pyResp.action : null,
-              pyResp && !pyResp.error ? pyResp.side : null,
-              pyResp && !pyResp.error ? pyResp.phi : null,
-              pyResp && !pyResp.error ? pyResp.kappa : null,
-              pyResp && !pyResp.error ? (pyResp.kappa_cold ?? null) : null,
-              pyResp && !pyResp.error ? pyResp.M : null,
-              pyResp && !pyResp.error ? pyResp.Gamma : null,
-              pyResp && !pyResp.error ? pyResp.R : null,
-              pyResp && !pyResp.error ? pyResp.regime : null,
-              pyResp ? pyResp.decided_at_ms : null,
-              pyError,
-            ],
-          );
-        } catch (dbErr) {
-          logger.debug('[Monkey] k-shadow parity log insert failed (fail-soft)', {
-            err: dbErr instanceof Error ? dbErr.message : String(dbErr),
-          });
-        }
-      })();
     }
 
     // Identity crystallization (§3.4 Pillar 3): after 50 ticks, start
@@ -7490,7 +7388,15 @@ export class MonkeyKernel extends EventEmitter {
     // #931 exit-attribution: gate name (e.g. 'conviction_failed', 'bracket_sl');
     // defaults to exitReason for back-compat at call-sites we haven't migrated.
     const exitGate = req.exitGate ?? exitReason;
-    if (this.shouldRouteOrdersToPaper()) {
+    // 2026-06-01 — operator MANDATE: the kernel must NEVER place a live close
+    // when it is disengaged from the exchange. ANY non-'auto' execution mode
+    // (paper_only AND pause) routes the close through the paper-close branch,
+    // which skips live-origin rows entirely — the operator owns every live
+    // position. Previously only `shouldRouteOrdersToPaper()` (paper_only) was
+    // checked here, so under 'pause' the kernel still hit the LIVE reduceOnly
+    // path and closed an operator position for a loss. Live closes happen ONLY
+    // in 'auto'.
+    if (this.executionMode !== 'auto' || this.shouldRouteOrdersToPaper()) {
       if (!Number.isFinite(markPrice) || markPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping close', {
           symbol,
@@ -7533,6 +7439,13 @@ export class MonkeyKernel extends EventEmitter {
           L: { pnl: 0, qty: 0 },
         };
         if (rows.length === 0) {
+          // Operator paper MANDATE: with no matching open kernel-instance
+          // rows and the kernel disengaged from live, do NOT paper-close the
+          // bare tradeId — its origin is unknown and a live position would be
+          // booked as a phantom. Leave it for the operator.
+          if (this.executionMode !== 'auto') {
+            return { executed: false, orderId: null, reason: 'paper_mandate_live_position_untouched' };
+          }
           // #931 safe-pnl — compute from the row's own data.
           const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
@@ -7560,6 +7473,18 @@ export class MonkeyKernel extends EventEmitter {
         // accounts for the position's own entry/exit, so is correct per-row).
         let orderId: string | null = null;
         for (const row of rows) {
+          // Operator paper MANDATE: while executionMode != 'auto' the kernel
+          // is fully disengaged from live. A live-origin row (non-paper
+          // order_id) is the operator's to manage — NEVER paper-close it
+          // (that books phantom PnL and orphans the real exchange position).
+          // Leave it open and untouched.
+          const isPaperOrigin = !!(row.order_id && row.order_id.startsWith('paper-'));
+          if (this.executionMode !== 'auto' && !isPaperOrigin) {
+            logger.debug('[Monkey] paper MANDATE — skip live-origin row (operator-owned)', {
+              rowId: row.id, orderId: row.order_id, executionMode: this.executionMode,
+            });
+            continue;
+          }
           const closeOrderId = row.order_id ? `paper-close-${row.order_id}` : `paper-close-${row.id}`;
           let explicitPnl: number | null = null;
           if (row.order_id && row.order_id.startsWith('paper-')) {
@@ -8494,7 +8419,8 @@ export class MonkeyKernel extends EventEmitter {
    * veto — treat veto as the expected "she decided but kernel blocked"
    * outcome, log it, and continue the tick.
    *
-   * This is gated by process.env.MONKEY_EXECUTE='true' in loop.ts.
+   * Order placement is routed live vs paper by shouldRouteOrdersToPaper()
+   * (executionMode); 'pause' suppresses entries upstream at each agent block.
    * v0.3 order surface: market IOC, no SL/TP (managed loop covers those
    * the same way liveSignalEngine relies on it).
    */
@@ -8535,6 +8461,13 @@ export class MonkeyKernel extends EventEmitter {
     cellDirection?: 'TREND_UP' | 'CHOP' | 'TREND_DOWN' | null;
   }): Promise<{ executed: boolean; orderId: string | null; reason: string; tradeId?: string | null }> {
     const { symbol, side, marginUsdt, entryPrice, minNotional } = req;
+    // 2026-06-01 — capture the paper/live routing decision ONCE for the whole
+    // entry. shouldRouteOrdersToPaper() reads internal rotation state that a
+    // concurrent close-reward can mutate; evaluating it separately for the
+    // veto's `isLive`, the paper credential/state setup, and the final routing
+    // branch (with awaits between) could let them disagree and re-open a
+    // paper_only bypass (Copilot review #1060). One snapshot, used everywhere.
+    const routeToPaper = this.shouldRouteOrdersToPaper();
     // 2026-05-13 — continuous-regime leverage sanity bound.
     //
     // Discrete mode leverage (50× EXPLORATION / 5× INTEGRATION) can
@@ -8746,7 +8679,7 @@ export class MonkeyKernel extends EventEmitter {
       );
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
       if (!userId) {
-        if (this.shouldRouteOrdersToPaper()) {
+        if (routeToPaper) {
           // Paper mode — resolve a user_id that satisfies the
           // autonomous_trades.user_id → users(id) foreign key. Prefer
           // any existing user; on a fresh paper/staging DB (empty
@@ -8779,7 +8712,7 @@ export class MonkeyKernel extends EventEmitter {
           return { executed: false, orderId: null, reason: 'no_credentials' };
         }
       }
-      if (this.shouldRouteOrdersToPaper()) {
+      if (routeToPaper) {
         // Paper mode — synthetic risk-kernel state at the paper
         // bankroll, no exchange call. Equity matches what the sizing
         // path (fetchAccountContext) used, so the risk kernel's
@@ -8840,8 +8773,23 @@ export class MonkeyKernel extends EventEmitter {
     // 2026-05-13 — pass monkeyMode through so risk kernel's headroom
     // check is regime-conditional (35% reserve EXPLORATION, 15% INTEGRATION).
     const monkeyMode = symState?.lastMode ?? undefined;
+    // 2026-06-01 (paper_only MANDATE fix): `isLive` is the flag
+    // checkExecutionMode uses to decide whether THIS order would hit the
+    // live exchange — so it MUST describe the order's actual routing, not
+    // the mode. The prior `mode === 'auto'` was circular: when the operator
+    // set execution mode = 'paper_only', isLive was false by construction,
+    // so the `paper_only && isLiveOrder` block in checkExecutionMode could
+    // NEVER fire → the kernel kept opening LIVE positions while the UI
+    // showed paper (operator-MANDATE violation, confirmed in prod 06-01).
+    // `!routeToPaper` is the true "this order goes live" predicate
+    // (executionMode='paper_only' + internal paper-rotation), captured once at the top
+    // of executeEntry so the veto and the actual routing can't diverge. The
+    // veto is ENTRY-ONLY (it never blocks a close). In paper_only/pause the
+    // close + reconciler paths disengage from live separately (routing to the
+    // paper book / early-returning), so existing live positions are left for
+    // the operator rather than force-closed by the kernel.
     const kernelContext: KernelContext = {
-      isLive: mode === 'auto', mode, symbolMaxLeverage,
+      isLive: !routeToPaper, mode, symbolMaxLeverage,
       monkeyMode: monkeyMode ?? undefined,
     };
     const decision = evaluatePreTradeVetoes(order, kernelState, kernelContext);
@@ -9044,7 +8992,7 @@ export class MonkeyKernel extends EventEmitter {
         ? (req.side === 'long' ? 'LONG' : 'SHORT')
         : undefined;
 
-    if (this.shouldRouteOrdersToPaper()) {
+    if (routeToPaper) {
       if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping entry', {
           symbol,
@@ -9542,7 +9490,7 @@ export class MonkeyKernel extends EventEmitter {
 
   /**
    * Advance + resolve hindsight/counterfactual-regret watches for one symbol
-   * (MONKEY_HINDSIGHT_REGRET_LIVE, default OFF; caller gates; DESIGN HYPOTHESIS).
+   * (CANONICAL — always on).
    *
    * For each active watch this tick:
    *   1. update `lastCounterfactualPnlUsdt` = pnl of having HELD to NOW (this
@@ -9668,7 +9616,6 @@ export class MonkeyKernel extends EventEmitter {
     closeLane?: 'scalp' | 'swing' | 'trend';
     regimeAtClose?: string;
   }): Promise<void> {
-    if (!isHindsightRegretLive()) return;
     try {
       const { tradeIds, symbol, side } = params;
       const sideSign: 1 | -1 = side === 'long' ? 1 : -1;
@@ -10708,12 +10655,11 @@ export class MonkeyKernel extends EventEmitter {
     // 2026-05-29 (issue #1032) — CHRONIC expectancy-based membership
     // demote. Catches the negative-EV bleeder the 5-consecutive-loss
     // breaker misses (tiny wins interspersed between large losses never
-    // hit 5-in-a-row). Flag-gated behind MONKEY_ROTATION_EXPECTANCY_LIVE
-    // (default OFF). When off, applyChronicDemote returns demoted:false
-    // unconditionally and behaviour is byte-for-byte unchanged. Only
-    // evaluated when the acute breaker did NOT already demote and the
-    // kernel is still live.
-    const expectancyLive = expectancyLiveEnabled();
+    // hit 5-in-a-row).
+    // The expectancy firewall is CANONICAL (always on) — it's how the kernel
+    // governs its own capital, not an operator dial. Only evaluated when the
+    // acute breaker did NOT already demote and the kernel is still live.
+    const expectancyLive = true;
     if (expectancyLive && !rotationResult.demoted && this.rotation.mode === 'live') {
       const peers = this.buildRotationPeerSnapshots(expectancyLive);
       const chronic = applyChronicDemote(this.rotation, peers, expectancyLive);
@@ -10782,7 +10728,7 @@ export class MonkeyKernel extends EventEmitter {
    * kernel's paper-mode WR has reached the gate, promotes.
    */
   private tryAutoPromote(symbol: string | undefined): void {
-    const expectancyLive = expectancyLiveEnabled();
+    const expectancyLive = true;
     const peers = this.buildRotationPeerSnapshots(expectancyLive);
     const reason = shouldAutoPromote(this.rotation, peers, expectancyLive);
     if (!reason) return;
@@ -10835,8 +10781,8 @@ export class MonkeyKernel extends EventEmitter {
    * THE CAPITAL FIREWALL GATE. Decide whether placeOrder calls route to
    * the paper simulator instead of the real exchange. Two paths reach
    * this:
-   *   1. The global `MONKEY_PAPER_MODE=true` env (back-compat, applies
-   *      to ALL kernels — used historically for whole-kernel dry runs).
+   *   1. executionMode === 'paper_only' (the operator paper MANDATE — the
+   *      whole kernel disengages from live and trades its paper book).
    *   2. This kernel's rotation state has been demoted to 'paper'
    *      (per-kernel capital firewall — kernel_rotation.ts).
    * Either path routes the same way through `paperPlaceOrder`, so the
@@ -10856,7 +10802,16 @@ export class MonkeyKernel extends EventEmitter {
    *   (see kernel_rotation.ts module header guard-note).
    */
   private shouldRouteOrdersToPaper(): boolean {
-    return isMonkeyPaperMode() || this.rotation.mode === 'paper';
+    // 2026-06-01 — operator paper MANDATE: in 'paper_only' the kernel fully
+    // disengages from the live exchange and trades its own paper book, so
+    // BOTH entries and closes route to paper here. ('pause' is NOT routed to
+    // paper — it blocks new orders entirely via the entry veto; existing
+    // live positions are left for the operator. See executeExit / reconciler
+    // gating which skip live-origin positions whenever executionMode != auto.)
+    return (
+      this.executionMode === 'paper_only' ||
+      this.rotation.mode === 'paper'
+    );
   }
 
   /**

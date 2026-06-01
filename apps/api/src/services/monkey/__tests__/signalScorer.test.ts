@@ -27,7 +27,6 @@ function facts(over: Partial<GateFacts>): GateFacts {
     modeCanEnter: true,
     sideShortRefused: false,
     sizeValue: 100,
-    executeEnabled: true,
     tradingPaused: false,
     lVetoed: false,
     cappedMargin: 100,
@@ -49,7 +48,6 @@ describe('resolveEntryGate', () => {
     expect(resolveEntryGate(facts({ modeCanEnter: false }))).toBe('mode');
     expect(resolveEntryGate(facts({ sideShortRefused: true }))).toBe('short_refused');
     expect(resolveEntryGate(facts({ sizeValue: 0 }))).toBe('min_notional');
-    expect(resolveEntryGate(facts({ executeEnabled: false }))).toBe('observe_only');
     expect(resolveEntryGate(facts({ tradingPaused: true }))).toBe('trading_paused');
     expect(resolveEntryGate(facts({ lVetoed: true }))).toBe('l_veto');
     expect(resolveEntryGate(facts({ cappedMargin: 0 }))).toBe('arbiter_zero');

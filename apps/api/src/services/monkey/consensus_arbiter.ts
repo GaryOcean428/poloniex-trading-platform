@@ -39,7 +39,6 @@
  *   CONSENSUS_RETHINK_CONSECUTIVE=3            consecutive-loss rethink trigger
  *   CONSENSUS_RETHINK_CUMULATIVE_FRAC=0.05     cumulative-loss-vs-bank trigger
  *   CONSENSUS_RETHINK_SIZE_FACTOR=0.5          size reduction when rethink active
- *   CONSENSUS_ARBITER_LIVE=false               default off — arbiter shadow-mode
  *
  * QIG purity: weighted-mean SLERP between scalars only. Pure decision
  * logic; no geometric ops in this module.
@@ -118,10 +117,6 @@ function envInt(name: string, defaultVal: number): number {
   if (!raw) return defaultVal;
   const v = parseInt(raw, 10);
   return Number.isFinite(v) ? v : defaultVal;
-}
-
-export function consensusArbiterLive(): boolean {
-  return process.env.CONSENSUS_ARBITER_LIVE === 'true';
 }
 
 /**

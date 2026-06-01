@@ -126,8 +126,22 @@ export async function scanPredictionResiduals(): Promise<ResidualScanResult> {
             `SELECT pnl, status FROM autonomous_trades WHERE id = $1`,
             [row.trade_id],
           );
-          if (tradeQ.rows[0]?.status === 'closed') {
+          const tradeStatus = tradeQ.rows[0]?.status;
+          if (tradeStatus === 'closed') {
             realisedPnl = Number(tradeQ.rows[0].pnl ?? 0);
+          } else if (tradeStatus) {
+            // 2026-06-01 — DEFER undecided. The parent trade is still OPEN, so
+            // the realised value is not yet known. Writing a realisedPnl=0
+            // residual here makes direction_match structurally false
+            // (Math.sign(0) ≠ ±1) and — because the NOT EXISTS scan guard then
+            // stops the row being re-evaluated — that false row PERMANENTLY
+            // contaminates the prediction-skill window: it drags
+            // directionMatchRate below 0.5, which predictionRewardEmitter's
+            // anti-windup gate reads as "no skill" and zeroes BOTH predDop and
+            // predSer (prod symptom: predDop/predSer=0.000 indefinitely). Skip
+            // until the trade closes — re-selected next pass (no residual row
+            // yet), so the corpus only ever records DECIDED outcomes.
+            continue;
           }
         }
 

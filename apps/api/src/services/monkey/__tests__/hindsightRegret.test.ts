@@ -10,7 +10,9 @@
  *   - targeted GABA              → bound to (regime,side) pattern, never global
  *   - observer scale             → magnitude tracks the kernel's own MAD
  *   - fail-closed                → invalid price/margin → zero vector
- *   - flag OFF                   → isHindsightRegretLive() false by default
+ *
+ * Hindsight is CANONICAL (always on) — the former MONKEY_HINDSIGHT_REGRET_LIVE
+ * env gate was removed entirely; there is no off path to test.
  *
  * The FIXTURES block is shared verbatim with the Python parity test
  * (test_hindsight_regret.py) so TS↔Py outputs are asserted equal within
@@ -27,7 +29,6 @@ import {
   deriveMagnitude,
   gabaTargetKey,
   medianAndMad,
-  isHindsightRegretLive,
   type CloseSenseBundle,
   type CounterfactualOutcome,
 } from '../hindsightRegret.js';
@@ -246,25 +247,6 @@ describe('deriveMagnitude + medianAndMad', () => {
   it('returns null below MIN_SAMPLES or zero MAD', () => {
     expect(deriveMagnitude(0.3, [0.01])).toBeNull();
     expect(deriveMagnitude(0.3, [0.05, 0.05, 0.05, 0.05, 0.05])).toBeNull(); // MAD 0
-  });
-});
-
-describe('hindsight is canonical (no gate)', () => {
-  it('always live — not env-gated', () => {
-    const _original = process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
-    try {
-      expect(isHindsightRegretLive()).toBe(true);
-      process.env.MONKEY_HINDSIGHT_REGRET_LIVE = 'false';
-      expect(isHindsightRegretLive()).toBe(true);
-      delete process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
-      expect(isHindsightRegretLive()).toBe(true);
-    } finally {
-      if (_original !== undefined) {
-        process.env.MONKEY_HINDSIGHT_REGRET_LIVE = _original;
-      } else {
-        delete process.env.MONKEY_HINDSIGHT_REGRET_LIVE;
-      }
-    }
   });
 });
 
