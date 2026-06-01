@@ -49,11 +49,11 @@ import { logger } from '../../utils/logger.js';
 // (PNL_STDDEV_MIN_SAMPLES = 5 in loop.ts pushReward).
 const MIN_SAMPLES = 5;
 
-// Per-tick window: scan residuals evaluated in the last DEFAULT_WINDOW_MS.
-// 5 min is the cache-warm window for the chemistry tick loop; it bounds
-// how much old prediction error keeps reinforcing chemistry after the
-// underlying regime has shifted.
-const DEFAULT_WINDOW_MS = 5 * 60 * 1000;
+// Sample-based lookback: closed-trade residuals arrive on trade-duration
+// cadence, not wall-clock tick cadence. A 5-minute window can permanently
+// starve hold-heavy kernels below MIN_SAMPLES, so read the latest decided
+// outcomes regardless of age and report their age span for transparency.
+const SAMPLE_LOOKBACK_LIMIT = 500;
 
 // Output caps (structural — mirror trade-outcome pushReward caps).
 const DOPAMINE_CAP = 0.5;
@@ -74,6 +74,7 @@ export interface ResidualSummary {
   directionMatchRate: number;
   within1SigmaRate: number;
   madResidualNormalized: number;
+  sampleAgeSpanMs: number;
 }
 
 export interface PredictionChemistryDeltas {
@@ -84,40 +85,43 @@ export interface PredictionChemistryDeltas {
 }
 
 /**
- * Read residuals evaluated in the last `windowMs` ms and return summary
- * statistics. Returns n=0 (no signal) on any DB error.
+ * Read the latest decided residuals and return summary statistics. Returns
+ * n=0 (no signal) on any DB error.
  */
 export async function summariseRecentResiduals(
-  windowMs: number = DEFAULT_WINDOW_MS,
+  sampleLimit: number = SAMPLE_LOOKBACK_LIMIT,
 ): Promise<ResidualSummary> {
   const empty: ResidualSummary = {
     n: 0,
     directionMatchRate: 0,
     within1SigmaRate: 0,
     madResidualNormalized: 0,
+    sampleAgeSpanMs: 0,
   };
   try {
     const rows = await pool.query<{
       direction_match: boolean;
       within_1_sigma: boolean;
       residual_normalized: string | number;
+      evaluated_at: Date | string;
     }>(
       // 2026-06-01 — count ONLY residuals tied to a CLOSED trade. A prediction
       // with no parent trade (a HOLD forecast) or an open trade has no realised
       // outcome; its placeholder realisedPnl=0 row reads as a
       // direction_match=false miss and would drag the skill rate below chance.
       // Restricting the corpus to decided outcomes makes directionMatchRate
-      // reflect real forecast skill (and releases predDop/predSer once skill is
-      // demonstrated). Pairs with predictionResidualJob deferring open trades.
-      `SELECT r.direction_match, r.within_1_sigma, r.residual_normalized
+      // reflect real forecast skill. Do NOT also require a 5-minute wall-clock
+      // window: closed outcomes arrive on trade-duration cadence, so the
+      // MIN_SAMPLES gate is now governed by the latest decided samples.
+      `SELECT r.direction_match, r.within_1_sigma, r.residual_normalized,
+              r.evaluated_at
          FROM kernel_outcome_residuals r
          JOIN kernel_predictions p ON p.id = r.prediction_id
          JOIN autonomous_trades t ON t.id = p.trade_id
-        WHERE r.evaluated_at >= NOW() - ($1 || ' milliseconds')::INTERVAL
-          AND t.status = 'closed'
+        WHERE t.status = 'closed'
         ORDER BY r.evaluated_at DESC
-        LIMIT 500`,
-      [windowMs],
+        LIMIT $1`,
+      [sampleLimit],
     );
     return summariseFromRows(rows.rows);
   } catch (err) {
@@ -137,6 +141,7 @@ export function summariseFromRows(
     direction_match: boolean;
     within_1_sigma: boolean;
     residual_normalized: string | number;
+    evaluated_at?: Date | string;
   }>,
 ): ResidualSummary {
   if (rows.length === 0) {
@@ -145,22 +150,32 @@ export function summariseFromRows(
       directionMatchRate: 0,
       within1SigmaRate: 0,
       madResidualNormalized: 0,
+      sampleAgeSpanMs: 0,
     };
   }
   let matches = 0;
   let within1 = 0;
   const resids: number[] = [];
+  const evaluatedMs: number[] = [];
   for (const r of rows) {
     if (r.direction_match) matches += 1;
     if (r.within_1_sigma) within1 += 1;
     const v = Number(r.residual_normalized);
     if (Number.isFinite(v)) resids.push(v);
+    if (r.evaluated_at !== undefined) {
+      const ms = new Date(r.evaluated_at).getTime();
+      if (Number.isFinite(ms)) evaluatedMs.push(ms);
+    }
   }
+  const sampleAgeSpanMs = evaluatedMs.length > 1
+    ? Math.max(...evaluatedMs) - Math.min(...evaluatedMs)
+    : 0;
   return {
     n: rows.length,
     directionMatchRate: matches / rows.length,
     within1SigmaRate: within1 / rows.length,
     madResidualNormalized: medianAbsoluteDeviation(resids),
+    sampleAgeSpanMs,
   };
 }
 
@@ -201,7 +216,7 @@ export function predictionChemistryDeltas(
     return {
       dopamineDelta: 0,
       serotoninDelta: 0,
-      source: `prediction_residual_insufficient:n=${summary.n}`,
+      source: `prediction_residual_insufficient:n=${summary.n}:age_span_ms=${Math.round(summary.sampleAgeSpanMs)}`,
       summary,
     };
   }
@@ -219,7 +234,7 @@ export function predictionChemistryDeltas(
     return {
       dopamineDelta: 0,
       serotoninDelta: 0,
-      source: `prediction_residual_anti_correlated:rate=${summary.directionMatchRate.toFixed(3)}`,
+      source: `prediction_residual_anti_correlated:rate=${summary.directionMatchRate.toFixed(3)}:n=${summary.n}:age_span_ms=${Math.round(summary.sampleAgeSpanMs)}`,
       summary,
     };
   }
@@ -237,7 +252,7 @@ export function predictionChemistryDeltas(
   return {
     dopamineDelta,
     serotoninDelta,
-    source: `prediction_residual:n=${summary.n}`,
+    source: `prediction_residual:n=${summary.n}:age_span_ms=${Math.round(summary.sampleAgeSpanMs)}`,
     summary,
   };
 }
@@ -248,8 +263,8 @@ export function predictionChemistryDeltas(
  * the deltas are zero (see P15 anchor above).
  */
 export async function computePredictionChemistry(
-  windowMs: number = DEFAULT_WINDOW_MS,
+  sampleLimit: number = SAMPLE_LOOKBACK_LIMIT,
 ): Promise<PredictionChemistryDeltas> {
-  const summary = await summariseRecentResiduals(windowMs);
+  const summary = await summariseRecentResiduals(sampleLimit);
   return predictionChemistryDeltas(summary);
 }

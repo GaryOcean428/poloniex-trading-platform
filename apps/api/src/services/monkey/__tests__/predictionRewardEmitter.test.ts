@@ -60,6 +60,14 @@ describe('summariseFromRows', () => {
     ]);
     expect(s.madResidualNormalized).toBeCloseTo(0.5);
   });
+
+  it('reports evaluated sample age span when timestamps are present', () => {
+    const s = summariseFromRows([
+      { direction_match: true, within_1_sigma: true, residual_normalized: 0.5, evaluated_at: '2026-06-01T00:05:00.000Z' },
+      { direction_match: true, within_1_sigma: true, residual_normalized: -0.5, evaluated_at: '2026-06-01T00:00:00.000Z' },
+    ]);
+    expect(s.sampleAgeSpanMs).toBe(5 * 60 * 1000);
+  });
 });
 
 describe('predictionChemistryDeltas', () => {
@@ -69,6 +77,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 1.0,
       within1SigmaRate: 1.0,
       madResidualNormalized: 0.6745,
+      sampleAgeSpanMs: 0,
     });
     expect(d.dopamineDelta).toBe(0);
     expect(d.serotoninDelta).toBe(0);
@@ -81,6 +90,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.5,
       within1SigmaRate: 0.68,
       madResidualNormalized: 0.6745,
+      sampleAgeSpanMs: 0,
     });
     expect(d.dopamineDelta).toBeCloseTo(0, 6);
   });
@@ -91,6 +101,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.9,
       within1SigmaRate: 0.7,
       madResidualNormalized: 0.6745,
+      sampleAgeSpanMs: 0,
     });
     expect(d.dopamineDelta).toBeGreaterThan(0);
     // tanh(0.4) * 0.5 ≈ 0.190
@@ -107,6 +118,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.1,
       within1SigmaRate: 0.7,
       madResidualNormalized: 0.6745,
+      sampleAgeSpanMs: 0,
     });
     expect(d.dopamineDelta).toBe(0);
     expect(d.serotoninDelta).toBe(0);
@@ -119,6 +131,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 1.0,
       within1SigmaRate: 1.0,
       madResidualNormalized: 0.6745,
+      sampleAgeSpanMs: 0,
     });
     expect(d.dopamineDelta).toBeLessThanOrEqual(0.5);
     expect(d.dopamineDelta).toBeGreaterThan(0.2);
@@ -130,6 +143,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.5,
       within1SigmaRate: 0.68,
       madResidualNormalized: 0.6745,
+      sampleAgeSpanMs: 0,
     });
     expect(d.serotoninDelta).toBeCloseTo(0, 6);
   });
@@ -141,6 +155,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.5,
       within1SigmaRate: 0.9,
       madResidualNormalized: 0.1,
+      sampleAgeSpanMs: 0,
     });
     expect(d.serotoninDelta).toBeLessThan(0);
   });
@@ -152,6 +167,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.5,
       within1SigmaRate: 0.3,
       madResidualNormalized: 3.0,
+      sampleAgeSpanMs: 0,
     });
     expect(d.serotoninDelta).toBeLessThan(0);
   });
@@ -162,6 +178,7 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.5,
       within1SigmaRate: 0.0,
       madResidualNormalized: 100,
+      sampleAgeSpanMs: 0,
     });
     expect(d.serotoninDelta).toBeGreaterThanOrEqual(-0.2);
     expect(d.serotoninDelta).toBeLessThan(-0.15);
@@ -173,7 +190,9 @@ describe('predictionChemistryDeltas', () => {
       directionMatchRate: 0.5,
       within1SigmaRate: 0.68,
       madResidualNormalized: 0.6745,
+      sampleAgeSpanMs: 12_345,
     });
     expect(d.source).toContain('n=17');
+    expect(d.source).toContain('age_span_ms=12345');
   });
 });

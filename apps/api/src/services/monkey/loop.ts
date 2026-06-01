@@ -10119,16 +10119,21 @@ export class MonkeyKernel extends EventEmitter {
           kappaAtExit: symState?.kappa,
           agent: agentKey,
         });
-        // The Python autonomic surface for live-auto closes is fed exclusively
-        // from the polo-authoritative close (the callAutonomicReward fanout
-        // inside applyPoloRealizedPnlAfterClose). The legacy synthetic Py push,
-        // gated by the removed CANONICAL_POLO_PNL_LIVE knob, is gone — and since
-        // that knob was globally true in prod the synthetic push was already
-        // suppressed for every close, so removing it is behaviour-neutral.
-        // (Paper / no-orderId closes return early in that helper; their TS
-        // chemistry is consumed via the own_close pushReward above. They do not
-        // currently feed the Py peer's close-chemistry — a pre-existing gap
-        // routed to the consensus-reconciliation work, not this change.)
+        // Mirror only when no Polo-authoritative fanout will follow. Main
+        // live-auto closes pass a representative tradeId and later feed Python
+        // from applyPoloRealizedPnlAfterClose using source=polo_authoritative_close
+        // (net-of-fees canonical surface). Paper / no-Polo-data synthetic closes
+        // have no such fanout, so they must still reach Py once here.
+        if (!tradeId) {
+          void callAutonomicReward({
+            instanceId: this.instanceId,
+            source: 'own_close',
+            symbol,
+            realizedPnlUsdt: t.pnl,
+            marginUsdt: margin,
+            kappaAtExit: symState?.kappa,
+          });
+        }
       }
       // #1009 PR2: HEART chain observer is fed ONLY from the
       // polo-authoritative surface in `applyPoloRealizedPnlAfterClose`.
