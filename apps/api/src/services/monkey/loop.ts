@@ -3381,12 +3381,17 @@ export class MonkeyKernel extends EventEmitter {
     } catch (_exemplarErr) {
       // fail open — exemplar failure must never block trading
     }
-    let entryThr = exemplarModifier === 0
-      ? entryThrAfterBtc
-      : {
-          value: entryThrAfterBtc.value * (1 + exemplarModifier),
-          derivation: { ...entryThrAfterBtc.derivation, exemplarModifier },
-        };
+    // Explicit type: entryThr is reassigned through several derivation shapes
+    // (btc adds a BtcBeaconReading object; exemplar + cascade add numbers). It
+    // is only ever read as `.value` (number) and `.derivation` (telemetry), so
+    // a permissive derivation value type unifies all variants.
+    let entryThr: { value: number; derivation: Record<string, number | BtcBeaconReading | null> } =
+      exemplarModifier === 0
+        ? entryThrAfterBtc
+        : {
+            value: entryThrAfterBtc.value * (1 + exemplarModifier),
+            derivation: { ...entryThrAfterBtc.derivation, exemplarModifier },
+          };
     // #795 Class B #8 — cascade conviction boost. When the liquidation-cascade
     // observer fires on the same side as the geometry candidate, lower the entry
     // threshold proportionally to cascade intensity (observer-derived, P25 compliant).
@@ -3404,7 +3409,10 @@ export class MonkeyKernel extends EventEmitter {
         derivation: {
           ...entryThr.derivation,
           cascadeModifier,
-          liqCascadeSide: liqCascadeSignal?.suggestedEntrySide,
+          // Side encoded numerically (1=long, −1=short, 0=none): the
+          // ExecutiveDecision derivation is Record<string, number>.
+          liqCascadeSide: liqCascadeSignal?.suggestedEntrySide === 'long' ? 1
+            : liqCascadeSignal?.suggestedEntrySide === 'short' ? -1 : 0,
         },
       };
     }
@@ -6614,7 +6622,7 @@ export class MonkeyKernel extends EventEmitter {
   private async getKellyRollingStats(
     agent: string,
     lane?: LaneType,
-  ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
+  ): Promise<{ winRate: number; avgWin: number; avgLoss: number; sampleCount: number } | null> {
     return getKellyRollingStats(agent, lane);
   }
 
