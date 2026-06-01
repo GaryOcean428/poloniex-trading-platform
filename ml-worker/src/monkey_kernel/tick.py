@@ -723,7 +723,7 @@ def run_tick(
         kernel_state,
         prev_basin=state.last_basin,
         drift_history=state.drift_history,
-        phi_delta=phi - last_phi,
+        phi_delta=phi_delta,  # computed once above (phi − last_phi); reuse it
         phi_history=state.phi_history,
     )
     # SENSE-1a #767 — Persist canonical sensation vector to Redis.

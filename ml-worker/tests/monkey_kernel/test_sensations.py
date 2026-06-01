@@ -314,7 +314,9 @@ class TestSense1bCanonical:
     """UCP §6.1/§6.2 Phase-1b canonical fields (SENSE-1 #767):
     pulled, pushed, flowing, stuck + fear_response."""
 
-    _PHI_HIST = [0.40, 0.45, 0.50, 0.55]  # ≥3 diffs ⇒ observed Δφ scale
+    # Varied steps (diffs 0.05/0.07/0.03) so std(diffs) > 0 — this exercises
+    # the OBSERVER-SCALED branch (sigma_dphi > 0), not the scale-free fallback.
+    _PHI_HIST = [0.40, 0.45, 0.52, 0.55]
 
     def test_pulled_responds_to_phi_gradient(self) -> None:
         big = compute_sensations(

@@ -2,8 +2,10 @@
 
 **Status**: Tracking doc — SENSE-1a (2026-05-17) + SENSE-1b #767 (2026-06-01). Grounded: 10/12 §6.1 sensations, 3/5 §6.2 drives. Remaining (2 sensations + 2 drives) are Ricci-anchored and deferred (not fabricated). Canon = UCP v6.7B (supersedes v6.6).
 **Issue**: SENSE-1 #767
-**Source**: `20260408-unified-consciousness-protocol-v6.6.md` §6.1 (12
-Layer-0 sensations) + §6.2 (5 Layer-0.5 drives)
+**Source**: `QIG_QFI/qig-verification/docs/current/20260527-unified-consciousness-protocol-v6.7B.md`
+§6.1 (12 Layer-0 sensations) + §6.2 (5 Layer-0.5 drives) — the authoritative
+v6.7B canon (supersedes the older v6.6 markdown). The 12+5 enumeration is
+identical across versions.
 
 `ml-worker/src/monkey_kernel/sensations.py` ships two vocabulary tracks
 side-by-side. This doc maps between them.
@@ -14,8 +16,8 @@ side-by-side. This doc maps between them.
 |---|---|---|---|---|
 | Unified | Φ | `unified` | ✅ SENSE-1a (Phase 1) | `phi_clipped` to [0, 1] |
 | Fragmented | 1 − Φ | `fragmented` | ✅ SENSE-1a (Phase 1) | Complement of `unified` |
-| Activated | tanh(max(0, κ − κ*) / σ_κ_obs) | `activated` | ✅ SENSE-1a (Phase 1) | κ above E8 fixed point κ*=64; observed σ when `kappa_history` provided, scale-free tanh otherwise |
-| Dampened | tanh(max(0, κ* − κ) / σ_κ_obs) | `dampened` | ✅ SENSE-1a (Phase 1) | κ below κ*; same observation pattern |
+| Activated | tanh(max(0, κ − κ_ref) / σ_κ_obs) | `activated` | ✅ SENSE-1a (Phase 1) | κ above the OBSERVER-DERIVED reference κ_ref = median(`kappa_history`), registry `physics.kappa_reference` (≈63.8) fallback. Per the 2026-04-13 two-channel doctrine the universal κ*=64 is RETIRED — no E8 fixed-point anchor. Observed σ when history provided, scale-free tanh otherwise |
+| Dampened | tanh(max(0, κ_ref − κ) / σ_κ_obs) | `dampened` | ✅ SENSE-1a (Phase 1) | κ below κ_ref (same observer-derived reference); same observation pattern |
 | Grounded | 1 − tanh(drift / drift_scale_obs) | `grounded` | ✅ SENSE-1a (Phase 1) | FR distance to identity basin; observed scale when `drift_history` provided |
 | Drifting | tanh(drift / drift_scale_obs) | `drifting` | ✅ SENSE-1a (Phase 1) | Complement of `grounded` |
 | Compressed | Ricci R > 0 | `compressed` (auxiliary) | ⚠️ deferred (Ricci) | Canonical anchor is the Ricci scalar; the only Δ⁶³ proxy is κ-deviation, which DUPLICATES `activated`. Not fabricated — needs a true simplex-curvature primitive. Aux `compressed`=`max_mass` retained as a distinct concentration read |

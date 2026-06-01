@@ -192,6 +192,14 @@ def compute_sensations(
         drift-scale for the canonical Grounded/Drifting/Homeostasis.
         When absent OR shorter than HISTORY_MIN_SAMPLES, those fall
         through to a scale-free tanh on the raw drift.
+    phi_delta : Optional[float]
+        ∇Φ for this tick (Φ_now − Φ_prev). Drives the canonical
+        Pulled (magnitude) and the Φ-direction component of
+        Flowing/Stuck, and the ∇Φ factor of Fear_Response. 0 when absent.
+    phi_history : Optional[Sequence[float]]
+        Rolling history of past Φ values. Its first-differences' std is
+        the observed Δφ scale used to scale Pulled/Flowing/Stuck. When
+        absent OR too short, those fall through to a scale-free tanh.
     """
     if s.neurochemistry is None:
         raise ValueError(
