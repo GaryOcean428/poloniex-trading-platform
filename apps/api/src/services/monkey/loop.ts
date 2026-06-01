@@ -498,12 +498,13 @@ export function observerConvictionStreakRequired(
 }
 
 // Kill switch + paper routing are CANONICAL on the agent_execution_mode
-// tri-state (this.executionMode, fetched per-tick from the DB). 'pause' gates
-// entry-order placement only — exits (scalp_exit, auto_flatten, hard SL, rejust
-// exits) are NOT gated so open positions close cleanly. 'paper_only' routes
-// both entries and closes to the paper book (see shouldRouteOrdersToPaper).
-// The former MONKEY_TRADING_PAUSED / MONKEY_PAPER_MODE / MONKEY_EXECUTE env
-// knobs were folded into this tri-state and removed.
+// tri-state (this.executionMode, fetched per-tick from the DB). 'pause'
+// suppresses new entries AND discretionary profit-harvest (the Agent L sweep);
+// risk-management exits (scalp_exit, auto_flatten, hard SL, rejust) are NOT
+// gated so open positions still close cleanly. 'paper_only' routes both entries
+// and closes to the paper book (see shouldRouteOrdersToPaper). The former
+// MONKEY_TRADING_PAUSED / MONKEY_PAPER_MODE / MONKEY_EXECUTE env knobs were
+// folded into this tri-state and removed.
 
 // ─── L-veto-over-K (Option A) ─────────────────────────────────────
 //
@@ -8783,8 +8784,10 @@ export class MonkeyKernel extends EventEmitter {
     // `!routeToPaper` is the true "this order goes live" predicate
     // (executionMode='paper_only' + internal paper-rotation), captured once at the top
     // of executeEntry so the veto and the actual routing can't diverge. The
-    // veto is ENTRY-ONLY, so paper_only now blocks new LIVE ENTRIES while
-    // closes of existing real positions still route real (no orphaned positions).
+    // veto is ENTRY-ONLY (it never blocks a close). In paper_only/pause the
+    // close + reconciler paths disengage from live separately (routing to the
+    // paper book / early-returning), so existing live positions are left for
+    // the operator rather than force-closed by the kernel.
     const kernelContext: KernelContext = {
       isLive: !routeToPaper, mode, symbolMaxLeverage,
       monkeyMode: monkeyMode ?? undefined,

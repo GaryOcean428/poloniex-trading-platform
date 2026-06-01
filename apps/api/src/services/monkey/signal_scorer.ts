@@ -57,7 +57,7 @@ export interface GateFacts {
   sideShortRefused: boolean;
   /** Derived entry margin before capping. <= 0 means below min notional. */
   sizeValue: number;
-  /** executionMode === 'pause' (the operator kill switch). */
+  /** true when the operator kill switch (executionMode === 'pause') is active. */
   tradingPaused: boolean;
   lVetoed: boolean;
   /** K margin after the arbiter share cap × chop size factor. */

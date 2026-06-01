@@ -17,8 +17,7 @@
  * so the operator flips it from the UI without redeploying.
  */
 import { describe, it, expect } from 'vitest';
-
-type ExecutionMode = 'auto' | 'paper_only' | 'pause';
+import type { ExecutionMode } from '../../executionModeService.js';
 
 // Mirror of the production gate: loop.ts suppresses new entries when
 // this.executionMode === 'pause'. This test pins that contract so a refactor
