@@ -166,6 +166,10 @@ export interface BasinObservables {
   /** Current wall-clock (ms). Used with `modeTransitionTimesMs` to
    *  compute thrash rate over an observable interval. */
   nowMs?: number;
+  /** Kernel tick cadence (ms) — the per-tick scale that renders the
+   *  mode-transition rate dimensionless (transitions per tick-interval).
+   *  Absent → fall back to the window's own mean inter-transition gap. */
+  tickIntervalMs?: number;
   /** Rolling κ history from prior ticks. Used to derive the endorphin
    *  κ-convergence bell width from the basin's OWN κ stddev (instead
    *  of the prior hardcoded SIGMA_KAPPA=10.0 which didn't even match
@@ -334,19 +338,35 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   const dop = 1 - Math.exp(-(dopFromPhi + dopFromReward));
 
   // ─── Serotonin ───────────────────────────────────────────────────
-  // §29.1: stability / equilibrium. 2026-05-16 (#715, derivation-only):
-  // ser = 1 - mode_thrash_rate, where mode_thrash_rate is the count of
-  // mode transitions in `modeTransitionTimesMs` divided by the window
-  // length (`nowMs - earliestTransitionMs`). Pure rate, dimensionless.
+  // §29.1: stability / equilibrium. 2026-05-16 (#715, derivation-only)
+  // + 2026-06-01 (mode-thrash density fix): serBase = exp(-thrashPerTick),
+  // where thrashPerTick = (transitionCount / windowMs) × tickIntervalMs —
+  // the mode-transition density expressed per tick-interval. windowMs is
+  // `nowMs - earliestTransitionMs`; tickIntervalMs is the kernel cadence
+  // (falls back to the window's own mean inter-transition gap when absent).
+  // exp() soft-saturates without a dead-zero floor (the old
+  // `clip(1 - count/bvHistory.length, 0, 1)` structurally pinned at 0 once
+  // both HISTORY_MAX-capped arrays saturated — see the per-branch note below).
   //
-  // High thrash → low ser (kernel is bouncing between modes, unstable).
-  // No thrash → ser ≈ 1 (kernel is settled, stable mood).
+  // High thrash → thrashPerTick→1 → ser ≈ exp(-1)=0.37 (bouncing, unstable).
+  // No thrash → thrashPerTick→0 → ser ≈ 1 (kernel is settled, stable mood).
   //
   // Fallback (no observables): `1 - bv_z_score`-style behaviour using
   // basinVelocity history when available; legacy `1/max(bv, 0.01)` when
   // not (preserves prior path for callers that don't supply state).
   let serBase: number;
-  if (obs?.modeTransitionTimesMs && obs.modeTransitionTimesMs.length > 0 && obs.nowMs != null) {
+  // The mode-transition density branch needs a per-tick cadence to make the
+  // transition rate dimensionless. Require tickIntervalMs (> 0); without it,
+  // (count/windowMs)·(windowMs/count) collapses to a constant exp(-1) that
+  // carries NO gradient — so fall through to the bv-z-score branch instead,
+  // which IS observer-derived and gradient-preserving (Qodo review #1058).
+  if (
+    obs?.modeTransitionTimesMs &&
+    obs.modeTransitionTimesMs.length > 0 &&
+    obs.nowMs != null &&
+    obs.tickIntervalMs != null &&
+    obs.tickIntervalMs > 0
+  ) {
     const oldest = obs.modeTransitionTimesMs[0]!;
     const windowMs = obs.nowMs - oldest;
     if (windowMs <= 0) {
@@ -355,24 +375,32 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
       // thrash to subtract).
       serBase = 1;
     } else {
-      // Transitions per ms. Multiplying by the window length gives the
-      // dimensionless transition count / window — a probability that
-      // any given ms in the window saw a transition. Clip to [0,1].
+      // 2026-06-01 (steady-state-pinning fix, serotonin mode-transition
+      // branch): the prior shape
+      //   transitionsPerTick = modeTransitionTimesMs.length / bvHistory.length
+      //   serBase = clip(1 - transitionsPerTick, 0, 1)
+      // STRUCTURALLY pins at 0 on any mature kernel. Both arrays cap at
+      // HISTORY_MAX (=100): bvHistory fills every tick, modeTransitionTimesMs
+      // fills on every transition, so once a long-running kernel has logged
+      // ≥100 transitions BOTH lengths = 100 → ratio = 1.0 PERMANENTLY,
+      // regardless of actual recent thrash. Production showed ser=0.00 for
+      // 134/134 ticks (logs 2026-06-01). This is the same one-sided-clamp
+      // meta-pattern the bv-z-score fallback below was already fixed for —
+      // see [[feedback_steady_state_pinning_pattern]]; the count-ratio
+      // numerator and denominator are two independently-capped windows,
+      // so their ratio carries no gradient once both saturate.
+      //
+      // Fix: use the TIME-density the doc above already intends ("count of
+      // mode transitions … divided by the window length") — transitions per
+      // tick-interval — and soft-saturate with exp() (the same gradient-
+      // preserving form dopamine uses). `windowMs` shrinks as transitions
+      // get denser, so the rate keeps gradient even when the array is full:
+      //   every-tick thrash → 1.0 → exp(-1)=0.37
+      //   every-other-tick  → 0.5 → exp(-0.5)=0.61
+      //   calm/sparse       → 0   → 1.0
       const transitionsPerMs = obs.modeTransitionTimesMs.length / windowMs;
-      const thrashRate = clip(transitionsPerMs * windowMs / obs.modeTransitionTimesMs.length, 0, 1);
-      // The above simplifies to 1 when transitions are uniform. The
-      // meaningful read is: how DENSE is thrash relative to the window.
-      // Use transition count / max-possible-count where max is one
-      // transition per tick (caller-defined; we infer from history len).
-      // Simpler derivation: thrash_rate = count(transitions) / count(ticks in window).
-      // The caller supplies the transition timestamps; the basin's
-      // bvHistory length is the natural tick-count denominator.
-      const tickCount = obs.basinVelocityHistory?.length ?? obs.modeTransitionTimesMs.length;
-      const transitionsPerTick = obs.modeTransitionTimesMs.length / Math.max(tickCount, 1);
-      serBase = clip(1 - transitionsPerTick, 0, 1);
-      // (The intermediate `thrashRate` calc above is retained for
-      // forward extensibility; the final serBase is the per-tick rate.)
-      void thrashRate;
+      const thrashPerTick = transitionsPerMs * obs.tickIntervalMs;
+      serBase = Math.exp(-thrashPerTick);
     }
   } else if (obs?.basinVelocityHistory && obs.basinVelocityHistory.length >= HISTORY_MIN_SAMPLES) {
     // 2026-05-25 (CC2 audit F2 follow-up): the prior shape
