@@ -13,7 +13,12 @@ CREATE TABLE IF NOT EXISTS symbol_fill_quality (
   slippage_frac   FLOAT8 NOT NULL,            -- (fill - entry) / entry, signed
   resting_ms      BIGINT,                     -- null if taker or unknown
   outcome_pnl     FLOAT8,                     -- null until close
-  trade_id        BIGINT REFERENCES autonomous_trades(id) ON DELETE SET NULL
+  -- autonomous_trades.id is UUID (000_base_schema) — the FK column MUST match
+  -- it. The original BIGINT made the constraint un-creatable, which aborted the
+  -- whole migration run ("refusing to start API") and blocked every deploy. 072
+  -- had never applied (it failed on the first deploy that reached it), so
+  -- fixing the type in place is safe.
+  trade_id        UUID REFERENCES autonomous_trades(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sfq_symbol_time ON symbol_fill_quality (symbol, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sfq_order_type ON symbol_fill_quality (symbol, order_type, captured_at DESC);
