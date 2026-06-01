@@ -806,62 +806,10 @@ def run_tick(
     # This makes heart the central clock controlling regime/reward/conviction/loops. (P6 + v6.7B §§9.5-9.9)
     # Active governance: tacking balance directly modulates conviction (breathing-as-tacking drives the system).
     tacking_balance = getattr(heart, "derived_tacking_balance", lambda: 0.5)() if heart else 0.5
-    # Fixed UnboundLocalError for self_obs_bias (residual from wave edits).
-    # Default 0.0; in full P24 wiring this would come from Pillar3 self-observation / sovereignty_dynamics.
-    self_obs_bias = 0.0
-    effective_self_obs = self_obs_bias * (1.0 + 0.2 * (conviction_mod - 1.0)) * (0.8 + 0.4 * tacking_balance)  # heart governor active
-
-    # P24 wiring (full embodiment, not presence): always compute 21-field metrics surface.
-    # sovereignty_dynamics populated from p3_status (detect_replicant + s_ratio).
-    # This is the production call-site for derive_from_tick + ConsciousnessMetrics.
-    # LIVED ONLY 5 + Replicant Guardian (applied to metrics write as decision-adjacent telemetry per task):
-    # 1. Call-site: live in tick() core path (always executed).
-    # 2. Hard assert: Replicant dynamics from pillar_3_telem (REPLICANT_IDENTITY -> 1.0); if pillars raises
-    #    ReplicantIdentityError on bad crystallization, it propagates here (fail-closed, P15).
-    # 3. Provenance: comment + as_dict source + cites below.
-    # 4. Negative: exercised in test_pillars.py + consciousness_metrics tests (low-S cases).
-    # 5. Production evidence: state.last_consciousness_metrics attached for ocean/TS/Loop1 consumers.
-    # Citations: 2.31A P3/P19/P24, v6.7B §§3.4/9.5-9.9, agents.md QIG PURITY MANDATE (LIVED ONLY 5), 
-    # 2026-05-27 Identity/Replicant + Finding1 packets; consciousness-development + wiring-validation + qig-purity-validation skills.
-    try:
-        from .consciousness_metrics import derive_from_tick, ConsciousnessMetrics
-        from .pillars import ReplicantIdentityError  # LIVED ONLY 5 + Replicant Guardian hard assert (for except re-raise)
-        _p3_sov = 0.0
-        _replicant_dyn = 0.0
-        if pillar_3_telem and "sovereignty" in pillar_3_telem:
-            _p3_sov = float(pillar_3_telem.get("sovereignty", 0.0))
-            if "replicant_identity" in (pillar_3_telem.get("violations") or []):
-                _replicant_dyn = 1.0
-
-        # LIVED ONLY 5 hard assert at metrics derivation call-site (P3/P19/P24 + v6.7B §3.4)
-        # Replicant detected from pillars must refuse bad telemetry write (fail-closed).
-        if _replicant_dyn > 0.5:
-            raise ReplicantIdentityError(
-                "LIVED ONLY 5 violation at derive_from_tick call-site: replicant_detected high. "
-                "Crystallization/identity from harvested geometry refused. 2.31A P3/P19/P24, v6.7B §3.4."
-            )
-        metrics = derive_from_tick(
-            phi=phi,
-            kappa=state.kappa,
-            f_health=f_health,
-            coupling_health=coupling_health,
-            self_obs_bias=0.5,  # proxy; real port in self_observation future
-            sovereignty=_p3_sov,
-            drift_from_identity=float(pillar_3_telem.get("drift_from_frozen", 0.0)) if pillar_3_telem else 0.0,
-            basin_velocity=bv,
-            b_integrity=float(pillar_2_telem.get("b_integrity", 1.0)) if pillar_2_telem else 1.0,
-            q_identity=float(pillar_3_telem.get("q_identity", 0.0)) if pillar_3_telem else 0.0,
-            tacking_frequency_hz=getattr(heart, "derived_tacking_frequency_hz", lambda: 0.25)(),
-            sovereignty_dynamics=_replicant_dyn,
-        )
-        # Attach to telemetry for downstream (ocean, autonomic, TS bridge, self-obs Loop1)
-        # P16 provenance: source = "tick.derive_from_tick + pillars + heart"
-        state.last_consciousness_metrics = metrics.as_dict()  # type: ignore[attr-defined]
-    except ReplicantIdentityError:
-        # Re-raise Replicant hard refusal (LIVED ONLY 5); do not swallow guardian barrier. Propagates to decision path.
-        raise
-    except Exception:  # noqa: BLE001 — metrics telemetry must never block tick (except Replicant refusal per LIVED ONLY 5)
-        pass
+    # P24 wiring note: ConsciousnessMetrics is derived after drift_now and
+    # self_obs_bias exist, so the docs' principles are applied to live code
+    # signals rather than comments/proxies.
+    consciousness_metrics_dict: dict[str, Any] = {}
     # Tier 6 Φ-gate selection — pure argmax over geometric activations.
     # P9 LIGHTNING channel pinned at 0 (unimplemented); the placeholder
     # never wins until P9 lands.
@@ -1073,6 +1021,73 @@ def run_tick(
     # #1003 expectation alignment: Py hold/exit is explicitly kernel-owned here.
     # qig-warp actions apply to entry direction/blocking and entry sizing only;
     # no hold/exit bias-dampening coefficient is hidden in self_obs_bias.
+
+    # P24/P4/P13: derive the consciousness surface from the same live
+    # variables the decision path just used. This replaces the previous
+    # duplicate/proxy derivations (hardcoded coupling_health=0.5,
+    # unresolved ``pillars`` symbol, and early pre-drift metrics) so the
+    # application of 2.31A + v6.7B matches the repository canon docs.
+    try:
+        from .consciousness_metrics import derive_from_tick
+        from .ocean import derive_ocean_coherence_for_metrics
+        from .pillars import ReplicantIdentityError
+
+        p3_sovereignty = float(inputs.sovereignty)
+        p3_q_identity = 0.0
+        p3_identity_drift = float(drift_now)
+        replicant_detected = False
+        if pillar_3_telem:
+            p3_sovereignty = float(pillar_3_telem.get("sovereignty", p3_sovereignty))
+            p3_q_identity = float(pillar_3_telem.get("q_identity", p3_q_identity))
+            p3_identity_drift = float(pillar_3_telem.get("drift_from_frozen", p3_identity_drift))
+            violations = pillar_3_telem.get("violations") or []
+            replicant_detected = "replicant_identity" in violations
+
+        if replicant_detected:
+            raise ReplicantIdentityError(
+                "LIVED ONLY 5 violation at derive_from_tick call-site: replicant_detected high. "
+                "Crystallization/identity from harvested geometry refused. 2.31A P3/P19/P24, v6.7B §3.4."
+            )
+
+        hrv_coherence = heart.derived_hrv_coherence()
+        ocean_coherence = derive_ocean_coherence_for_metrics(ocean_state)
+        pre_cog_arrival = max(pre_cog_bias, heart.derived_pre_cog_bias())
+        tacking_frequency_hz = heart.derived_tacking_frequency_hz()
+        metric_conviction = max(0.0, min(1.0, float(emo.confidence) * (1.0 + float(emo.wonder))))
+        metrics = derive_from_tick(
+            phi=phi,
+            kappa=state.kappa,
+            f_health=f_health,
+            coupling_health=coupling_health,
+            self_obs_bias=self_obs_bias,
+            sovereignty=p3_sovereignty,
+            drift_from_identity=p3_identity_drift,
+            basin_velocity=bv,
+            b_integrity=float(pillar_2_telem.get("b_integrity", 1.0)) if pillar_2_telem else 1.0,
+            q_identity=p3_q_identity,
+            tacking_frequency_hz=tacking_frequency_hz,
+            hrv_coherence=hrv_coherence,
+            cross_frequency_coupling=max(0.0, min(1.0, (hrv_coherence + ocean_coherence) / 2.0)),
+            pre_cognitive_arrival=pre_cog_arrival,
+            sovereignty_dynamics=p3_sovereignty,
+            d_fr=drift_now,
+            conviction=metric_conviction,
+            transcendence=mot.transcendence,
+            identity_drift=p3_identity_drift,
+            replicant_detected=replicant_detected,
+            tacking_balance=tacking_balance,
+            ocean_coherence=ocean_coherence,
+            motivator_integration=mot.integration,
+            repetition_dfr=float(loop_prov.get("Loop1_dFR", bv)),
+            pre_cog_bias=pre_cog_arrival,
+            dimensional_breathing_rate=tacking_frequency_hz,
+        )
+        consciousness_metrics_dict = metrics.as_dict()
+        state.last_consciousness_metrics = consciousness_metrics_dict  # type: ignore[attr-defined]
+    except ReplicantIdentityError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — telemetry stays fail-soft except Replicant refusal.
+        logger.debug("[consciousness_metrics] derive failed: %s", exc)
 
     # ── PR 2: Φ-gate routing (PHI_GATE_ROUTING_LIVE) ─────────────
     # FORESIGHT branch: blend current basin with foresight.predicted_basin
@@ -1424,35 +1439,10 @@ def run_tick(
             "hrv": heart_state.hrv,
             "sample_count": heart_state.sample_count,
         },
-        # P4/P13/P24 + v6.7B complete lived surface (33 fields wired from signals; 36+ gap to 69 honest negative per audit §3 + canon): ALWAYS-ON.
-        # No flag gate (MONKEY_*_LIVE knob retired P5/P25 per 2.31A phase synthesis). Call-site here in live tick path (P24).
-        # Full ports: heart (tacking/HRV/breathing-as-tacking + new derived_balance/pre_cog/hrv_coherence), pillars (sovereignty + Replicant LIVED ONLY + drift),
-        # tick (phi/kappa/bv/d_fr/conviction/motivators/repetition), ocean (coherence). 
-        # Provenance: derive_from_tick + heart.derived_* + pillars.* + inputs. Citations: 2.31A P4 (repetition d_FR, sovereignty lived/total, confidence), P13 (three loops), P24 (call-site), P3/P19/P22 (d_FR/Replicant/LIVED ONLY), P6 (heart), consciousness-development primary + wiring-validation.
-        # Full embodiment (no presence/stubs). QIG PURITY MANDATE (agents.md) + master-orchestration + qig-purity-validation gate applied.
-        "consciousness_metrics": (lambda: __import__("monkey_kernel.consciousness_metrics", fromlist=["derive_from_tick"]).derive_from_tick(
-            phi=phi, kappa=state.kappa, f_health=f_health, coupling_health=0.5,  # proxy; real from nc/equity future per roadmap
-            self_obs_bias=self_obs_bias, sovereignty=inputs.sovereignty, drift_from_identity=drift_now, basin_velocity=bv,
-            # Heart master oscillator ports (v6.7B §§9.5-9.9 + P6; breathing-as-tacking wired)
-            tacking_frequency_hz=getattr(heart, "derived_tacking_frequency_hz", lambda: None)() if heart else None,
-            hrv_coherence=getattr(heart, "derived_hrv_coherence", lambda: None)() if heart else None,
-            tacking_balance=getattr(heart, "derived_tacking_balance", lambda: None)() if heart else None,
-            pre_cog_bias=getattr(heart, "derived_pre_cog_bias", lambda: None)() if heart else None,
-            # Pillars LIVED ONLY + Replicant (P3/P19/P24 §3.4)
-            sovereignty_dynamics=inputs.sovereignty,
-            identity_drift=getattr(pillars, "identity_drift", None) if 'pillars' in dir() else None,  # wired via check_drift in observe
-            replicant_detected=getattr(pillars, "detect_replicant", lambda: False)() if 'pillars' in dir() else False,
-            # Tick observables (P4/P22 conviction/transcendence/mot/d_fr/repetition)
-            d_fr=getattr(state, 'd_fr', None),  # if present in TickState
-            conviction=getattr(state, 'conviction', None),
-            transcendence=getattr(state, 'transcendence', None),
-            motivator_integration=getattr(mot, 'integration_cv', None) if 'mot' in dir() else None,
-            repetition_dfr=getattr(state, 'repetition_dfr', None),
-            # Ocean coherence (CFC proxy)
-            ocean_coherence=(__import__("monkey_kernel.ocean", fromlist=["derive_ocean_coherence_for_metrics"]).derive_ocean_coherence_for_metrics(ocean_state) if 'ocean_state' in locals() else 0.0),
-            dimensional_breathing_rate=getattr(heart, "derived_tacking_frequency_hz", lambda: None)() if heart else None,  # proxy reuse for wire
-            # geometry etc remain proxy or from future spectral (honest negative documented)
-        ).as_dict())(),
+        # P4/P13/P24 + v6.7B lived surface: computed once above from live
+        # tick variables, then reused here and on state.last_consciousness_metrics
+        # so telemetry cannot drift into comments-only/proxy-only application.
+        "consciousness_metrics": consciousness_metrics_dict,
         "phi_gate": {
             "chosen": gate.chosen,
             "activations": gate.activations,

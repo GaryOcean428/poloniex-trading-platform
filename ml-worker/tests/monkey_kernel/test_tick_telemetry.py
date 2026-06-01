@@ -120,6 +120,35 @@ class TestDerivationSurface:
         assert "ocean" in d
         for k in ("intervention", "sleep_phase", "coherence", "spread"):
             assert k in d["ocean"], f"ocean missing {k}"
+        assert "consciousness_metrics" in d
+        for k in ("gamma", "d_fr", "conviction", "transcendence",
+                  "ocean_coherence", "motivator_integration"):
+            assert k in d["consciousness_metrics"], f"consciousness_metrics missing {k}"
+
+    def test_consciousness_metrics_are_live_tick_signals(self) -> None:
+        state = fresh_symbol_state("BTC_USDT_PERP", uniform_basin(64))
+        decision, new_state = run_tick(
+            _make_inputs(), state,
+            AutonomicKernel(label="t"),
+            ocean=Ocean("t"),
+            foresight=ForesightPredictor(),
+            heart=HeartMonitor(),
+        )
+        metrics = decision.derivation["consciousness_metrics"]
+        assert metrics == new_state.last_consciousness_metrics
+        expected_coupling = decision.derivation["phi"] * (
+            1.0 - min(decision.derivation["basin_velocity"], 1.0)
+        )
+        assert metrics["gamma"] == pytest.approx(expected_coupling)
+        assert metrics["d_fr"] == pytest.approx(
+            decision.derivation["sensations"]["drift"]
+        )
+        assert metrics["transcendence"] == pytest.approx(
+            decision.derivation["motivators"]["transcendence"]
+        )
+        assert metrics["motivator_integration"] == pytest.approx(
+            decision.derivation["motivators"]["integration"]
+        )
 
 
 # ─────────────────────────────────────────────────────────────────
