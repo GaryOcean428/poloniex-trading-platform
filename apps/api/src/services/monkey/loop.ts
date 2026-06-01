@@ -173,6 +173,12 @@ import {
   type RegimeReading,
 } from './regime.js';
 import {
+  getCellActionLabel as getRegimeCellActionLabel,
+  getRegimeAuthority,
+  phaseSuppressEntry,
+  type RegimeAuthority,
+} from './regime_authority.js';
+import {
   detectStrongest as detectStrongestCandlePattern,
   hammerAgainstLongSl,
   patternSignalScalar,
@@ -3068,6 +3074,30 @@ export class MonkeyKernel extends EventEmitter {
       basin,
     ]);
 
+    // REGIME-1 #766 — Two-layer regime authority shadow-log.
+    // Always evaluated (even when REGIME_COMPOSITIONAL_LIVE=false) for evidence
+    // collection. Only phaseSuppressEntry enforcement is gated on the live flag.
+    const regimeAuthority: RegimeAuthority = getRegimeAuthority(
+      regimeWeights,
+      regimeReading,
+    );
+    {
+      const legacyCell = regimeReading.regime;
+      const compositionalCell = getRegimeCellActionLabel(regimeAuthority);
+      if (legacyCell !== regimeAuthority.direction) {
+        logger.debug('[Monkey] REGIME_AUTHORITY shadow-log phase×direction', {
+          symbol,
+          phase: regimeAuthority.phase,
+          phaseConf: regimeAuthority.phaseConfidence.toFixed(3),
+          direction: regimeAuthority.direction,
+          dirConf: regimeAuthority.directionConfidence.toFixed(3),
+          legacyCell,
+          compositionalCell,
+          isWarmup: regimeAuthority.isWarmup,
+        });
+      }
+    }
+
     // Hindsight / counterfactual-regret evaluation (CANONICAL — always on).
     // Advance any active watches for this symbol with the fresh price + live
     // regime: track the horizon-end counterfactual pnl and whether the regime
@@ -4526,7 +4556,9 @@ export class MonkeyKernel extends EventEmitter {
       // The reduction is observer-derived from the regime classifier's
       // own confidence (P1: no hardcoded knob) — deeper chop → smaller
       // entry, floored at 0.2× as a SAFETY_BOUND.
-      const suppressionResult = chopSuppressEntry(regimeReading, positionLane);
+      const suppressionResult = cellLive
+        ? phaseSuppressEntry(regimeAuthority, positionLane)
+        : chopSuppressEntry(regimeReading, positionLane);
       chopSizeFactor = suppressionResult.suppressed
         ? Math.max(0.2, 1 - suppressionResult.confidence)
         : 1.0;
@@ -4701,7 +4733,9 @@ export class MonkeyKernel extends EventEmitter {
       }
     } else {
       action = 'hold';
-      const chopSuppressionForLane = chopSuppressEntry(regimeReading, positionLane);
+      const chopSuppressionForLane = cellLive
+        ? phaseSuppressEntry(regimeAuthority, positionLane)
+        : chopSuppressEntry(regimeReading, positionLane);
       const chopSuppressed = chopSuppressionForLane.suppressed;
       const chopThresholdForLane = positionLane === 'trend'
         ? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT
@@ -4726,7 +4760,9 @@ export class MonkeyKernel extends EventEmitter {
     // this tick AND whether it actually blocked entry. ``active`` reads
     // the regime classifier output; ``blocked`` is true only when the
     // suspension would have flipped a would-be entry into a hold.
-    const chopTelemetry = chopSuppressEntry(regimeReading, positionLane);
+    const chopTelemetry = cellLive
+      ? phaseSuppressEntry(regimeAuthority, positionLane)
+      : chopSuppressEntry(regimeReading, positionLane);
     derivation.chopSuppression = {
       active: chopTelemetry.suppressed,
       regime: regimeReading.regime,
