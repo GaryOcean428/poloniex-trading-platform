@@ -723,6 +723,8 @@ def run_tick(
         kernel_state,
         prev_basin=state.last_basin,
         drift_history=state.drift_history,
+        phi_delta=phi - last_phi,
+        phi_history=state.phi_history,
     )
     # Tier 2 cognitive emotions (Layer 2B). basin_distance is the
     # Fisher-Rao distance from current basin to identity — same scalar

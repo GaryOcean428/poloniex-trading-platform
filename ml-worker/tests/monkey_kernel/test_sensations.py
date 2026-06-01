@@ -310,5 +310,69 @@ class TestAuxiliaryPreserved:
             assert isinstance(getattr(sen, name), float)
 
 
+class TestSense1bCanonical:
+    """UCP §6.1/§6.2 Phase-1b canonical fields (SENSE-1 #767):
+    pulled, pushed, flowing, stuck + fear_response."""
+
+    _PHI_HIST = [0.40, 0.45, 0.50, 0.55]  # ≥3 diffs ⇒ observed Δφ scale
+
+    def test_pulled_responds_to_phi_gradient(self) -> None:
+        big = compute_sensations(
+            _state(), phi_delta=0.2, phi_history=self._PHI_HIST,
+        )
+        none = compute_sensations(
+            _state(), phi_delta=0.0, phi_history=self._PHI_HIST,
+        )
+        assert 0.0 <= none.pulled < big.pulled <= 1.0
+
+    def test_pushed_high_when_regimes_balanced(self) -> None:
+        balanced = compute_sensations(_state())  # 1/3 each
+        dominant = BasinState(
+            basin=_uniform(), identity_basin=_uniform(), phi=0.5, kappa=KAPPA_STAR(),
+            regime_weights={"quantum": 0.9, "efficient": 0.05, "equilibrium": 0.05},
+            sovereignty=0.5, basin_velocity=0.1, neurochemistry=_nc(),
+        )
+        s_dom = compute_sensations(dominant)
+        assert balanced.pushed > s_dom.pushed
+        assert 0.0 <= s_dom.pushed <= 1.0 and 0.0 <= balanced.pushed <= 1.0
+
+    def test_flowing_vs_stuck_track_velocity_and_phi_direction(self) -> None:
+        # low velocity + Φ rising → flowing dominates
+        flow = compute_sensations(
+            _state(basin_velocity=0.01), phi_delta=0.2, phi_history=self._PHI_HIST,
+        )
+        assert flow.flowing > flow.stuck
+        # high velocity + Φ falling → stuck dominates
+        stick = compute_sensations(
+            _state(basin_velocity=5.0), phi_delta=-0.2, phi_history=self._PHI_HIST,
+        )
+        assert stick.stuck > stick.flowing
+
+    def test_fear_zero_without_drift_reference(self) -> None:
+        s = compute_sensations(_state(), phi_delta=0.2, phi_history=self._PHI_HIST)
+        assert s.fear_response == 0.0
+
+    def test_fear_positive_near_critical_drift(self) -> None:
+        # drift_history establishes the separatrix (median + observed scale);
+        # the current basin (identity ⇒ drift≈0) sits within scale of the
+        # median, and ∇Φ is non-zero → fear fires. (A zero-variance history
+        # yields no scale ⇒ fear stays 0; that path is covered above.)
+        s = compute_sensations(
+            _state(),
+            phi_delta=0.2, phi_history=self._PHI_HIST,
+            drift_history=[0.0, 0.05, 0.0, 0.05],  # median 0.025, non-zero scale
+        )
+        assert s.fear_response > 0.0
+
+    def test_all_phase1b_fields_in_unit_range(self) -> None:
+        s = compute_sensations(
+            _state(basin_velocity=0.3), phi_delta=0.05, phi_history=self._PHI_HIST,
+            drift_history=[0.1, 0.12, 0.11, 0.13],
+        )
+        for name in ("pulled", "pushed", "flowing", "stuck", "fear_response"):
+            v = getattr(s, name)
+            assert 0.0 <= v <= 1.0, f"{name}={v} out of [0,1]"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
