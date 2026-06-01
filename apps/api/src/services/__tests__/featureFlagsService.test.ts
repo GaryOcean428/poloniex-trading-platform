@@ -46,6 +46,29 @@ describe('featureFlagsService', () => {
     expect(mockedQuery).toHaveBeenCalledTimes(1);
   });
 
+  it('coalesces a concurrent cold-cache stampede onto ONE DB read', async () => {
+    // The kernel refreshes all flags per tick via Promise.all of ~14
+    // getBoolFlag calls. On a cold/expired cache these race in together; the
+    // in-flight latch must funnel them onto a single SELECT, not one per caller.
+    let resolveQuery!: (v: Awaited<ReturnType<typeof query>>) => void;
+    mockedQuery.mockImplementationOnce(
+      () => new Promise((res) => { resolveQuery = res; }),
+    );
+    const keys = [
+      'MONKEY_SHORTS_LIVE', 'MONKEY_MARKET_INTEL_LIVE', 'MONKEY_FUNDING_GATE_LIVE',
+      'MONKEY_MAKER_CLOSE_LIVE', 'L_VETO_OVER_K_ENABLED', 'MONKEY_BRACKET_EXIT_LIVE',
+      'MONKEY_BRACKET_EXTEND_LIVE', 'MONKEY_SLOW_BLEED_LIVE', 'MONKEY_FAST_ADVERSE_LIVE',
+      'MONKEY_TAPE_OVERRIDE_LIVE', 'REGIME_COMPOSITIONAL_LIVE', 'REGIME_HELD_EXIT_LIVE',
+      'SCALP_LIMIT_MAKER_LIVE', 'SCALP_LIMIT_MAKER_BROAD',
+    ];
+    const inFlightReads = Promise.all(keys.map((k) => getBoolFlag(k, false)));
+    resolveQuery(rows([{ flag_key: 'MONKEY_SHORTS_LIVE', value: 'true' }]));
+    const results = await inFlightReads;
+    expect(mockedQuery).toHaveBeenCalledTimes(1); // not 14
+    expect(results[0]).toBe(true);                // shorts present
+    expect(results[1]).toBe(false);               // absent → safe default
+  });
+
   it('getBoolFlag returns the SAFE default when the flag is absent', async () => {
     mockedQuery.mockResolvedValueOnce(rows([{ flag_key: 'OTHER', value: 'true' }]));
     expect(await getBoolFlag('MONKEY_SHORTS_LIVE', false)).toBe(false);
