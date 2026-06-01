@@ -28,6 +28,7 @@ import { getEngineVersion } from '../../utils/engineVersion.js';
 import { logger } from '../../utils/logger.js';
 import { apiCredentialsService } from '../apiCredentialsService.js';
 import { getCurrentExecutionMode, type ExecutionMode } from '../executionModeService.js';
+import { getBoolFlag } from '../featureFlagsService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
@@ -555,9 +556,52 @@ export function observerConvictionStreakRequired(
 
 export const L_VETO_DEFAULT_CONVICTION_THRESHOLD = 0.6;
 
-function isLVetoOverKEnabled(): boolean {
-  return process.env.L_VETO_OVER_K_ENABLED === 'true';
+/**
+ * Operator FEATURE on/off toggles, snapshotted once per tick from
+ * featureFlagsService (DB-backed, UI-controlled — migration 068). This replaces
+ * the scatter of `process.env.MONKEY_*_LIVE` reads so the operator drives every
+ * feature from one pane of glass instead of Railway env vars (the standing
+ * "everything via UI" directive). Numeric CALIBRATION thresholds are NOT here —
+ * those are observer-derived per the P1 doctrine.
+ *
+ * Each default below is the SAFE/fail state that matches the prior env semantics
+ * EXACTLY: a `=== 'true'` read defaulted OFF (false); a `!== 'false'` read
+ * defaulted ON (true). On a DB outage getBoolFlag returns these, so behaviour
+ * fails to today's, not a surprise state.
+ */
+interface FeatureFlagSnapshot {
+  shortsLive: boolean;
+  marketIntelLive: boolean;
+  fundingGateLive: boolean;
+  makerCloseLive: boolean;
+  lVetoOverK: boolean;
+  bracketExitLive: boolean;
+  bracketExtendLive: boolean;
+  slowBleedLive: boolean;
+  fastAdverseLive: boolean;
+  tapeOverrideLive: boolean;
+  regimeCompositionalLive: boolean;
+  regimeHeldExitLive: boolean;
+  scalpLimitMakerLive: boolean;
+  scalpLimitMakerBroad: boolean;
 }
+
+const DEFAULT_FEATURE_FLAGS: FeatureFlagSnapshot = {
+  shortsLive: false,
+  marketIntelLive: false,
+  fundingGateLive: false,
+  makerCloseLive: false,
+  lVetoOverK: false,
+  bracketExitLive: true,
+  bracketExtendLive: true,
+  slowBleedLive: true,
+  fastAdverseLive: true,
+  tapeOverrideLive: true,
+  regimeCompositionalLive: false,
+  regimeHeldExitLive: false,
+  scalpLimitMakerLive: false,
+  scalpLimitMakerBroad: true,
+};
 
 function lVetoConvictionThreshold(): number {
   const raw = process.env.L_VETO_CONVICTION_THRESHOLD;
@@ -1268,6 +1312,11 @@ export class MonkeyKernel extends EventEmitter {
    *  open, close, adopt or reconcile any live positions (operator takes
    *  over live); 'pause' = kill switch (no new orders at all). */
   private executionMode: ExecutionMode = 'auto';
+  /** Operator FEATURE toggles, refreshed once per tick from
+   *  monkey_feature_flags (UI-controlled — migration 068). Initialised to the
+   *  safe env-equivalent defaults so reads before the first tick (or during a
+   *  DB outage) match today's behaviour. See {@link FeatureFlagSnapshot}. */
+  private featureFlags: FeatureFlagSnapshot = { ...DEFAULT_FEATURE_FLAGS };
   /**
    * LIMIT_MAKER #793 (Class B #5) — pending post-only scalp orders that
    * have been placed but not yet observed as filled. Key: orderId.
@@ -2232,6 +2281,12 @@ export class MonkeyKernel extends EventEmitter {
       // known value on a transient read error — getCurrentExecutionMode
       // itself fails CLOSED to 'pause' on DB failure.
       try { this.executionMode = await getCurrentExecutionMode(); } catch { /* keep last */ }
+      // Snapshot the operator FEATURE toggles once per tick (DB-backed,
+      // UI-controlled — migration 068). featureFlagsService caches all flags in
+      // one read per 15s TTL, so the getBoolFlag calls inside are cache hits
+      // after the first. Fail-soft: on a DB error the snapshot keeps its last
+      // value (or the safe env-equivalent defaults on a cold cache).
+      try { await this.refreshFeatureFlags(); } catch { /* keep last snapshot */ }
       this.decayHindsightCachesOncePerTick();
       // LIMIT_MAKER #793 — cancel any stale post-only scalp orders before
       // running the per-symbol pipeline. Stale = older than
