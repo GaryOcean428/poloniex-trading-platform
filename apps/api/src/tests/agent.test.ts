@@ -187,4 +187,47 @@ describeIfSupertest('Autonomous Agent API', () => {
       expect(res.body.success).toBe(false);
     });
   });
+
+  describe('Feature Flags', () => {
+    test('should list feature flags', async () => {
+      const res = await requestClient(API_URL)
+        .get('/api/agent/feature-flags')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(Array.isArray(res.body.flags)).toBe(true);
+    });
+
+    test('should update a known boolean flag', async () => {
+      const res = await requestClient(API_URL)
+        .put('/api/agent/feature-flags/MONKEY_SHORTS_LIVE')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ value: 'false' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.value).toBe('false');
+    });
+
+    test('should reject a non-boolean value', async () => {
+      const res = await requestClient(API_URL)
+        .put('/api/agent/feature-flags/MONKEY_SHORTS_LIVE')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ value: 'yes' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    test('should reject an unknown flag key', async () => {
+      const res = await requestClient(API_URL)
+        .put('/api/agent/feature-flags/NOT_A_REAL_FLAG')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ value: 'true' });
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+    });
+  });
 });

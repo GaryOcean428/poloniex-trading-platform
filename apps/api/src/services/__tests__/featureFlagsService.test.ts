@@ -51,6 +51,17 @@ describe('featureFlagsService', () => {
     expect(await getBoolFlag('MONKEY_SHORTS_LIVE', false)).toBe(false);
   });
 
+  it('getBoolFlag returns the safe default for a malformed (non-boolean) value', async () => {
+    mockedQuery.mockResolvedValueOnce(rows([
+      { flag_key: 'MONKEY_BRACKET_EXIT_LIVE', value: 'yes' },   // garbage
+      { flag_key: 'MONKEY_SHORTS_LIVE', value: '1' },           // garbage
+    ]));
+    // protective exit safe default is true — a 'yes' must NOT silently disable it
+    expect(await getBoolFlag('MONKEY_BRACKET_EXIT_LIVE', true)).toBe(true);
+    // shorts safe default is false
+    expect(await getBoolFlag('MONKEY_SHORTS_LIVE', false)).toBe(false);
+  });
+
   it('getBoolFlag fails SOFT to the safe default on DB error', async () => {
     mockedQuery.mockRejectedValueOnce(new Error('db down'));
     // shorts → false is the safe default (no shorts when unknown)

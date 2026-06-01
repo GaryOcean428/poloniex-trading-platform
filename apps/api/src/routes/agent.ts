@@ -960,11 +960,19 @@ router.put('/feature-flags/:key', authenticateToken, async (req: Request, res: R
   if (!key) {
     return res.status(400).json({ success: false, error: 'flag key is required' });
   }
-  if (typeof value !== 'string' || value.length === 0) {
-    return res.status(400).json({ success: false, error: 'value must be a non-empty string' });
+  // All current flags are boolean toggles — accept only canonical 'true'/'false'
+  // (relax when value-typed flags are introduced). Prevents '1'/'yes'/typos from
+  // silently flipping a flag.
+  if (value !== 'true' && value !== 'false') {
+    return res.status(400).json({ success: false, error: "value must be 'true' or 'false'" });
   }
   const operator = (req.user?.email || req.user?.id || req.user?.userId || 'unknown').toString();
   try {
+    // Reject unknown keys so a typo can't create a phantom flag the kernel never reads.
+    const known = await getAllFlags();
+    if (!known.some((f) => f.flagKey === key)) {
+      return res.status(404).json({ success: false, error: `unknown feature flag: ${key}` });
+    }
     const record = await setFlag(key, value, operator);
     return res.json({
       success: true,

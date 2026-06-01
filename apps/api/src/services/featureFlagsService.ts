@@ -48,12 +48,17 @@ async function ensureCache(): Promise<Map<string, string>> {
     cachedAt = now;
     return cache;
   } catch (err) {
-    logger.warn('[featureFlags] DB read failed — callers fall back to safe defaults', {
+    logger.warn('[featureFlags] DB read failed — serving last-known-good / safe defaults', {
       err: err instanceof Error ? err.message : String(err),
     });
-    // Keep whatever we had; if cold, return an empty map so callers use their
-    // own safe default rather than crashing.
-    return cache ?? new Map<string, string>();
+    // Cache the fallback (last-known-good if warm, else empty) AND stamp cachedAt
+    // so a sustained outage doesn't re-query + re-log on every per-tick read
+    // (mirrors executionModeService's outage-storm guard). A warm cache serves
+    // last-known-good values; a cold cache yields the caller's safe default.
+    const fallback = cache ?? new Map<string, string>();
+    cache = fallback;
+    cachedAt = now;
+    return fallback;
   }
 }
 
@@ -66,7 +71,13 @@ export async function getBoolFlag(key: string, safeDefault: boolean): Promise<bo
   const flags = await ensureCache();
   const raw = flags.get(key);
   if (raw === undefined) return safeDefault;
-  return raw.trim().toLowerCase() === 'true';
+  const v = raw.trim().toLowerCase();
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  // Malformed value must NOT silently disable a flag whose safe state is ON
+  // (e.g. protective exits) — honour the caller's safe default instead.
+  logger.warn('[featureFlags] non-boolean value — using safe default', { key, raw });
+  return safeDefault;
 }
 
 /** Numeric flag (for future value controls). Returns safeDefault when absent/unparseable. */
