@@ -304,6 +304,9 @@ import {
 import { getExemplarSignal } from './exemplar_reader.js';
 import { isFeatureEnabled } from './feature_flags.js';
 
+/** Entry modifier safety cap — maximum entry threshold adjustment from any single signal. P25 safety bound. */
+const ENTRY_MODIFIER_SAFETY_CAP = 0.15;
+
 /** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
 
@@ -2508,7 +2511,7 @@ export class MonkeyKernel extends EventEmitter {
     // by side (long-liq vs short-liq) and feeds the rolling observer. When a
     // cluster fires the signal is stored and applied to the entry threshold
     // further down (see `cascadeModifier`). Fail-open: any error → no signal.
-    let liqCascadeSignal: { suggestedEntrySide: 'long' | 'short' | null } | null = null;
+    let liqCascadeSignal: { suggestedEntrySide: 'long' | 'short' | null; totalNotional: number; clusterThreshold: number } | null = null;
     if (await isFeatureEnabled('MONKEY_LIQ_REVERSAL_LIVE')) {
       try {
         type LiqOrder = { side?: string; size?: string | number; price?: string | number; dealPrice?: string | number };
@@ -2532,7 +2535,7 @@ export class MonkeyKernel extends EventEmitter {
         }
         const cascade = observeLiquidationCascade(symbol, longLiqUsd, shortLiqUsd);
         if (cascade.clusterFires && cascade.suggestedEntrySide != null) {
-          liqCascadeSignal = { suggestedEntrySide: cascade.suggestedEntrySide };
+          liqCascadeSignal = { suggestedEntrySide: cascade.suggestedEntrySide, totalNotional: cascade.totalNotional, clusterThreshold: cascade.clusterThreshold };
           logger.debug('[liquidation_cascade] cluster detected', {
             symbol,
             dominantSide: cascade.dominantSide,
@@ -3356,11 +3359,15 @@ export class MonkeyKernel extends EventEmitter {
         };
     // #795 Class B #8 — cascade conviction boost. When the liquidation-cascade
     // observer fires on the same side as the geometry candidate, lower the entry
-    // threshold by 15% (increases willingness to enter on confirmed reversion).
+    // threshold proportionally to cascade intensity (observer-derived, P25 compliant).
+    // Intensity = totalNotional / clusterThreshold; tanh scaling ensures the modifier
+    // approaches ENTRY_MODIFIER_SAFETY_CAP only for very large cascades.
     // Disagrees or null → no change. Fail-open by construction (liqCascadeSignal
     // is null unless the flag is live AND a cluster fires).
     const cascadeModifier: number =
-      (liqCascadeSignal?.suggestedEntrySide === sideCandidate) ? -0.15 : 0;
+      (liqCascadeSignal?.suggestedEntrySide === sideCandidate)
+        ? -Math.tanh(Math.max(0, liqCascadeSignal.totalNotional / (liqCascadeSignal.clusterThreshold || 1) - 1)) * ENTRY_MODIFIER_SAFETY_CAP
+        : 0;
     if (cascadeModifier !== 0) {
       entryThr = {
         value: entryThr.value * (1 + cascadeModifier),
