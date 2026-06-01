@@ -2741,6 +2741,10 @@ export class MonkeyKernel extends EventEmitter {
         trajectorySelfSimilarityHistory: state.fHealthHistory,
         modeTransitionTimesMs: state.modeTransitionTimesMs,
         nowMs: Date.now(),
+        // Per-tick cadence so ser's mode-thrash rate is a true transitions-
+        // per-tick density (not a ratio of two HISTORY_MAX-capped arrays,
+        // which pinned serBase at 0 — see neurochemistry.ts serotonin note).
+        tickIntervalMs: this.tickMs,
         kappaHistory: state.kappaHistory,
         externalCouplingHistory: state.externalCouplingHistory,
       },

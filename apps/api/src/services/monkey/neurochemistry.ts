@@ -166,6 +166,10 @@ export interface BasinObservables {
   /** Current wall-clock (ms). Used with `modeTransitionTimesMs` to
    *  compute thrash rate over an observable interval. */
   nowMs?: number;
+  /** Kernel tick cadence (ms) — the per-tick scale that renders the
+   *  mode-transition rate dimensionless (transitions per tick-interval).
+   *  Absent → fall back to the window's own mean inter-transition gap. */
+  tickIntervalMs?: number;
   /** Rolling κ history from prior ticks. Used to derive the endorphin
    *  κ-convergence bell width from the basin's OWN κ stddev (instead
    *  of the prior hardcoded SIGMA_KAPPA=10.0 which didn't even match
@@ -355,24 +359,38 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
       // thrash to subtract).
       serBase = 1;
     } else {
-      // Transitions per ms. Multiplying by the window length gives the
-      // dimensionless transition count / window — a probability that
-      // any given ms in the window saw a transition. Clip to [0,1].
+      // 2026-06-01 (steady-state-pinning fix, serotonin mode-transition
+      // branch): the prior shape
+      //   transitionsPerTick = modeTransitionTimesMs.length / bvHistory.length
+      //   serBase = clip(1 - transitionsPerTick, 0, 1)
+      // STRUCTURALLY pins at 0 on any mature kernel. Both arrays cap at
+      // HISTORY_MAX (=100): bvHistory fills every tick, modeTransitionTimesMs
+      // fills on every transition, so once a long-running kernel has logged
+      // ≥100 transitions BOTH lengths = 100 → ratio = 1.0 PERMANENTLY,
+      // regardless of actual recent thrash. Production showed ser=0.00 for
+      // 134/134 ticks (logs 2026-06-01). This is the same one-sided-clamp
+      // meta-pattern the bv-z-score fallback below was already fixed for —
+      // see [[feedback_steady_state_pinning_pattern]]; the count-ratio
+      // numerator and denominator are two independently-capped windows,
+      // so their ratio carries no gradient once both saturate.
+      //
+      // Fix: use the TIME-density the doc above already intends ("count of
+      // mode transitions … divided by the window length") — transitions per
+      // tick-interval — and soft-saturate with exp() (the same gradient-
+      // preserving form dopamine uses). `windowMs` shrinks as transitions
+      // get denser, so the rate keeps gradient even when the array is full:
+      //   every-tick thrash → 1.0 → exp(-1)=0.37
+      //   every-other-tick  → 0.5 → exp(-0.5)=0.61
+      //   calm/sparse       → 0   → 1.0
       const transitionsPerMs = obs.modeTransitionTimesMs.length / windowMs;
-      const thrashRate = clip(transitionsPerMs * windowMs / obs.modeTransitionTimesMs.length, 0, 1);
-      // The above simplifies to 1 when transitions are uniform. The
-      // meaningful read is: how DENSE is thrash relative to the window.
-      // Use transition count / max-possible-count where max is one
-      // transition per tick (caller-defined; we infer from history len).
-      // Simpler derivation: thrash_rate = count(transitions) / count(ticks in window).
-      // The caller supplies the transition timestamps; the basin's
-      // bvHistory length is the natural tick-count denominator.
-      const tickCount = obs.basinVelocityHistory?.length ?? obs.modeTransitionTimesMs.length;
-      const transitionsPerTick = obs.modeTransitionTimesMs.length / Math.max(tickCount, 1);
-      serBase = clip(1 - transitionsPerTick, 0, 1);
-      // (The intermediate `thrashRate` calc above is retained for
-      // forward extensibility; the final serBase is the per-tick rate.)
-      void thrashRate;
+      // Per-tick scale: kernel cadence when supplied, else the window's own
+      // mean inter-transition gap (self-normalizing neutral → exp(-1)).
+      const tickMs =
+        obs.tickIntervalMs != null && obs.tickIntervalMs > 0
+          ? obs.tickIntervalMs
+          : windowMs / obs.modeTransitionTimesMs.length;
+      const thrashPerTick = transitionsPerMs * tickMs;
+      serBase = Math.exp(-thrashPerTick);
     }
   } else if (obs?.basinVelocityHistory && obs.basinVelocityHistory.length >= HISTORY_MIN_SAMPLES) {
     // 2026-05-25 (CC2 audit F2 follow-up): the prior shape

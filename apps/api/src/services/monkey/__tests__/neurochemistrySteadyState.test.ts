@@ -115,6 +115,47 @@ describe('neurochemistry — steady-state variance restoration', () => {
       expect(nc.serotonin).toBeGreaterThan(0);
       expect(nc.serotonin).toBeLessThan(1);
     });
+
+    // 2026-06-01 — mode-transition branch steady-state-pinning fix.
+    // The prior `clip(1 - transitions/bvHistory.length, 0, 1)` structurally
+    // pinned serBase at 0 once both HISTORY_MAX-capped arrays saturate
+    // (production ser=0.00 ×134). Time-density + exp() restores gradient.
+    const now = 1_000_000;
+    const tickIntervalMs = 1000;
+    // Evenly-spaced transition timestamps, `gapTicks` tick-intervals apart.
+    const evenTransitions = (count: number, gapTicks: number) =>
+      Array.from({ length: count }, (_, i) => now - (count - i) * gapTicks * tickIntervalMs);
+
+    it('SATURATED arrays (transitions == ticks, the old pin) → ser > 0', () => {
+      const inp = baseInputs();
+      // The exact structural-pin condition: equal-length capped arrays.
+      inp.observables = {
+        ...inp.observables!,
+        nowMs: now,
+        tickIntervalMs,
+        modeTransitionTimesMs: evenTransitions(100, 1), // every tick
+        basinVelocityHistory: Array(100).fill(0.1),     // length == transitions
+      };
+      const nc = computeNeurochemicals(inp);
+      // Old formula: serBase = 1 - 100/100 = 0 → ser = 0. New: exp(-1)=0.37.
+      expect(nc.serotonin).toBeGreaterThan(0);
+      expect(nc.serotonin).toBeCloseTo(0.85 * Math.exp(-1), 2);
+    });
+
+    it('thrash density carries gradient: every-tick < every-3-tick', () => {
+      const dense = computeNeurochemicals({
+        ...baseInputs(),
+        observables: { nowMs: now, tickIntervalMs, modeTransitionTimesMs: evenTransitions(10, 1) },
+      }).serotonin;
+      const sparse = computeNeurochemicals({
+        ...baseInputs(),
+        observables: { nowMs: now, tickIntervalMs, modeTransitionTimesMs: evenTransitions(10, 3) },
+      }).serotonin;
+      expect(dense).toBeGreaterThan(0);
+      expect(sparse).toBeGreaterThan(dense); // sparser thrash → calmer → higher ser
+      expect(dense).toBeCloseTo(0.85 * Math.exp(-1), 2);    // 1 transition/tick
+      expect(sparse).toBeCloseTo(0.85 * Math.exp(-1 / 3), 2); // 1 per 3 ticks
+    });
   });
 
   describe('endo (endorphins) — sigmoid-around-mean replaces binary Sophia floor', () => {

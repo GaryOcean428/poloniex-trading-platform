@@ -10,6 +10,7 @@ meta-pattern.
 """
 from __future__ import annotations
 
+import math
 import os
 import sys
 from pathlib import Path
@@ -114,6 +115,46 @@ def test_ser_thrash_via_mode_transitions_drops():
         basin_velocity_history=[0.1] * 10,
     ))
     assert nc.serotonin < 0.85
+
+
+# 2026-06-01 — mode-transition branch steady-state-pinning fix (parity with
+# neurochemistry.ts). Old count-ratio pinned ser_base at 0 once both
+# HISTORY_MAX-capped arrays saturated; time-density + exp() restores gradient.
+_NOW = 1_000_000.0
+_TICK_MS = 1000.0
+
+
+def _even_transitions(count: int, gap_ticks: int):
+    return [_NOW - (count - i) * gap_ticks * _TICK_MS for i in range(count)]
+
+
+def test_ser_saturated_arrays_no_longer_pin_at_zero():
+    """The exact structural-pin condition (transitions == ticks). Old:
+    ser_base = 1 - 100/100 = 0. New: exp(-1) → ser ≈ 0.85·0.368."""
+    nc = _ticker(_base_inputs(
+        now_ms=_NOW,
+        tick_interval_ms=_TICK_MS,
+        mode_transition_times_ms=_even_transitions(100, 1),  # every tick
+        basin_velocity_history=[0.1] * 100,
+    ))
+    assert nc.serotonin > 0.0
+    assert nc.serotonin == pytest.approx(0.85 * math.exp(-1), abs=0.02)
+
+
+def test_ser_thrash_density_carries_gradient():
+    """Sparser thrash → calmer → higher ser (gradient restored)."""
+    dense = _ticker(_base_inputs(
+        now_ms=_NOW, tick_interval_ms=_TICK_MS,
+        mode_transition_times_ms=_even_transitions(10, 1),
+    )).serotonin
+    sparse = _ticker(_base_inputs(
+        now_ms=_NOW, tick_interval_ms=_TICK_MS,
+        mode_transition_times_ms=_even_transitions(10, 3),
+    )).serotonin
+    assert dense > 0.0
+    assert sparse > dense
+    assert dense == pytest.approx(0.85 * math.exp(-1), abs=0.02)
+    assert sparse == pytest.approx(0.85 * math.exp(-1 / 3), abs=0.02)
 
 
 # ─── endo (endorphins) — sigmoid-around-mean Sophia parity ──────────

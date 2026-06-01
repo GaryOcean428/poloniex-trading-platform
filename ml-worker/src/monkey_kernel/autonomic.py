@@ -228,6 +228,10 @@ class AutonomicTickInputs:
     kappa_history: Optional[list[float]] = None
     external_coupling_history: Optional[list[float]] = None
     mode_transition_times_ms: Optional[list[float]] = None
+    # Kernel tick cadence (ms) — per-tick scale for the serotonin mode-thrash
+    # density (parity with neurochemistry.ts tickIntervalMs). Absent → the
+    # window's own mean inter-transition gap (neutral exp(-1)).
+    tick_interval_ms: Optional[float] = None
     # Natural-effect inputs (d_fr, sovereignty, replicant/tacking/loop/coupled
     # signals) are retained for payload compatibility only.
     # They do not multiply or otherwise modulate dop/ser/endo without a
@@ -669,12 +673,27 @@ class AutonomicKernel:
         mode_x = inputs.mode_transition_times_ms
         now_ms = inputs.now_ms
         if mode_x and len(mode_x) > 0 and now_ms is not None:
-            tick_count = (
-                len(bv_history) if bv_history is not None and len(bv_history) > 0
-                else len(mode_x)
-            )
-            transitions_per_tick = len(mode_x) / max(tick_count, 1)
-            ser_base = _clip(1.0 - transitions_per_tick, 0.0, 1.0)
+            # 2026-06-01 (steady-state-pinning fix, parity with
+            # neurochemistry.ts): the prior count-ratio
+            #   transitions_per_tick = len(mode_x) / len(bv_history)
+            #   ser_base = clip(1 - transitions_per_tick, 0, 1)
+            # STRUCTURALLY pins at 0 — both arrays cap at HISTORY_MAX so once
+            # a mature kernel has logged ≥cap transitions the ratio is 1.0
+            # permanently. TS production showed ser=0.00 ×134 (logs 06-01).
+            # Use the TIME-density (transitions per tick-interval) + exp()
+            # soft-saturation so the rate keeps gradient when the array is
+            # full. See [[feedback_steady_state_pinning_pattern]].
+            oldest = mode_x[0]
+            window_ms = now_ms - oldest
+            if window_ms <= 0:
+                ser_base = 1.0
+            else:
+                transitions_per_ms = len(mode_x) / window_ms
+                tick_ms = inputs.tick_interval_ms if (
+                    inputs.tick_interval_ms is not None and inputs.tick_interval_ms > 0
+                ) else window_ms / len(mode_x)
+                thrash_per_tick = transitions_per_ms * tick_ms
+                ser_base = float(np.exp(-thrash_per_tick))
         elif bv_history is not None and len(bv_history) >= _HISTORY_MIN_SAMPLES:
             # 2026-05-25 (CC2 audit F2): the prior shape
             # `clip(1 - max(0, z), 0, 1)` was the same one-sided-clamp
