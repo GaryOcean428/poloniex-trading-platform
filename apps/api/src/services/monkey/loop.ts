@@ -9418,12 +9418,16 @@ export class MonkeyKernel extends EventEmitter {
           kappaAtExit: symState?.kappa,
           agent: agentKey,
         });
-        // The Python autonomic surface is fed exclusively from the
-        // polo-authoritative close (the fanout in applyPoloRealizedPnlAfterClose),
-        // so for every close ONLY the polo_authoritative_close + net reaches Py.
-        // The legacy synthetic Py push (gated by the removed CANONICAL_POLO_PNL
-        // knob) is gone; paper / no-Polo-data closes carry the gross fallback
-        // through the same authoritative path.
+        // The Python autonomic surface for live-auto closes is fed exclusively
+        // from the polo-authoritative close (the callAutonomicReward fanout
+        // inside applyPoloRealizedPnlAfterClose). The legacy synthetic Py push,
+        // gated by the removed CANONICAL_POLO_PNL_LIVE knob, is gone — and since
+        // that knob was globally true in prod the synthetic push was already
+        // suppressed for every close, so removing it is behaviour-neutral.
+        // (Paper / no-orderId closes return early in that helper; their TS
+        // chemistry is consumed via the own_close pushReward above. They do not
+        // currently feed the Py peer's close-chemistry — a pre-existing gap
+        // routed to the consensus-reconciliation work, not this change.)
       }
       // #1009 PR2: HEART chain observer is fed ONLY from the
       // polo-authoritative surface in `applyPoloRealizedPnlAfterClose`.
