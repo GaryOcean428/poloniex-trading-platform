@@ -126,7 +126,6 @@ import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import {
   applyChronicDemote,
-  expectancyLiveEnabled,
   makeRotationState,
   promoteToLive,
   recordClose as recordRotationClose,
@@ -238,7 +237,6 @@ import {
 import {
   counterfactualPnlUsdt,
   resolveHindsight,
-  isHindsightRegretLive,
   type CloseSenseBundle,
   type CounterfactualOutcome,
 } from './hindsightRegret.js';
@@ -2195,7 +2193,6 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   private decayHindsightCachesOncePerTick(): void {
-    if (!isHindsightRegretLive()) return;
     const HINDSIGHT_HALF_LIFE_MS = 20 * 60 * 1000;
     const decay = Math.pow(0.5, this.tickMs / HINDSIGHT_HALF_LIFE_MS);
     this.cachedHindsightDopamine *= decay;
@@ -2709,7 +2706,7 @@ export class MonkeyKernel extends EventEmitter {
     let hindsightAch = 0;
     let hindsightNe = 0;
     let hindsightEndo = 0;
-    if (isHindsightRegretLive()) {
+    {
       hindsightDop = this.cachedHindsightDopamine;
       hindsightSer = this.cachedHindsightSerotonin;
       hindsightAch = this.cachedHindsightAcetylcholine;
@@ -3020,9 +3017,7 @@ export class MonkeyKernel extends EventEmitter {
     // regime: track the horizon-end counterfactual pnl and whether the regime
     // observed at close still holds. Resolve the watches whose derived horizon
     // has elapsed into the E6 NT vector. Best-effort; never throws into tick.
-    if (isHindsightRegretLive()) {
-      this.evaluateHindsightWatches(symbol, lastPrice, String(regimeReading.regime));
-    }
+    this.evaluateHindsightWatches(symbol, lastPrice, String(regimeReading.regime));
 
     // Phase B — geometry-derived TP/SL bracket. Recompute each tick from
     // the current φ, regime confidence and ATR(14); stash on symbol state
@@ -9628,7 +9623,6 @@ export class MonkeyKernel extends EventEmitter {
     closeLane?: 'scalp' | 'swing' | 'trend';
     regimeAtClose?: string;
   }): Promise<void> {
-    if (!isHindsightRegretLive()) return;
     try {
       const { tradeIds, symbol, side } = params;
       const sideSign: 1 | -1 = side === 'long' ? 1 : -1;
@@ -10669,11 +10663,10 @@ export class MonkeyKernel extends EventEmitter {
     // demote. Catches the negative-EV bleeder the 5-consecutive-loss
     // breaker misses (tiny wins interspersed between large losses never
     // hit 5-in-a-row). Flag-gated behind MONKEY_ROTATION_EXPECTANCY_LIVE
-    // (default OFF). When off, applyChronicDemote returns demoted:false
-    // unconditionally and behaviour is byte-for-byte unchanged. Only
-    // evaluated when the acute breaker did NOT already demote and the
-    // kernel is still live.
-    const expectancyLive = expectancyLiveEnabled();
+    // The expectancy firewall is CANONICAL (always on) — it's how the kernel
+    // governs its own capital, not an operator dial. Only evaluated when the
+    // acute breaker did NOT already demote and the kernel is still live.
+    const expectancyLive = true;
     if (expectancyLive && !rotationResult.demoted && this.rotation.mode === 'live') {
       const peers = this.buildRotationPeerSnapshots(expectancyLive);
       const chronic = applyChronicDemote(this.rotation, peers, expectancyLive);
@@ -10742,7 +10735,7 @@ export class MonkeyKernel extends EventEmitter {
    * kernel's paper-mode WR has reached the gate, promotes.
    */
   private tryAutoPromote(symbol: string | undefined): void {
-    const expectancyLive = expectancyLiveEnabled();
+    const expectancyLive = true;
     const peers = this.buildRotationPeerSnapshots(expectancyLive);
     const reason = shouldAutoPromote(this.rotation, peers, expectancyLive);
     if (!reason) return;

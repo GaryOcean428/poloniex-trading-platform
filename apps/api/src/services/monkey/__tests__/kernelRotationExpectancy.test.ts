@@ -18,7 +18,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyChronicDemote,
-  expectancyLiveEnabled,
   makeRotationState,
   promoteToLive,
   recordClose,
@@ -100,25 +99,6 @@ describe('rollingExpectancy', () => {
     const e = rollingExpectancy(stateWithPnls([+1, +1, +1, +1, +1, +1, +1, +1, -1, -1]));
     expect(e.edge).toBeCloseTo(0.6, 9);
     expect(e.lossWinRatio).toBeCloseTo(1, 9);
-  });
-});
-
-describe('expectancyLiveEnabled — canonical (no gate)', () => {
-  it('is always on, regardless of env', () => {
-    expect(expectancyLiveEnabled()).toBe(true);
-    const _orig = process.env.MONKEY_ROTATION_EXPECTANCY_LIVE;
-    try {
-      process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = '******';
-      expect(expectancyLiveEnabled()).toBe(true);
-      process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = 'true';
-      expect(expectancyLiveEnabled()).toBe(true);
-    } finally {
-      if (_orig !== undefined) {
-        process.env.MONKEY_ROTATION_EXPECTANCY_LIVE = _orig;
-      } else {
-        delete process.env.MONKEY_ROTATION_EXPECTANCY_LIVE;
-      }
-    }
   });
 });
 

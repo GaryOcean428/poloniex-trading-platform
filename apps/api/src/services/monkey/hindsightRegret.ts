@@ -440,11 +440,7 @@ export function resolveHindsight(
   };
 }
 
-/**
- * Hindsight regret is CANONICAL — the kernel always learns the counterfactual
- * "if I'd held, I'd have earned the reward" signal. Not a knob; built to be
- * used. (Was gated behind MONKEY_HINDSIGHT_REGRET_LIVE; gate removed 2026-05-30.)
- */
-export function isHindsightRegretLive(): boolean {
-  return true;
-}
+// Hindsight regret is CANONICAL — the kernel always learns the counterfactual
+// "if I'd held, I'd have earned the reward" signal. Not a knob; built to be
+// used. The former MONKEY_HINDSIGHT_REGRET_LIVE env gate (an always-true
+// wrapper) was removed entirely — every call site is now unconditional.

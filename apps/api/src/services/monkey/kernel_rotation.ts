@@ -137,23 +137,13 @@ export const ROTATION_EXPECTANCY_BAND = 0.10;
  */
 export const ROTATION_TARGET_LOSS_WIN_RATIO = 1 / 8;
 
-/**
- * Historical env-flag name for the chronic-expectancy membership criterion.
- * The expectancy firewall is now CANONICAL (always on); this constant is
- * retained for reference/telemetry only. `expectancyLiveEnabled()` ignores
- * this env var and always returns `true`.
- */
-export const ROTATION_EXPECTANCY_FLAG = 'MONKEY_ROTATION_EXPECTANCY_LIVE';
-
-/**
- * The expectancy-membership capital firewall is CANONICAL — always on. It's how
- * the kernel governs its own capital (negative-EV bleeders route to paper while
- * the kernel keeps ticking blind), not an operator dial. Built to be used.
- * (Was gated behind MONKEY_ROTATION_EXPECTANCY_LIVE; gate removed 2026-05-30.)
- */
-export function expectancyLiveEnabled(): boolean {
-  return true;
-}
+// The expectancy-membership capital firewall is CANONICAL — always on. It's how
+// the kernel governs its own capital (negative-EV bleeders route to paper while
+// the kernel keeps ticking blind), not an operator dial. The former
+// MONKEY_ROTATION_EXPECTANCY_LIVE env gate (an always-true wrapper) was removed
+// entirely; callers pass `expectancyLive = true` unconditionally. The internal
+// `expectancyLive` parameter is retained only as a pure-function input so the
+// demote/promote helpers stay testable in isolation.
 
 export type KernelOperationalMode = 'live' | 'paper';
 
