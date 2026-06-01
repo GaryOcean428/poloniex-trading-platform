@@ -19,11 +19,6 @@ describe('paperExchangeSimulator', () => {
     mockedQuery.mockReset();
   });
 
-  afterEach(() => {
-    delete process.env.MONKEY_TRADING_PAUSED;
-    delete process.env.MONKEY_PAPER_MODE;
-  });
-
   it('paperPlaceOrder returns a synthetic order id prefixed paper-', async () => {
     mockedQuery.mockResolvedValueOnce({ rows: [] });
     const result = await paperPlaceOrder({
@@ -108,14 +103,6 @@ describe('paperExchangeSimulator', () => {
       expect.stringContaining('exit_time IS NULL'),
       ['monkey', 'u-1'],
     );
-  });
-
-  it('MONKEY_TRADING_PAUSED=true takes precedence over MONKEY_PAPER_MODE=true', () => {
-    process.env.MONKEY_TRADING_PAUSED = 'true';
-    process.env.MONKEY_PAPER_MODE = 'true';
-    const shouldRouteToPaper = process.env.MONKEY_TRADING_PAUSED !== 'true'
-      && process.env.MONKEY_PAPER_MODE === 'true';
-    expect(shouldRouteToPaper).toBe(false);
   });
 
 });
