@@ -102,10 +102,20 @@ export async function summariseRecentResiduals(
       within_1_sigma: boolean;
       residual_normalized: string | number;
     }>(
-      `SELECT direction_match, within_1_sigma, residual_normalized
-         FROM kernel_outcome_residuals
-        WHERE evaluated_at >= NOW() - ($1 || ' milliseconds')::INTERVAL
-        ORDER BY evaluated_at DESC
+      // 2026-06-01 — count ONLY residuals tied to a CLOSED trade. A prediction
+      // with no parent trade (a HOLD forecast) or an open trade has no realised
+      // outcome; its placeholder realisedPnl=0 row reads as a
+      // direction_match=false miss and would drag the skill rate below chance.
+      // Restricting the corpus to decided outcomes makes directionMatchRate
+      // reflect real forecast skill (and releases predDop/predSer once skill is
+      // demonstrated). Pairs with predictionResidualJob deferring open trades.
+      `SELECT r.direction_match, r.within_1_sigma, r.residual_normalized
+         FROM kernel_outcome_residuals r
+         JOIN kernel_predictions p ON p.id = r.prediction_id
+         JOIN autonomous_trades t ON t.id = p.trade_id
+        WHERE r.evaluated_at >= NOW() - ($1 || ' milliseconds')::INTERVAL
+          AND t.status = 'closed'
+        ORDER BY r.evaluated_at DESC
         LIMIT 500`,
       [windowMs],
     );
