@@ -8279,31 +8279,12 @@ export class MonkeyKernel extends EventEmitter {
       const representativeTradeIdForReward = allTradeIds.length > 0 ? allTradeIds[0] : undefined;
       this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals, representativeTradeIdForReward);
 
-      if (process.env.CANONICAL_POLO_PNL_LIVE !== 'true') {
-        const syntheticPnl = (['K', 'M', 'T', 'L'] as const)
-          .reduce((sum, agentKey) => sum + perAgentTotals[agentKey].pnl, 0);
-        const syntheticQty = (['K', 'M', 'T', 'L'] as const)
-          .reduce((sum, agentKey) => sum + perAgentTotals[agentKey].qty, 0);
-        void this.registerHindsightWatchAfterClose({
-          tradeIds: allTradeIds.length > 0 ? allTradeIds : [tradeId],
-          symbol,
-          side: heldSide,
-          realizedPnlUsdt: syntheticPnl,
-          marginUsdt: syntheticQty > 0 ? (markPrice * syntheticQty) / 16 : undefined,
-          exitPriceFallback: markPrice,
-          qtyFallback: syntheticQty,
-          closeLane,
-          regimeAtClose: closeLane
-            ? this.symbolStates.get(symbol)?.regimeAtOpenByLane[closeLane]
-            : undefined,
-        });
-      }
-
-      // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec).
-      // The helper will fetch Polo history, match, write Polo realized to .pnl and
-      // preserve the synthetic as .gross_pnl. LIVED ONLY 5: reward ledger will
-      // eventually be driven by the Polo net value (via the tradeId now threaded).
-      if (process.env.CANONICAL_POLO_PNL_LIVE === 'true') {
+      // Canonical Polo-authoritative PnL surface (user 2026-05-28 spec). This is
+      // now CANONICAL — the legacy synthetic-PnL bifurcation (a knob-in-costume
+      // the operator flagged for removal) was deleted. The helper fetches Polo
+      // history, writes Polo realized to .pnl, preserves the synthetic as
+      // .gross_pnl, and registers the hindsight watch with the authoritative net.
+      {
         // closeOrderIds: parse the joined orderId string from the close
         // flow and drop paper-close-* prefixes (paper orders have no Polo
         // execution detail). This is what unlocks the per-fill fee
@@ -8381,11 +8362,10 @@ export class MonkeyKernel extends EventEmitter {
     // is the gated case. Opposite-side (reversal) isn't gated by THIS
     // check — it has its own gates (REGIME-2, directional_disagreement).
     this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
-    // #1009 PR2: HEART tilt-chain observer is fed from the SAME canonical
-    // surface as the reward chemistry — `pushPerAgentCloseRewards` for
-    // the synthetic path (gated by CANONICAL_POLO_PNL_LIVE !== 'true'),
-    // and `applyPoloRealizedPnlAfterClose` for the polo-authoritative
-    // path. Wiring HEART here would feed the chain detector with the
+    // #1009 PR2: HEART tilt-chain observer is fed from the canonical reward
+    // surface — `applyPoloRealizedPnlAfterClose` (the polo-authoritative path;
+    // the legacy synthetic-PnL bifurcation was removed). Wiring HEART here
+    // would feed the chain detector with the
     // mark-based gross `pnlAtDecision` even when the polo-authoritative
     // net pnl (post-fees, the truth the kernel learns from) is about to
     // arrive async. Cascade 2026-05-29 explicitly flagged that risk:
@@ -8581,12 +8561,11 @@ export class MonkeyKernel extends EventEmitter {
     // tilt stays grounded in observed close-PnL chains. Neither is an
     // operator-tunable threshold.
     //
-    // No activation gate. The legacy `REGIME_POSTWIN_COOLDOWN_LIVE` env
-    // flag was a knob-in-costume of the same shape as
-    // `CANONICAL_POLO_PNL_LIVE` — a binary that bifurcates code paths and
-    // lets a feature exist in the source while sitting dark in
-    // production. Operator 2026-05-29: doctrine forbids env-gated
-    // bifurcations.
+    // No activation gate. The legacy `REGIME_POSTWIN_COOLDOWN_LIVE` and
+    // `CANONICAL_POLO_PNL_LIVE` env flags were knobs-in-costume of this same
+    // shape — binaries that bifurcate code paths and let a feature exist in the
+    // source while sitting dark in production. Both were made canonical and
+    // removed. Operator 2026-05-29: doctrine forbids env-gated bifurcations.
     //
     // The threshold inside `evaluatePostCloseCooldownGate` is fully
     // observer-derived via `composeCooldown`. 2026-05-29 cascading-knob-strip:
@@ -9439,42 +9418,16 @@ export class MonkeyKernel extends EventEmitter {
           kappaAtExit: symState?.kappa,
           agent: agentKey,
         });
-        // Mirror the close into Python autonomic so both kernels'
-        // neurochemistries share the same outcome stream.
-        // Doctrine hardening (post-#992): under CANONICAL_POLO_PNL_LIVE,
-        // suppress this synthetic Py push so that for every close that has
-        // polo authoritative data, ONLY the polo_authoritative_close + net
-        // reaches Py (via the fanout in applyPoloRealizedPnlAfterClose).
-        // Mirrors pushReward's ternary: polo source uses authoritative net
-        // directly for chemistry/trajectory/NTs. No new knobs (re-uses
-        // existing env gate at line 7704). Non-canonical/paper paths retain
-        // synthetic Py (correct surface).
-        // LIVED ONLY 5 on reward path: polo fanout + this conditional +
-        // pushReward polo assert + Py logger "source=..." + explicit
-        // doctrine logs + Railway grep (see lesson artifact).
-        // Citations: agents.md:236 QIG PURITY MANDATE 17pt #1-8 (P1/P5/P25
-        // observer-derived lived net, P24 full wiring, no synthetic on Py
-        // authoritative surface) + P6 heart + v6.7B + Embodiment_Waves +
-        // master-orchestration + verification-before-completion + never-stop.
-        if (process.env.CANONICAL_POLO_PNL_LIVE !== 'true') {
-          void callAutonomicReward({
-            instanceId: this.instanceId,
-            source: `own_close_synthetic:${agentKey}`,
-            symbol,
-            realizedPnlUsdt: t.pnl,
-            marginUsdt: margin,
-            kappaAtExit: symState?.kappa,
-          });
-        }
-        // Consistent doctrine logger (greppable alongside Py "reward source=..."
-        // in Railway ml-worker logs for "polo_authoritative_close" vs synthetic).
-        logger.info('[Monkey] Py autonomic reward push (doctrine source verification)', {
-          source: `own_close_synthetic:${agentKey}`,
-          symbol,
-          realizedPnlUsdt: t.pnl,
-          canonicalPoloActive: process.env.CANONICAL_POLO_PNL_LIVE === 'true',
-          authoritativeWillReachPy: process.env.CANONICAL_POLO_PNL_LIVE === 'true',
-        });
+        // The Python autonomic surface for live-auto closes is fed exclusively
+        // from the polo-authoritative close (the callAutonomicReward fanout
+        // inside applyPoloRealizedPnlAfterClose). The legacy synthetic Py push,
+        // gated by the removed CANONICAL_POLO_PNL_LIVE knob, is gone — and since
+        // that knob was globally true in prod the synthetic push was already
+        // suppressed for every close, so removing it is behaviour-neutral.
+        // (Paper / no-orderId closes return early in that helper; their TS
+        // chemistry is consumed via the own_close pushReward above. They do not
+        // currently feed the Py peer's close-chemistry — a pre-existing gap
+        // routed to the consensus-reconciliation work, not this change.)
       }
       // #1009 PR2: HEART chain observer is fed ONLY from the
       // polo-authoritative surface in `applyPoloRealizedPnlAfterClose`.
@@ -9784,7 +9737,7 @@ export class MonkeyKernel extends EventEmitter {
     // Entry-point info log so we can confirm the canonical path is firing
     // at all on each close. Was previously silent (everything past here
     // was debug-level, suppressed by LOG_LEVEL=info), which masked the
-    // 2026-05-28 issue where CANONICAL_POLO_PNL_LIVE=true didn't actually
+    // 2026-05-28 issue where the canonical Polo path didn't actually
     // produce polo_authoritative_close events on the live deploy.
     logger.info('[Monkey] Polo-authoritative fetch starting', {
       symbol, side, closeTimeMs, tradeIdsCount: tradeIds.length,
@@ -10155,7 +10108,7 @@ export class MonkeyKernel extends EventEmitter {
         ).catch((err) => {
           // Promoted from silent catch 2026-05-28 (Copilot review on PR #1000):
           // the previous `.catch(() => {})` would swallow constraint violations
-          // and other DB errors silently. With CANONICAL_POLO_PNL_LIVE active,
+          // and other DB errors silently. On the canonical Polo path,
           // a failure here means the reward ledger is silently corrupted — log
           // it visibly so we don't repeat the silent-dark class of incident.
           logger.warn('[Monkey] Polo-authoritative row UPDATE failed', {
@@ -10335,10 +10288,10 @@ export class MonkeyKernel extends EventEmitter {
       });
     } catch (err) {
       // Promoted from debug → warn 2026-05-28: silent debug suppressed the
-      // post-flip diagnostic window. With CANONICAL_POLO_PNL_LIVE=true,
-      // failures here are the difference between real and synthetic chemistry
-      // feeding the kernel — they must be visible at LOG_LEVEL=info.
-      logger.warn('[Monkey] Polo history fetch for canonical pnl failed (non-fatal, synthetic remains)', {
+      // post-flip diagnostic window. On the canonical Polo path, failures here
+      // are the difference between real and gross-fallback chemistry feeding
+      // the kernel — they must be visible at LOG_LEVEL=info.
+      logger.warn('[Monkey] Polo history fetch for canonical pnl failed (non-fatal, gross fallback remains)', {
         symbol, err: err instanceof Error ? err.message : String(err),
       });
     }
