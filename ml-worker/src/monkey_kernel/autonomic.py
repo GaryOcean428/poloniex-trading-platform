@@ -672,7 +672,14 @@ class AutonomicKernel:
         bv_history = inputs.basin_velocity_history
         mode_x = inputs.mode_transition_times_ms
         now_ms = inputs.now_ms
-        if mode_x and len(mode_x) > 0 and now_ms is not None:
+        # The mode-transition density branch needs a per-tick cadence
+        # (tick_interval_ms > 0) to be dimensionless; without it the rate
+        # collapses to a constant exp(-1) with no gradient, so fall through to
+        # the gradient-preserving bv-z-score branch instead (Qodo review #1058).
+        if (
+            mode_x and len(mode_x) > 0 and now_ms is not None
+            and inputs.tick_interval_ms is not None and inputs.tick_interval_ms > 0
+        ):
             # 2026-06-01 (steady-state-pinning fix, parity with
             # neurochemistry.ts): the prior count-ratio
             #   transitions_per_tick = len(mode_x) / len(bv_history)
@@ -689,10 +696,7 @@ class AutonomicKernel:
                 ser_base = 1.0
             else:
                 transitions_per_ms = len(mode_x) / window_ms
-                tick_ms = inputs.tick_interval_ms if (
-                    inputs.tick_interval_ms is not None and inputs.tick_interval_ms > 0
-                ) else window_ms / len(mode_x)
-                thrash_per_tick = transitions_per_ms * tick_ms
+                thrash_per_tick = transitions_per_ms * inputs.tick_interval_ms
                 ser_base = float(np.exp(-thrash_per_tick))
         elif bv_history is not None and len(bv_history) >= _HISTORY_MIN_SAMPLES:
             # 2026-05-25 (CC2 audit F2): the prior shape

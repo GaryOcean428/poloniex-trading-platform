@@ -105,6 +105,7 @@ describe('neurochemistry — steady-state variance restoration', () => {
       inp.observables = {
         ...inp.observables!,
         nowMs: now,
+        tickIntervalMs: 1000,
         modeTransitionTimesMs: [now - 5000, now - 3000, now - 1000],
         basinVelocityHistory: Array(10).fill(0.1),
       };
@@ -114,6 +115,26 @@ describe('neurochemistry — steady-state variance restoration', () => {
       // be < 1 → delta registers visibly
       expect(nc.serotonin).toBeGreaterThan(0);
       expect(nc.serotonin).toBeLessThan(1);
+    });
+
+    it('mode transitions present but cadence MISSING → bv-history fallback (not a constant)', () => {
+      // Without tickIntervalMs the mode-transition density is dimensionless-
+      // ambiguous, so it must defer to the bv-z-score branch rather than emit
+      // a constant exp(-1). Two distinct bv readings must give distinct ser.
+      const now = 100_000;
+      const mk = (bv: number) =>
+        computeNeurochemicals({
+          ...baseInputs(),
+          basinVelocity: bv,
+          observables: {
+            nowMs: now, // NOTE: no tickIntervalMs
+            modeTransitionTimesMs: [now - 5000, now - 3000, now - 1000],
+            basinVelocityHistory: [0.05, 0.1, 0.15, 0.1, 0.12, 0.08], // varied → real z-score
+          },
+        }).serotonin;
+      const calm = mk(0.05); // below bv-history mean → calmer → higher ser
+      const fast = mk(0.20); // above mean → faster → lower ser
+      expect(calm).toBeGreaterThan(fast); // gradient, not a flat exp(-1)
     });
 
     // 2026-06-01 — mode-transition branch steady-state-pinning fix.

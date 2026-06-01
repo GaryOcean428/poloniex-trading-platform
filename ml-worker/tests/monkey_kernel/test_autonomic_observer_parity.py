@@ -111,10 +111,30 @@ def test_ser_thrash_via_mode_transitions_drops():
     now = 100_000.0
     nc = _ticker(_base_inputs(
         now_ms=now,
+        tick_interval_ms=1000.0,
         mode_transition_times_ms=[now - 5000, now - 3000, now - 1000],
         basin_velocity_history=[0.1] * 10,
     ))
     assert nc.serotonin < 0.85
+
+
+def test_ser_mode_transitions_without_cadence_falls_to_bv_branch():
+    """Without tick_interval_ms the mode-transition branch is skipped (else it
+    collapses to a constant exp(-1)); ser must defer to the gradient-preserving
+    bv-z-score branch (Qodo review #1058)."""
+    now = 100_000.0
+
+    def mk(bv: float) -> float:
+        return _ticker(_base_inputs(
+            basin_velocity=bv,
+            now_ms=now,  # NOTE: no tick_interval_ms
+            mode_transition_times_ms=[now - 5000, now - 3000, now - 1000],
+            basin_velocity_history=[0.05, 0.1, 0.15, 0.1, 0.12, 0.08],  # varied → real z-score
+        )).serotonin
+
+    calm = mk(0.05)  # below bv-mean → higher ser
+    fast = mk(0.20)  # above bv-mean → lower ser
+    assert calm > fast  # gradient, not flat exp(-1)
 
 
 # 2026-06-01 — mode-transition branch steady-state-pinning fix (parity with
