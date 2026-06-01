@@ -21,10 +21,12 @@ export type { ExecutionMode } from './riskKernel.js';
 import type { ExecutionMode } from './riskKernel.js';
 
 const CACHE_TTL_MS = 30 * 1000;
-// Shorter TTL on fail-closed entries so a recovered DB is picked up
-// within a minute, but long enough that a sustained outage doesn't
-// send one query per order.
-const FAIL_CLOSED_CACHE_TTL_MS = 30 * 1000;
+// Genuinely shorter TTL on fail-closed entries (5s, not the normal 30s) so a
+// recovered DB — or an operator flipping the kill switch / paper mode right
+// after a transient DB hiccup — is picked up within seconds, while still
+// avoiding a per-order DB query during a sustained outage. The kill switch is
+// the operator's primary safety control; recovery latency must be short.
+const FAIL_CLOSED_CACHE_TTL_MS = 5 * 1000;
 
 interface ModeRecord {
   mode: ExecutionMode;
