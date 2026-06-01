@@ -41,7 +41,7 @@ async function ensureCache(): Promise<Map<string, string>> {
   try {
     const result = await query(`SELECT flag_key, value FROM monkey_feature_flags`);
     const next = new Map<string, string>();
-    for (const row of result.rows as Array<{ flag_key: string; value: string }>) {
+    for (const row of result.rows as unknown as Array<{ flag_key: string; value: string }>) {
       next.set(row.flag_key, row.value);
     }
     cache = next;
@@ -92,7 +92,7 @@ export async function getAllFlags(): Promise<FeatureFlagRecord[]> {
     `SELECT flag_key, value, updated_by, updated_at
        FROM monkey_feature_flags ORDER BY flag_key`,
   );
-  return (result.rows as Array<{ flag_key: string; value: string; updated_by: string | null; updated_at: string }>)
+  return (result.rows as unknown as Array<{ flag_key: string; value: string; updated_by: string | null; updated_at: string }>)
     .map((r) => ({
       flagKey: r.flag_key,
       value: r.value,
@@ -124,7 +124,7 @@ export async function setFlag(
     `SELECT flag_key, value, updated_by, updated_at FROM monkey_feature_flags WHERE flag_key = $1`,
     [key],
   );
-  const row = (result.rows as Array<{ flag_key: string; value: string; updated_by: string | null; updated_at: string }>)[0];
+  const row = (result.rows as unknown as Array<{ flag_key: string; value: string; updated_by: string | null; updated_at: string }>)[0];
   if (!row) throw new Error(`Failed to read back feature flag after upsert: ${key}`);
   logger.info('[featureFlags] updated', { flagKey: key, value, updatedBy: operator });
   return {
