@@ -4956,6 +4956,35 @@ export class MonkeyKernel extends EventEmitter {
           reason: consensus.reason,
           verdict: consensus.verdict,
         };
+
+        // Re-populate kernel_parity_log from the LIVE proposal bus so the
+        // retrospective peer-WR (getRetrospectiveShadowMatrix → peer_wr in the
+        // arbiter) has a corpus to score. The former K-shadow fanout that fed
+        // this table was removed (#1065) and was off in prod anyway; the Py
+        // kernel now publishes its proposal on the bus and TS receives it as
+        // `peer` here, so the ts↔py parity is recorded directly — no shadow
+        // call. Only enter-proposals feed the WR (the retrospective query
+        // filters py_action IN enter_long/short). Fire-and-forget, fail-soft.
+        if (peer && (peer.proposed_action === 'enter_long' || peer.proposed_action === 'enter_short')) {
+          const tsSideForParity: 'long' | 'short' | null =
+            direction === 'long' || direction === 'short' ? direction : null;
+          void pool.query(
+            `INSERT INTO kernel_parity_log
+               (tick_id, symbol, symbol_timestamp,
+                ts_action, ts_side, ts_phi, ts_kappa, ts_regime,
+                py_action, py_side, py_phi, py_kappa, py_regime)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+            [
+              randomUUID(), symbol, new Date().toISOString(),
+              action, tsSideForParity, phi, state.kappa, regimeNow,
+              peer.proposed_action, peer.side, peer.phi, peer.kappa, peer.regime_label,
+            ],
+          ).catch((dbErr) => {
+            logger.debug('[Consensus] parity-log insert failed (fail-soft)', {
+              err: dbErr instanceof Error ? dbErr.message : String(dbErr),
+            });
+          });
+        }
       } catch (err) {
         logger.debug('[Consensus] arbiter computation failed; using raw K-kernel action', {
           symbol, err: err instanceof Error ? err.message : String(err),
