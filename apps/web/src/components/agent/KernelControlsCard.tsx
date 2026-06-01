@@ -146,6 +146,7 @@ export default function KernelControlsCard() {
           Kernel Controls
         </h3>
         <button
+          type="button"
           onClick={() => void fetchFlags()}
           className="text-gray-400 hover:text-gray-600 transition-colors"
           aria-label="Refresh feature flags"
@@ -160,9 +161,9 @@ export default function KernelControlsCard() {
       </p>
 
       {loadError && (
-        <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+        <div role="alert" className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          Couldn&apos;t load feature flags. <button onClick={() => void fetchFlags()} className="underline font-medium">Retry</button>
+          Couldn&apos;t load feature flags. <button type="button" onClick={() => void fetchFlags()} className="underline font-medium">Retry</button>
         </div>
       )}
 
@@ -199,6 +200,7 @@ export default function KernelControlsCard() {
                           )}
                         </div>
                         <button
+                          type="button"
                           role="switch"
                           aria-checked={on}
                           aria-label={`${meta.label} ${on ? 'on' : 'off'}`}
