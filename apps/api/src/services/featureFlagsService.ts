@@ -22,6 +22,13 @@ const CACHE_TTL_MS = 15 * 1000;
 
 let cache: Map<string, string> | null = null;
 let cachedAt = 0;
+// In-flight refresh promise. When the cache is cold/expired and several callers
+// race in together (e.g. the kernel's per-tick Promise.all of getBoolFlag
+// reads), the first starts the DB read and stores its promise here; the rest
+// await the SAME promise instead of each firing their own SELECT. Without this
+// the TTL check is not atomic with the cache write, so a cold refresh fans out
+// into one query per concurrent caller (an async cache stampede).
+let inFlight: Promise<Map<string, string>> | null = null;
 
 export interface FeatureFlagRecord {
   flagKey: string;
@@ -38,28 +45,36 @@ export interface FeatureFlagRecord {
 async function ensureCache(): Promise<Map<string, string>> {
   const now = Date.now();
   if (cache && now - cachedAt < CACHE_TTL_MS) return cache;
-  try {
-    const result = await query(`SELECT flag_key, value FROM monkey_feature_flags`);
-    const next = new Map<string, string>();
-    for (const row of result.rows as unknown as Array<{ flag_key: string; value: string }>) {
-      next.set(row.flag_key, row.value);
+  // Coalesce concurrent cold/expired refreshes onto a single DB read.
+  if (inFlight) return inFlight;
+  inFlight = (async () => {
+    try {
+      const result = await query(`SELECT flag_key, value FROM monkey_feature_flags`);
+      const next = new Map<string, string>();
+      for (const row of result.rows as unknown as Array<{ flag_key: string; value: string }>) {
+        next.set(row.flag_key, row.value);
+      }
+      cache = next;
+      cachedAt = Date.now();
+      return cache;
+    } catch (err) {
+      logger.warn('[featureFlags] DB read failed — serving last-known-good / safe defaults', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      // Cache the fallback (last-known-good if warm, else empty) AND stamp cachedAt
+      // so a sustained outage doesn't re-query + re-log on every per-tick read
+      // (mirrors executionModeService's outage-storm guard). A warm cache serves
+      // last-known-good values; a cold cache yields the caller's safe default.
+      const fallback = cache ?? new Map<string, string>();
+      cache = fallback;
+      cachedAt = Date.now();
+      return fallback;
+    } finally {
+      // Clear the in-flight latch so the NEXT post-TTL refresh starts fresh.
+      inFlight = null;
     }
-    cache = next;
-    cachedAt = now;
-    return cache;
-  } catch (err) {
-    logger.warn('[featureFlags] DB read failed — serving last-known-good / safe defaults', {
-      err: err instanceof Error ? err.message : String(err),
-    });
-    // Cache the fallback (last-known-good if warm, else empty) AND stamp cachedAt
-    // so a sustained outage doesn't re-query + re-log on every per-tick read
-    // (mirrors executionModeService's outage-storm guard). A warm cache serves
-    // last-known-good values; a cold cache yields the caller's safe default.
-    const fallback = cache ?? new Map<string, string>();
-    cache = fallback;
-    cachedAt = now;
-    return fallback;
-  }
+  })();
+  return inFlight;
 }
 
 /**
@@ -150,4 +165,5 @@ export async function setFlag(
 export function __resetFeatureFlagsCache(): void {
   cache = null;
   cachedAt = 0;
+  inFlight = null;
 }
