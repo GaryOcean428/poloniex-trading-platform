@@ -8539,6 +8539,13 @@ export class MonkeyKernel extends EventEmitter {
     cellDirection?: 'TREND_UP' | 'CHOP' | 'TREND_DOWN' | null;
   }): Promise<{ executed: boolean; orderId: string | null; reason: string; tradeId?: string | null }> {
     const { symbol, side, marginUsdt, entryPrice, minNotional } = req;
+    // 2026-06-01 — capture the paper/live routing decision ONCE for the whole
+    // entry. shouldRouteOrdersToPaper() reads internal rotation state that a
+    // concurrent close-reward can mutate; evaluating it separately for the
+    // veto's `isLive`, the paper credential/state setup, and the final routing
+    // branch (with awaits between) could let them disagree and re-open a
+    // paper_only bypass (Copilot review #1060). One snapshot, used everywhere.
+    const routeToPaper = this.shouldRouteOrdersToPaper();
     // 2026-05-13 — continuous-regime leverage sanity bound.
     //
     // Discrete mode leverage (50× EXPLORATION / 5× INTEGRATION) can
@@ -8750,7 +8757,7 @@ export class MonkeyKernel extends EventEmitter {
       );
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
       if (!userId) {
-        if (this.shouldRouteOrdersToPaper()) {
+        if (routeToPaper) {
           // Paper mode — resolve a user_id that satisfies the
           // autonomous_trades.user_id → users(id) foreign key. Prefer
           // any existing user; on a fresh paper/staging DB (empty
@@ -8783,7 +8790,7 @@ export class MonkeyKernel extends EventEmitter {
           return { executed: false, orderId: null, reason: 'no_credentials' };
         }
       }
-      if (this.shouldRouteOrdersToPaper()) {
+      if (routeToPaper) {
         // Paper mode — synthetic risk-kernel state at the paper
         // bankroll, no exchange call. Equity matches what the sizing
         // path (fetchAccountContext) used, so the risk kernel's
@@ -8852,12 +8859,13 @@ export class MonkeyKernel extends EventEmitter {
     // so the `paper_only && isLiveOrder` block in checkExecutionMode could
     // NEVER fire → the kernel kept opening LIVE positions while the UI
     // showed paper (operator-MANDATE violation, confirmed in prod 06-01).
-    // `!shouldRouteOrdersToPaper()` is the true "this order goes live"
-    // predicate (env MONKEY_PAPER_MODE + internal paper-rotation). The veto
-    // is ENTRY-ONLY, so paper_only now blocks new LIVE ENTRIES while closes
-    // of existing real positions still route real (no orphaned positions).
+    // `!routeToPaper` is the true "this order goes live" predicate (env
+    // MONKEY_PAPER_MODE + internal paper-rotation), captured once at the top
+    // of executeEntry so the veto and the actual routing can't diverge. The
+    // veto is ENTRY-ONLY, so paper_only now blocks new LIVE ENTRIES while
+    // closes of existing real positions still route real (no orphaned positions).
     const kernelContext: KernelContext = {
-      isLive: !this.shouldRouteOrdersToPaper(), mode, symbolMaxLeverage,
+      isLive: !routeToPaper, mode, symbolMaxLeverage,
       monkeyMode: monkeyMode ?? undefined,
     };
     const decision = evaluatePreTradeVetoes(order, kernelState, kernelContext);
@@ -9060,7 +9068,7 @@ export class MonkeyKernel extends EventEmitter {
         ? (req.side === 'long' ? 'LONG' : 'SHORT')
         : undefined;
 
-    if (this.shouldRouteOrdersToPaper()) {
+    if (routeToPaper) {
       if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping entry', {
           symbol,

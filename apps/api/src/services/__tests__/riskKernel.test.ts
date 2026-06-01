@@ -211,22 +211,14 @@ describe('evaluatePreTradeVetoes composition', () => {
     expect(evaluatePreTradeVetoes(btcOrder, emptyAccount, liveAutoContext).allowed).toBe(true);
   });
 
-  // 2026-06-01 — paper_only MANDATE. The caller (loop.ts) MUST set
-  // context.isLive = !shouldRouteOrdersToPaper() (the order's REAL routing),
-  // NOT `mode === 'auto'`. The prior circular wiring made isLive always
-  // false under paper_only, so this veto never fired and the kernel kept
-  // opening LIVE positions while the operator's UI said paper.
-  it('blocks a LIVE order under paper_only (operator MANDATE)', () => {
-    const livePaperOnly: KernelContext = { isLive: true, mode: 'paper_only', symbolMaxLeverage: BTC_MAX_LEV };
-    const decision = evaluatePreTradeVetoes(btcOrder, emptyAccount, livePaperOnly);
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('execution_mode_paper_only_blocks_live');
-  });
-
-  it('passes a PAPER-routed order under paper_only (paper continues)', () => {
-    const paperPaperOnly: KernelContext = { isLive: false, mode: 'paper_only', symbolMaxLeverage: BTC_MAX_LEV };
-    expect(evaluatePreTradeVetoes(btcOrder, emptyAccount, paperPaperOnly).allowed).toBe(true);
-  });
+  // 2026-06-01 — paper_only MANDATE wiring requirement (the actual #1060 bug
+  // lived in the CALLER, not here): loop.ts executeEntry MUST build
+  // KernelContext with `isLive: !routeToPaper` (the order's REAL routing),
+  // NOT `mode === 'auto'`. That prior circular wiring made isLive always
+  // false under paper_only, so the composition cases below (which already
+  // pass with correct inputs) never fired in production. No new assertion
+  // here — the live/paper composition is covered by
+  // 'execution-mode paper_only blocks a live order' / '… allows a paper order'.
 
   it('passes a clean short order', () => {
     expect(
