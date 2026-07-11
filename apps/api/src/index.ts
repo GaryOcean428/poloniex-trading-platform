@@ -52,6 +52,7 @@ import { stateReconciliationService } from './services/stateReconciliationServic
 import { maybeRunStartupBackfill } from './services/backfillStackedGhostPnl.js';
 import { shouldExpectPaperTrades } from './services/tradingStateProbe.js';
 import { logger } from './utils/logger.js';
+import { startMemoryMonitoring } from './utils/memoryMonitor.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
@@ -354,34 +355,60 @@ const gracefulShutdown = (signal: string): void => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Socket.IO connection handling
-io.on('connection', (socket) => {
-  logger.info(`Client connected: ${socket.id}`);
+// Track active connections
+let activeConnections = 0;
+const MAX_CONNECTIONS = 1000;
 
-  // Handle health check
-  socket.on('health-check', () => {
+io.on('connection', (socket) => {
+  activeConnections++;
+  logger.info(`Client connected: ${socket.id} (${activeConnections} active)`);
+
+  if (activeConnections > MAX_CONNECTIONS) {
+    logger.warn(`⚠️  Connection limit exceeded: ${activeConnections}/${MAX_CONNECTIONS}`);
+  }
+
+  // Define handlers as named functions so we can reference them for cleanup
+  const handleHealthCheck = () => {
     socket.emit('health-response', {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development'
     });
-  });
+  };
 
-  // Handle market data subscription (mock implementation)
-  socket.on('subscribe-market-data', (data) => {
-    logger.info(`Client ${socket.id} subscribed to market data:`, data);
-    socket.emit('market-data-subscribed', { status: 'subscribed', symbol: data.symbol });
-  });
+  const handleSubscribeMarketData = (data: unknown) => {
+    const dataObj = data as Record<string, unknown>;
+    logger.info(`Client ${socket.id} subscribed to market data:`, dataObj);
+    socket.emit('market-data-subscribed', { 
+      status: 'subscribed', 
+      symbol: dataObj.symbol 
+    });
+  };
 
-  // Handle disconnection
-  socket.on('disconnect', (reason) => {
-    logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`);
-  });
-
-  // Handle connection errors
-  socket.on('error', (error) => {
+  const handleError = (error: unknown) => {
     logger.error(`Socket error for ${socket.id}:`, error);
-  });
+  };
+
+  const handleDisconnect = (reason: string) => {
+    activeConnections--;
+    logger.info(`Client disconnected: ${socket.id}, reason: ${reason} (${activeConnections} active)`);
+    
+    // CRITICAL: Explicitly remove all event listeners to prevent memory leak
+    // Socket.IO sockets persist unless explicitly cleaned up
+    socket.removeListener('health-check', handleHealthCheck);
+    socket.removeListener('subscribe-market-data', handleSubscribeMarketData);
+    socket.removeListener('error', handleError);
+    socket.removeListener('disconnect', handleDisconnect);
+    
+    // Remove any remaining listeners (catch-all for unforeseen listeners)
+    socket.removeAllListeners();
+  };
+
+  // Register event handlers
+  socket.on('health-check', handleHealthCheck);
+  socket.on('subscribe-market-data', handleSubscribeMarketData);
+  socket.on('error', handleError);
+  socket.on('disconnect', handleDisconnect);
 });
 
 // Start server
@@ -410,6 +437,9 @@ server.listen(PORT, '::', async () => {
     logger.error('\u274c Database migration failed:', error);
     process.exit(1);
   }
+
+  // Start memory monitoring
+  startMemoryMonitoring();
 
   // 2026-05-13 \u2014 one-off PnL backfill gated by POLYTRADE_RUN_PNL_BACKFILL.
   // Repairs the stacked-ghost over-attribution bug from the
