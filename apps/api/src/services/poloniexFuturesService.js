@@ -4,6 +4,7 @@ import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
 import rateLimiter from '../utils/rateLimiter.js';
 import { apiCache, getTtlForEndpoint } from '../utils/apiCache.js';
+import { toSafeErrorLog } from '../utils/safeErrorLog.js';
 
 /**
  * Serialize query params deterministically (sorted keys) so that
@@ -281,7 +282,7 @@ class PoloniexFuturesService {
         accountId: balanceData.accountId || 'default'
       };
     } catch (error) {
-      logger.error('Error fetching account info:', error);
+      logger.error('Error fetching account info:', toSafeErrorLog(error));
       throw error;
     }
   }
@@ -313,7 +314,7 @@ class PoloniexFuturesService {
         transferId: result?.applyId || result?.transferId || `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
     } catch (error) {
-      logger.error('Error transferring to spot:', error);
+      logger.error('Error transferring to spot:', toSafeErrorLog(error));
       return {
         success: false,
         error: error.message || 'Transfer failed'
@@ -1375,7 +1376,7 @@ class PoloniexFuturesService {
       logger.info(`Synced account data for user ${userId}`);
       return { success: true, accountData };
     } catch (error) {
-      logger.error(`Failed to sync account data for user ${userId}:`, error);
+      logger.error(`Failed to sync account data for user ${userId}:`, toSafeErrorLog(error));
       throw error;
     }
   }
@@ -1435,7 +1436,7 @@ class PoloniexFuturesService {
       logger.info(`Synced ${positions.length} positions for user ${userId}`);
       return { success: true, positions };
     } catch (error) {
-      logger.error(`Failed to sync positions for user ${userId}:`, error);
+      logger.error(`Failed to sync positions for user ${userId}:`, toSafeErrorLog(error));
       throw error;
     }
   }

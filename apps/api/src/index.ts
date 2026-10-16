@@ -53,6 +53,7 @@ import { maybeRunStartupBackfill } from './services/backfillStackedGhostPnl.js';
 import { shouldExpectPaperTrades } from './services/tradingStateProbe.js';
 import { logger } from './utils/logger.js';
 import { startMemoryMonitoring } from './utils/memoryMonitor.js';
+import { toSafeErrorLog } from './utils/safeErrorLog.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
@@ -303,7 +304,7 @@ if (process.env.NODE_ENV === 'production' && process.env.FRONTEND_STANDALONE ===
 
 // Error handling middleware
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  logger.error('Unhandled error:', err);
+  logger.error('Unhandled error:', toSafeErrorLog(err));
   res.status(500).json({ error: 'Internal server error' });
 });
 
